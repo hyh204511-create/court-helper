@@ -5,7 +5,7 @@
   "type": "module",
   "description": "法院立案/强执查询助手 Edge 插件（MV3）",
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test",
     "fixture": "python scripts/generate-fixtures.py"
   }
 }
