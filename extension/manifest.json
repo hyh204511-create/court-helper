@@ -25,7 +25,7 @@
         "https://zxfw.court.gov.cn/*"
       ],
       "js": [
-        "content/court-content.js"
+        "dist/court-content.bundle.js"
       ],
       "run_at": "document_start"
     }

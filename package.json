@@ -7,11 +7,14 @@
   "scripts": {
     "test": "node --test",
     "fixture": "python scripts/generate-fixtures.py",
-    "build": "esbuild extension/popup/popup.js --bundle --format=esm --outfile=extension/dist/popup.bundle.js"
+    "build": "esbuild extension/popup/popup.js --bundle --format=esm --outfile=extension/dist/popup.bundle.js && esbuild extension/content/court-content.js --bundle --format=iife --outfile=extension/dist/court-content.bundle.js"
   },
   "devDependencies": {
     "esbuild": "^0.28.1",
     "exceljs": "^4.4.0",
     "fake-indexeddb": "^6.2.5"
+  },
+  "dependencies": {
+    "html2canvas": "^1.4.1"
   }
 }

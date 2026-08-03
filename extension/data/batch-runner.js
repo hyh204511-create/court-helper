@@ -84,7 +84,7 @@ export async function runBatch({ cases = [], pageOps, onUpdate, timing = {} }) {
         record.needsHuman = true;
       } else if (NEEDS_IMAGE.has(status)) {
         try {
-          record.image = await pageOps.capture();
+          record.image = raw.image ?? (await pageOps.capture());
         } catch {
           record.needsHuman = true; // 截图失败 → 待人工补图
         }
