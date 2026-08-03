@@ -6,6 +6,11 @@
   "description": "法院立案/强执查询助手 Edge 插件（MV3）",
   "scripts": {
     "test": "node --test",
-    "fixture": "python scripts/generate-fixtures.py"
+    "fixture": "python scripts/generate-fixtures.py",
+    "build": "esbuild extension/popup/popup.js --bundle --format=esm --outfile=extension/dist/popup.bundle.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "exceljs": "^4.4.0"
   }
 }
