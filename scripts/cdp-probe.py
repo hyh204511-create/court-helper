@@ -120,6 +120,21 @@ async def do_click_text(tab_id, text):
     print(json.dumps(value, ensure_ascii=False))
 
 
+async def do_eval(tab_id, expression):
+    """执行任意表达式（联调用）。"""
+    tabs = http_json("/json")
+    target = next(t for t in tabs if t.get("id") == tab_id)
+    value = await evaluate(target["webSocketDebuggerUrl"], expression)
+    print(json.dumps(value, ensure_ascii=False, indent=1))
+
+
+async def do_eval64(tab_id, b64):
+    """执行 base64 编码的表达式（避免引号转义问题）。"""
+    import base64
+    expr = base64.b64decode(b64).decode("utf-8")
+    await do_eval(tab_id, expr)
+
+
 async def do_nav(tab_id, url):
     tabs = http_json("/json")
     target = next(t for t in tabs if t.get("id") == tab_id)
@@ -138,6 +153,10 @@ async def main():
         await do_analyze(sys.argv[2])
     elif cmd == "click":
         await do_click_text(sys.argv[2], sys.argv[3])
+    elif cmd == "ev":
+        await do_eval(sys.argv[2], sys.argv[3])
+    elif cmd == "ev64":
+        await do_eval64(sys.argv[2], sys.argv[3])
     elif cmd == "open":
         await do_open(sys.argv[2])
     elif cmd == "nav":
