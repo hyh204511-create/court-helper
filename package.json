@@ -1,0 +1,11 @@
+{
+  "name": "court-helper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "法院立案/强执查询助手 Edge 插件（MV3）",
+  "scripts": {
+    "test": "node --test tests/",
+    "fixture": "python scripts/generate-fixtures.py"
+  }
+}

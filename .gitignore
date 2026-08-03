@@ -1,0 +1,19 @@
+# 敏感数据与产物
+*.xlsx
+!tests/fixtures/*.xlsx
+*.png
+!tests/fixtures/*.png
+*.jpg
+!tests/fixtures/*.jpg
+
+# 本地工具目录
+.obsidian/
+.agents/
+.hermes/
+node_modules/
+extension/dist/
+extension/lib/
+
+# 系统
+.DS_Store
+Thumbs.db
