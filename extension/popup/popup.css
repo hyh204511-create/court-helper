@@ -1,0 +1,81 @@
+/* popup 静态壳样式（Phase 6 细化） */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  width: 460px;
+  font-family: "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  color: #333;
+  background: #f7f8fa;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+}
+header h1 { font-size: 15px; }
+#app-version { font-size: 11px; color: #999; font-weight: normal; }
+
+.badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.badge-on { background: #e6f7e6; color: #1a7f37; }
+.badge-off { background: #fdeaea; color: #b42318; }
+
+section { padding: 10px 12px; }
+
+.actions { display: flex; gap: 8px; }
+.actions button {
+  flex: 1;
+  padding: 7px 0;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+.actions button.primary { background: #1a56db; border-color: #1a56db; color: #fff; }
+.actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.search { display: flex; gap: 6px; }
+.search input { flex: 1; padding: 6px 8px; border: 1px solid #d0d5dd; border-radius: 6px; }
+.search select { padding: 6px 4px; border: 1px solid #d0d5dd; border-radius: 6px; }
+.search button { padding: 6px 14px; border: 1px solid #1a56db; border-radius: 6px; background: #1a56db; color: #fff; cursor: pointer; }
+
+.results { padding-top: 0; }
+.results table { width: 100%; border-collapse: collapse; background: #fff; }
+.results th, .results td {
+  border: 1px solid #e5e7eb;
+  padding: 5px 6px;
+  text-align: left;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 110px;
+}
+.results th { background: #f0f2f5; }
+.results .empty { text-align: center; color: #999; padding: 14px 0; }
+
+.batch { border-top: 1px solid #e5e7eb; background: #fff; }
+.progress {
+  height: 8px;
+  background: #eef0f3;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.progress-bar { height: 100%; width: 0; background: #1a56db; transition: width 0.3s; }
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #666;
+}
+.progress-meta button { padding: 3px 10px; border: 1px solid #d0d5dd; border-radius: 4px; background: #fff; cursor: pointer; }
