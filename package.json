@@ -11,6 +11,7 @@
   },
   "devDependencies": {
     "esbuild": "^0.28.1",
-    "exceljs": "^4.4.0"
+    "exceljs": "^4.4.0",
+    "fake-indexeddb": "^6.2.5"
   }
 }
