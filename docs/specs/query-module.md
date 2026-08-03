@@ -8,58 +8,66 @@
 
 ## 2. 状态映射表（唯一权威，禁止猜测）
 
-平台显示文本 → 模板状态词 → 附加动作：
+平台显示文本 → 模板状态词 → 附加动作（**2026-08-03 三个真实账号联调确认**）：
 
 | 场景 | 平台文本 | 状态词（写入表格） | 详情动作 |
 |---|---|---|---|
-| 立案 | 待审核 | 审核中 | 不进入详情；记录当天查询时间（L 列） |
-| 立案 | 已立案 | 立案成功 | 截图→成功图片(H)；进入详情取立案成功时间(F) + 案号(G) |
-| 立案 | 驳回 | 已驳回 | 进入详情取驳回时间(I) + 驳回原因(J)，截图→驳回图片(K) |
-| 立案 | 待补充材料 | 已驳回 | 同上（已确认：与驳回同流程） |
-| 强执 | 待审核 | 审核中 | 不进入详情；记录查询时间 |
-| 强执 | 已立案 | 强执成功 | 截图→成功图片(H)；详情强执类目取强执成功时间(F) + 强执案号(G) |
-| 强执 | 驳回 / 待补充材料 | 已驳回 | 同上驳回流程 |
+| 立案（网上立案页） | 待审核 | 审核中 | 不进入详情；记录当天查询时间（L 列） |
+| 立案（网上立案页） | 已立案 | 立案成功 | 截图→成功图片(H)；「我的案件」页列表行取案号(G) + 立案日期(F) |
+| 立案（我的案件页） | 审理中 | 立案成功 | 同上（有案号+立案日期=已成功立案） |
+| 立案（我的案件页） | 已结案 | 立案成功 | 同上（民事类） |
+| 立案（网上立案页） | 待补充材料 / 审核不通过 / 不予立案 / 待补正 | 已驳回 | 进详情取审核时间(I，取日期) + 审核意见(J)，截图→驳回图片(K) |
+| 强执（网上立案页） | 已立案 | 强执成功 | 截图→成功图片(H)；「我的案件」页执行 tab 取强执案号(G) + 强执成功时间(F=立案日期) |
+| 强执（我的案件页） | 已结案 | 强执成功 | 同上（执行类案件） |
+| 强执（网上立案页） | 待审核 / 待补充材料 / 审核不通过 / 不予立案 / 待补正 | 审核中 / 已驳回 | 同立案规则 |
 | 任意 | 其他/未知文本 | UNKNOWN | 标记待人工，禁止猜测，不写入任何状态词 |
 
-- 状态识别只认**精确文本匹配**（去空白后全等）；文本来自列表行状态区或详情页审核结果区。
+- 状态识别只认**精确文本匹配**（去空白后全等）；识别器 `status-recognizer.js`（纯函数，双页面映射）。
 - 一条记录同时出现多个可识别状态（如列表行「已立案」但详情显示异常）→ 以详情页为准，冲突时标 UNKNOWN 待人工。
+- 案件类型含「执行」（首次执行案件/执行类案件/恢复执行）→ 强执场景。
+- 状态码字典（网上立案页 zt 字段，静态分析）：11800007-1 待审核 / -2 审核通过(UNKNOWN) / -3 审核不通过 / -4 已立案 / -5 不予立案 / -6 待补充材料 / -31 待补正 / -100 待提交(UNKNOWN) / -101 申请失效(UNKNOWN) / -255 撤回中(UNKNOWN) / -500 提交失败(UNKNOWN)。
 
-## 3. 采集器（`extension/content/`）
+## 3. 采集器（`extension/content/case-collectors.js`，纯函数 + 选择器配置）
 
-### 3.1 立案列表采集器（case-list-collector.js）
-- 入口：`我的立案审判` 列表。
-- 输出：案件项数组 `{ accountKey, plaintiff, statusText, detailEntry }`。
-- 列表行内需能定位：案件名/当事人（用于与模板原告列匹配）、状态文本、详情入口。
-- 分页：只采集当前可见列表（批量任务逐案处理，不做全量分页抓取；若页面为分页列表，按"目标案件是否在当前页"逐页翻找，翻页上限 10 页，超出标记待人工）。
+### 3.1 列表采集器（collectListRows / collectRow / collectFields）
+- 适用页面：网上立案页（`#/pagesWsla/pc/list/index`）与「我的案件」页（`#/pages/pc/case-list/index`）共用 `.fd-case-item` 行结构。
+- 输出：`{ statusText, caseName, caseType, fields: [{label, value}], hasSpaceBtn }`。
+- 字段行 `.fd-field-item > (.fd-field-lable + .fd-field-value)`；`findField(fields, label)` 按 label 取 value；`extractBusinessFields` 提取案号/立案日期/法院/审核意见/申请日期。
+- 数据源分工：网上立案页字段含申请日期/审核意见（驳回取证）；「我的案件」页字段含**案号/立案日期**（成功取证，立案与强执同构）。
 
-### 3.2 立案详情采集器（case-detail-collector.js）
-- 进入方式：点击列表行/详情入口（受控点击，见 §5）。
-- 输出：`{ statusText, filedTime, caseNumber, rejectTime, rejectReason }`。
-- 驳回类：审核结果区的时间与原因文本。
-- 成功类：左侧案件导航 → 案件详情中的立案成功时间与案号。
-- 时间解析：统一转 ISO 字符串 `YYYY-MM-DD`（平台显示格式多样，真实联调确认后固化解析规则；解析失败 → 字段留空 + 该字段标 `PARSE_FAILED` 待人工）。
+### 3.2 详情页采集器（collectDetail）
+- 适用页面：案件空间（`#/pagesWsla/common/wsla/detail/index`）。
+- 表单项 `.uni-forms-item` 的 innerText 为「label\nvalue」结构；「审核结果」+「审核时间」成对构成**审核记录数组**（页面按时间倒序，最新在前，含时分秒，写表格取日期）；「审核意见」= 驳回原因。
+- 输出：`{ auditRecords: [{status, time}], fields: {label: value}, opinion }`。
+- 强执详情字段：案件类型（首次执行案件）/执行依据类别/原审案号（原审案号≠强执案号，强执案号在「我的案件」页执行 tab 列表行）。
 
-### 3.3 强执列表采集器（enforcement-list-collector.js）
-- 入口：`查看强执` / 我的立案左侧「我的立案」列 → 顶部「执行」tab（真实联调确认最终路径）。
-- 输出：`{ accountKey, plaintiff, statusText, detailEntry }`，同 3.1。
+### 3.3 强执查询采集
+- 入口：「我的案件」页顶部「执行」tab（`.fd-com-tab` 内文本「执行」，DOM click 生效）→ 点「查询」（`.fd-com-search-btn`）加载列表 → 行结构同 3.1，案号/立案日期即强执案号/强执成功时间。
 
-### 3.4 强执详情采集器（enforcement-detail-collector.js）
-- 进入方式：点击案件 → 强执类目。
-- 输出：`{ statusText, enforcementFiledTime, enforcementCaseNumber, rejectTime, rejectReason }`。
-
-## 4. 选择器与改版检测
-
-- 所有选择器集中在 `extension/content/selectors.js`，按 §4 表格维护；**TBD 项须真实联调确认后填写**。
-- 采集器执行前先校验关键选择器命中（`selector-probe.js`）：任一关键选择器失效 → 抛出 `SELECTOR_CHANGED`，任务暂停，popup 提示「平台页面结构疑似变更，请更新选择器配置」，**禁止降级猜测**。
-
-## 5. 导航与节流（写动作控制）
-
-- 允许的写动作：进入详情、点击左侧案件、切换「执行」tab、返回列表。仅限 query-module 采集所需。
+### 3.4 导航与节流（写动作控制）
+- 允许的写动作：进入详情（`.fd-card-header` 点击 / 「案件空间」按钮 `.fd-case-space-btn` 打开新标签）、点击左侧案件、切换 tab（顶部类型 tab）、点「查询」、返回列表。仅限 query-module 采集所需。
 - 每个动作前确认目标元素可见可点；点击后等待页面稳定（等待标志元素出现，超时 10s → 失败重试 1 次 → 标记待人工）。
 - 批量任务相邻案件间隔 3–8s 随机（由 app-module 执行器控制）；单批上限 50 条。
 - 不修改平台任何请求参数，不做额外轮询；采集过程保持页面无侵入。
 
-## 6. 截图触发
+## 4. 选择器与改版检测（`extension/content/selectors.js`）
+
+| 键 | 选择器（2026-08-03 三个真实账号联调确认） |
+|---|---|
+| `header.userName` | `.fd-header-operate .fd-user-name`（当前登录账号） |
+| `list.row` | `.fd-case-item` |
+| `list.status` | `.fd-header-status`（文本 + fd-status-* class） |
+| `list.caseName` | `.fd-header-ajmc` |
+| `list.caseType` | `.fd-header-ajlx` |
+| `list.fieldItem` / `fieldLabel` / `fieldValue` | `.fd-field-item` / `.fd-field-lable` / `.fd-field-value` |
+| `list.spaceBtn` | `.fd-case-space-btn` |
+| `list.tab` / `searchBtn` | `.fd-com-tab` / `.fd-com-search-btn` |
+| `detail.formItem` | `.uni-forms-item` |
+
+- 改版检测（Task 3.7 已实现）：`assertSelectors(root)` 先校验配置存在，再取第一行探测行内关键选择器（status/caseName/fieldItem）；失效抛 `SELECTOR_CHANGED`（code + selectorKey），任务暂停并提示人工更新配置，**禁止降级猜测**；空列表页（暂无数据）合法不报错。
+- 详情页/用户区选择器失效时由对应采集器调用方捕获 `SELECTOR_CHANGED` 统一处理。
+
+## 5. 截图触发
 
 - 需要截图的场景：成功图片（立案成功/强执成功）、驳回图片（驳回/待补充材料）。
 - 时机：对应状态页面稳定后，由 screen-capturer（Phase 4）执行 `captureVisibleTab`；**截图前先确认目标信息已渲染**（详情时间/原因可见）。
