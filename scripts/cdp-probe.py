@@ -79,6 +79,47 @@ async def do_open(url):
     print(json.dumps({"id": res["id"], "url": res["url"]}, ensure_ascii=False))
 
 
+def analyze_expr():
+    # 结构脱敏分析：用户区/顶栏/列表容器/tab 结构（文本中省份/姓名等真实信息替换为占位）
+    return """(() => {
+      const leaf = (txt) => [...document.querySelectorAll('*')].filter(e => e.children.length === 0 && (e.innerText||'').includes(txt));
+      const redact = (s) => s.replace(/[\\u4e00-\\u9fa5]{2,4}(?=省|市|县|区)/g, '[PROV]').replace(/(省|市|县|区)[\\u4e00-\\u9fa5]{2,4}/g, '$1[NAME]');
+      const walk = (el, depth) => {
+        const o = { cls: (el.className||'').toString().slice(0,70), tag: el.tagName };
+        if (depth > 0 && el.children.length) o.children = [...el.children].slice(0,12).map(c => walk(c, depth-1));
+        if (!el.children.length && (el.innerText||'').trim()) o.txt = redact(el.innerText.trim().slice(0,24));
+        return o;
+      };
+      return JSON.stringify({
+        url: location.href,
+        topUserArea: leaf('省').slice(0,3).map(e => walk(e, 1)),
+        header: [...document.querySelectorAll('header, .fd-header, [class*="header" i]')].slice(0,3).map(e => walk(e, 1)),
+        tabbar: [...document.querySelectorAll('.fd-com-tab, [class*="com-tab"]')].slice(0,2).map(e => walk(e, 1)),
+        listAreas: [...document.querySelectorAll('[class*="list" i], [class*="table" i]')].slice(0,8).map(e => ({cls:(e.className||'').toString().slice(0,70), tag:e.tagName, kids: e.children.length})),
+        inputs: [...document.querySelectorAll('input')].map(i => ({cls:(i.className||'').toString().slice(0,50), ph:(i.placeholder||'').slice(0,30)})),
+        pagination: [...document.querySelectorAll('[class*="pagination" i]')].slice(0,2).map(e => ({cls:(e.className||'').toString().slice(0,60), txt:redact((e.innerText||'').trim().slice(0,30))}))
+      }, null, 1);
+    })()"""
+
+
+async def do_analyze(tab_id):
+    tabs = http_json("/json")
+    target = next(t for t in tabs if t.get("id") == tab_id)
+    value = await evaluate(target["webSocketDebuggerUrl"], analyze_expr())
+    print(json.dumps(value, ensure_ascii=False, indent=1))
+
+
+async def do_click_text(tab_id, text):
+    """点击页面中文本完全匹配的叶子元素（联调用，受控点击）。"""
+    expr = ("(() => { const els = [...document.querySelectorAll('*')].filter(e => e.children.length === 0 "
+            f"&& (e.innerText||'').trim() === {json.dumps(text)}); "
+            "if (!els.length) return {ok:false, reason:'not_found'}; els[0].click(); return {ok:true, count:els.length}; })()")
+    tabs = http_json("/json")
+    target = next(t for t in tabs if t.get("id") == tab_id)
+    value = await evaluate(target["webSocketDebuggerUrl"], expr)
+    print(json.dumps(value, ensure_ascii=False))
+
+
 async def do_nav(tab_id, url):
     tabs = http_json("/json")
     target = next(t for t in tabs if t.get("id") == tab_id)
@@ -93,6 +134,10 @@ async def main():
         await do_tabs()
     elif cmd == "dump":
         await do_dump(sys.argv[2])
+    elif cmd == "analyze":
+        await do_analyze(sys.argv[2])
+    elif cmd == "click":
+        await do_click_text(sys.argv[2], sys.argv[3])
     elif cmd == "open":
         await do_open(sys.argv[2])
     elif cmd == "nav":
