@@ -135,6 +135,25 @@ async def do_eval64(tab_id, b64):
     await do_eval(tab_id, expr)
 
 
+async def do_click_xy(tab_id, x, y):
+    """CDP 原生鼠标点击（真实输入路径，比 DOM click 更可靠）。"""
+    import base64
+    expr = (f"(() => {{ const r = document.elementFromPoint({x},{y}); "
+            f"return r ? (r.className||'').toString().slice(0,60) : null; }})()")
+    tabs = http_json("/json")
+    target = next(t for t in tabs if t.get("id") == tab_id)
+    async with websockets.connect(target["webSocketDebuggerUrl"], max_size=16 * 1024 * 1024) as ws:
+        for i, m in enumerate(["mousePressed", "mouseReleased"], start=1):
+            await ws.send(json.dumps({"id": i, "method": "Input.dispatchMouseEvent", "params": {
+                "type": m, "x": x, "y": y, "button": "left", "clickCount": 1}}))
+        # 等待两个响应
+        for _ in range(2):
+            await asyncio.wait_for(ws.recv(), timeout=10)
+    # 点击后确认命中元素
+    value = await evaluate(target["webSocketDebuggerUrl"], expr)
+    print(json.dumps({"clicked": [x, y], "hit": value}, ensure_ascii=False))
+
+
 async def do_nav(tab_id, url):
     tabs = http_json("/json")
     target = next(t for t in tabs if t.get("id") == tab_id)
@@ -157,6 +176,8 @@ async def main():
         await do_eval(sys.argv[2], sys.argv[3])
     elif cmd == "ev64":
         await do_eval64(sys.argv[2], sys.argv[3])
+    elif cmd == "xy":
+        await do_click_xy(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
     elif cmd == "open":
         await do_open(sys.argv[2])
     elif cmd == "nav":
