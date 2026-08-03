@@ -1,0 +1,106 @@
+// batch-runner.js — 批量任务执行器（调度核心，依赖注入 pageOps）
+// 依据 app-module 规格：
+// - 单批上限 50；相邻案件节流 3–8s 随机；失败重试 1 次后标记待人工；
+// - 状态识别禁猜（UNKNOWN → needsHuman）；成功/驳回自动截图；
+// - pageOps 由浏览器端实现（content script 操作真实页面），测试注入 mock。
+import { recognizeStatus } from "../content/status-recognizer.js";
+
+export const BATCH_LIMIT = 50;
+export const RETRY_COUNT = 1;
+export const THROTTLE_MIN_MS = 3000;
+export const THROTTLE_MAX_MS = 8000;
+
+export function jitterMs(min = THROTTLE_MIN_MS, max = THROTTLE_MAX_MS) {
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** 当天日期 YYYY-MM-DD（本地时区） */
+export function today() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** 需要截图的模板状态（成功图片/驳回图片） */
+const NEEDS_IMAGE = new Set(["立案成功", "强执成功", "已驳回"]);
+
+/**
+ * 执行批量查询。
+ * @param {object} opts
+ * @param {Array<{uid: string, account?: string, kind?: 'li'|'qz', plaintiff?: string}>} opts.cases
+ * @param {object} opts.pageOps 页面操作器（浏览器端注入）：queryCase({uid, kind}) → raw，capture() → 图片数据
+ * @param {(record: object) => void} [opts.onUpdate] 每条结果回调（供持久化）
+ * @param {object} [opts.timing] {delay: () => Promise} 可注入节流（测试传空）
+ * @returns {Promise<{total: number, success: number, unknown: number, needsHuman: number}>}
+ */
+export async function runBatch({ cases = [], pageOps, onUpdate, timing = {} }) {
+  const delay = timing.delay ?? (() => sleep(jitterMs()));
+  const queue = cases.slice(0, BATCH_LIMIT);
+  const stats = { total: queue.length, success: 0, unknown: 0, needsHuman: 0 };
+
+  for (const c of queue) {
+    let raw = null;
+    let error = null;
+    for (let attempt = 0; attempt <= RETRY_COUNT; attempt++) {
+      try {
+        raw = await pageOps.queryCase({ uid: c.uid, kind: c.kind });
+        error = null;
+        break;
+      } catch (e) {
+        error = e;
+        if (attempt < RETRY_COUNT) await delay();
+      }
+    }
+
+    const record = {
+      uid: c.uid,
+      kind: c.kind ?? "li",
+      account: c.account ?? "",
+      plaintiff: c.plaintiff ?? "",
+      status: "UNKNOWN",
+      caseNumber: null,
+      filedDate: null,
+      rejectTime: null,
+      rejectReason: null,
+      image: null,
+      queryTime: today(),
+      needsHuman: false,
+      error: null,
+    };
+
+    if (raw) {
+      const status = recognizeStatus({
+        statusText: raw.statusText,
+        caseType: raw.caseType,
+        pageKind: raw.pageKind,
+      });
+      record.status = status;
+      record.caseNumber = raw.caseNumber ?? null;
+      record.filedDate = raw.filedDate ?? null;
+      record.rejectTime = raw.rejectTime ?? null;
+      record.rejectReason = raw.rejectReason ?? null;
+      if (status === "UNKNOWN") {
+        record.needsHuman = true;
+      } else if (NEEDS_IMAGE.has(status)) {
+        try {
+          record.image = await pageOps.capture();
+        } catch {
+          record.needsHuman = true; // 截图失败 → 待人工补图
+        }
+      }
+    } else {
+      record.needsHuman = true;
+      record.error = error?.message ?? "QUERY_FAILED";
+    }
+
+    if (record.status === "UNKNOWN" || record.needsHuman) stats.needsHuman += 1;
+    if (record.status === "UNKNOWN") stats.unknown += 1;
+    if (record.status !== "UNKNOWN" && !record.needsHuman) stats.success += 1;
+
+    onUpdate?.(record);
+    await delay();
+  }
+
+  return stats;
+}
