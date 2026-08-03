@@ -90,3 +90,39 @@ export function extractBusinessFields(fields) {
     applyDate: findField(fields, "申请日期"),
   };
 }
+
+/**
+ * 采集详情页（案件空间 pagesWsla/common/wsla/detail）。
+ * 表单项 .uni-forms-item 的 innerText 为「label\nvalue」结构（实测）；
+ * 「审核结果」+「审核时间」成对构成审核记录（最新在前），「审核意见」= 驳回原因。
+ * @returns {{auditRecords: Array<{status: string, time: string}>, fields: Record<string,string>, opinion: string|null}}
+ */
+export function collectDetail(root, selectors = SELECTORS) {
+  const items = root.querySelectorAll(selectors.detail.formItem);
+  const fields = {};
+  const auditRecords = [];
+  let current = null;
+  for (const item of items) {
+    const text = String(item.innerText ?? "")
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!text.length) continue;
+    const [label, ...rest] = text;
+    const value = rest.join(" ");
+    if (label === "审核结果") {
+      current = { status: value };
+      auditRecords.push(current);
+    } else if (label === "审核时间" && current) {
+      current.time = value;
+    } else {
+      fields[label] = value;
+      if (label === "审核意见") current = null;
+    }
+  }
+  return {
+    auditRecords,
+    fields,
+    opinion: fields["审核意见"] ?? null,
+  };
+}
