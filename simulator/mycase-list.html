@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>模拟-我的案件列表（已立案/执行）</title></head>
+<body>
+  <!-- 依据 docs/engineering/platform-recon-2026-08-03.md §5.4/5.6 结构复刻 -->
+  <div class="fd-com-header"><div class="fd-pc-first-header">
+    <div class="fd-title-container">人民法院在线服务网</div>
+    <div class="fd-header-operate">
+      <div class="fd-select-area">浙江省</div>
+      <div class="fd-user-name">测试原告</div>
+      <div class="fd-exit">退出</div>
+    </div>
+  </div></div>
+  <div class="fd-com-main-container fd-com-tab-bg">
+    <div class="fd-com-tab">调解 保全 审判 执行 破产 信访</div>
+    <div class="fd-com-search">
+      <input placeholder="请输入案号、案件名称、法院查询"><div class="fd-com-search-btn">查询</div>
+    </div>
+    <div class="fd-com-list-container">
+      <div class="fd-case-item">
+        <div class="fd-card-header">
+          <div class="fd-header-status fd-status-1">审理中</div>
+          <div class="fd-header-ajmc">测试原告与测试被告买卖合同纠纷一案</div>
+          <div class="fd-header-ajlx">民事案件</div>
+        </div>
+        <div class="fd-card-content">
+          <div class="fd-case-field">
+            <div class="fd-field-item"><div class="fd-field-lable">案号</div><div class="fd-field-value">（2026）京0106民初00001号</div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">立案日期</div><div class="fd-field-value">2026-07-22</div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">开庭时间</div><div class="fd-field-value"></div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">生效时间</div><div class="fd-field-value"></div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">法院</div><div class="fd-field-value">北京市丰台区人民法院</div></div>
+          </div>
+          <div class="fd-case-space-btn">案件空间</div>
+        </div>
+        <div class="fd-card-option"><div class="fd-option-btn">在线阅卷</div></div>
+      </div>
+      <div class="fd-case-item">
+        <div class="fd-card-header">
+          <div class="fd-header-status fd-status-9">已结案</div>
+          <div class="fd-header-ajmc">测试原告申请测试被告买卖合同纠纷</div>
+          <div class="fd-header-ajlx">执行类案件</div>
+        </div>
+        <div class="fd-card-content">
+          <div class="fd-case-field">
+            <div class="fd-field-item"><div class="fd-field-lable">案号</div><div class="fd-field-value">（2026）京0106执00001号</div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">立案日期</div><div class="fd-field-value">2026-06-03</div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">开庭时间</div><div class="fd-field-value"></div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">生效时间</div><div class="fd-field-value"></div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">法院</div><div class="fd-field-value">北京市丰台区人民法院</div></div>
+          </div>
+          <div class="fd-case-space-btn">案件空间</div>
+        </div>
+        <div class="fd-card-option"><div class="fd-option-btn">事项申请</div></div>
+      </div>
+    </div>
+    <div class="fd-com-pagination-container">共 2 条</div>
+  </div>
+</body>
+</html>

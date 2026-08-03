@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>模拟-网上立案列表（含驳回案件）</title></head>
+<body>
+  <!-- 依据 docs/engineering/platform-recon-2026-08-03.md §5.1 结构复刻；用于 jsdom 端到端验收 -->
+  <div class="fd-com-header"><div class="fd-pc-first-header">
+    <div class="fd-title-container">人民法院在线服务网</div>
+    <div class="fd-header-operate">
+      <div class="fd-select-area">浙江省</div>
+      <div class="fd-user-name">测试原告</div>
+      <div class="fd-exit">退出</div>
+    </div>
+  </div></div>
+  <div class="fd-com-main-container fd-com-tab-bg">
+    <div class="fd-com-tab">调解 保全 审判 执行 破产 信访</div>
+    <div class="fd-com-search">
+      <input placeholder="请输入案件名称查询"><div class="fd-com-search-btn">查询</div>
+    </div>
+    <div class="fd-com-list-container">
+      <div class="fd-case-item">
+        <div class="fd-card-header">
+          <div class="fd-header-status fd-status-warning">待补充材料</div>
+          <div class="fd-header-ajmc">测试原告诉测试被告买卖合同纠纷一案</div>
+          <div class="fd-header-ajlx">民事一审案件</div>
+        </div>
+        <div class="fd-card-content">
+          <div class="fd-case-field">
+            <div class="fd-field-item"><div class="fd-field-lable">参与人</div><div class="fd-field-value">原告：测试原告；被告：测试被告</div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">案由</div><div class="fd-field-value">买卖合同纠纷</div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">申请日期</div><div class="fd-field-value">2026-07-21</div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">法院</div><div class="fd-field-value">北京市丰台区人民法院</div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">审核意见</div><div class="fd-field-value">退回，请补充材料。</div></div>
+          </div>
+          <div class="fd-case-space-btn">案件空间</div>
+        </div>
+        <div class="fd-card-option"><div class="fd-option-btn">评价</div><div class="fd-option-btn">补充材料</div></div>
+      </div>
+      <div class="fd-case-item">
+        <div class="fd-card-header">
+          <div class="fd-header-status fd-status-success">已立案</div>
+          <div class="fd-header-ajmc">测试原告2诉测试被告2买卖合同纠纷一案</div>
+          <div class="fd-header-ajlx">民事一审案件</div>
+        </div>
+        <div class="fd-card-content">
+          <div class="fd-case-field">
+            <div class="fd-field-item"><div class="fd-field-lable">参与人</div><div class="fd-field-value">原告：测试原告2；被告：测试被告2</div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">案由</div><div class="fd-field-value">买卖合同纠纷</div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">申请日期</div><div class="fd-field-value">2026-07-14</div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">法院</div><div class="fd-field-value">北京市丰台区人民法院</div></div>
+            <div class="fd-field-item"><div class="fd-field-lable">审核意见</div><div class="fd-field-value">决定立案</div></div>
+          </div>
+          <div class="fd-case-space-btn">案件空间</div>
+        </div>
+        <div class="fd-card-option"><div class="fd-option-btn">评价</div></div>
+      </div>
+    </div>
+    <div class="fd-com-pagination-container">共 2 条</div>
+  </div>
+</body>
+</html>

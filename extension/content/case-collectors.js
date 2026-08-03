@@ -5,6 +5,9 @@
 // - 关键选择器失效抛 SELECTOR_CHANGED（Task 3.7），禁止降级猜测。
 import { CRITICAL_SELECTORS, SELECTORS } from "./selectors.js";
 
+/** 元素文本：textContent 优先（jsdom 兼容），innerText 兜底（真实浏览器布局文本） */
+const textOf = (el) => (el?.textContent ?? el?.innerText ?? "").toString().trim();
+
 export class SelectorChangedError extends Error {
   constructor(selectorKey) {
     super(`SELECTOR_CHANGED: ${selectorKey}`);
@@ -55,9 +58,9 @@ export function collectListRows(root, selectors = SELECTORS) {
 export function collectRow(rowEl, selectors = SELECTORS) {
   const q = (sel) => rowEl.querySelector(sel);
   return {
-    statusText: q(selectors.list.status)?.innerText?.trim() ?? "",
-    caseName: q(selectors.list.caseName)?.innerText?.trim() ?? "",
-    caseType: q(selectors.list.caseType)?.innerText?.trim() ?? "",
+    statusText: textOf(q(selectors.list.status)),
+    caseName: textOf(q(selectors.list.caseName)),
+    caseType: textOf(q(selectors.list.caseType)),
     fields: collectFields(rowEl, selectors),
     hasSpaceBtn: !!q(selectors.list.spaceBtn),
   };
@@ -67,11 +70,10 @@ export function collectRow(rowEl, selectors = SELECTORS) {
 export function collectFields(rowEl, selectors = SELECTORS) {
   const items = rowEl.querySelectorAll(selectors.list.fieldItem);
   return [...items]
-    .map((item) => {
-      const label = item.querySelector(selectors.list.fieldLabel)?.innerText?.trim() ?? "";
-      const value = item.querySelector(selectors.list.fieldValue)?.innerText?.trim() ?? "";
-      return { label, value };
-    })
+    .map((item) => ({
+      label: textOf(item.querySelector(selectors.list.fieldLabel)),
+      value: textOf(item.querySelector(selectors.list.fieldValue)),
+    }))
     .filter((f) => f.label);
 }
 
@@ -103,13 +105,24 @@ export function collectDetail(root, selectors = SELECTORS) {
   const auditRecords = [];
   let current = null;
   for (const item of items) {
-    const text = String(item.innerText ?? "")
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (!text.length) continue;
-    const [label, ...rest] = text;
-    const value = rest.join(" ");
+    // 优先子元素对（label/value 结构，jsdom 兼容）；否则按 innerText/textContent 行拆分
+    const kids = [...(item.children ?? [])].filter((c) => textOf(c));
+    let label = "";
+    let value = "";
+    if (kids.length >= 2) {
+      label = textOf(kids[0]);
+      value = textOf(kids[kids.length - 1]);
+    } else {
+      const text = String(item.innerText ?? item.textContent ?? "")
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (!text.length) continue;
+      const [first, ...rest] = text;
+      label = first;
+      value = rest.join(" ");
+    }
+    if (!label) continue;
     if (label === "审核结果") {
       current = { status: value };
       auditRecords.push(current);

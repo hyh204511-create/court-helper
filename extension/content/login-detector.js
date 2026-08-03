@@ -19,7 +19,7 @@ export function detectLoginState({ hash = "", root } = {}) {
   if (!root || typeof root.querySelector !== "function") return "unknown";
   if (isLoginHash(hash)) return "login";
   const userNameEl = root.querySelector(SELECTORS.header.userName);
-  if (userNameEl?.innerText?.trim()) return "logged-in";
+  if ((userNameEl?.textContent ?? userNameEl?.innerText ?? "").toString().trim()) return "logged-in";
   // 非登录页但用户区缺失 → 疑似会话失效（由调用方在页面稳定后判定）
   return "session-expired";
 }
@@ -28,5 +28,5 @@ export function detectLoginState({ hash = "", root } = {}) {
 export function getCurrentAccount(root, selectors = SELECTORS) {
   if (!root || typeof root.querySelector !== "function") return null;
   const el = root.querySelector(selectors.header.userName);
-  return el?.innerText?.trim() ?? null;
+  return (el?.textContent ?? el?.innerText ?? "").toString().trim() || null;
 }
