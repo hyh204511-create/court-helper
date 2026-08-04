@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 
 import { createLoginController } from "../extension/popup/login-controller.js";
+import { LIST_ROUTE, canStartBatch, createStartBatchSender, startBatchMessage } from "../extension/popup/query-gate.js";
 
 function jsonResponse(payload, ok = true) {
   return { ok, json: async () => payload };
@@ -161,4 +162,34 @@ test("服务响应错误正文不进入 UI，销毁 popup 后私有凭据不能�
   assert.equal(chromeApi.calls.messages.length, beforeDestroy);
   assert.equal(dom.window.document.body.textContent.includes("demo-password"), false);
   dom.window.close();
+});
+
+test("一键抓取只在已登录立案列表页且未登录操作进行时可用", () => {
+  assert.equal(canStartBatch({ state: "logged-in", route: LIST_ROUTE, loginInProgress: false }), true);
+  assert.equal(canStartBatch({ state: "login", route: LIST_ROUTE, loginInProgress: false }), false);
+  assert.equal(canStartBatch({ state: "logged-in", route: "#/pagesGrxx/pc/login/index", loginInProgress: false }), false);
+  assert.equal(canStartBatch({ state: "logged-in", route: LIST_ROUTE, loginInProgress: true }), false);
+  assert.deepEqual(startBatchMessage(), { type: "START_BATCH", kind: "li" });
+});
+
+test("一键抓取 sender 快速双击只发送一个既有 START_BATCH 消息", async () => {
+  const messages = [];
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const chromeApi = {
+    tabs: {
+      sendMessage: async (_tabId, message) => {
+        messages.push(message);
+        await pending;
+        return { ok: true };
+      },
+    },
+  };
+  const sendStartBatch = createStartBatchSender({ chromeApi });
+  const first = sendStartBatch(7);
+  const second = sendStartBatch(7);
+  assert.equal(first, second);
+  release();
+  assert.deepEqual(await first, { ok: true });
+  assert.deepEqual(messages, [{ type: "START_BATCH", kind: "li" }]);
 });
