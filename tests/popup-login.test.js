@@ -1,0 +1,164 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { JSDOM } from "jsdom";
+
+import { createLoginController } from "../extension/popup/login-controller.js";
+
+function jsonResponse(payload, ok = true) {
+  return { ok, json: async () => payload };
+}
+
+function makeDom() {
+  return new JSDOM(`
+    <!doctype html>
+    <html><body>
+      <span id="login-status" class="badge badge-off">未登录</span>
+      <span id="login-service-status"></span>
+      <select id="login-account"></select>
+      <button id="btn-auto-login" disabled>一键登录</button>
+      <span id="login-result"></span>
+    </body></html>
+  `);
+}
+
+function makeChrome({ tabId = 7, sendResponse = { ok: true } } = {}) {
+  const calls = { query: 0, messages: [], storage: 0 };
+  return {
+    calls,
+    tabs: {
+      query: async () => {
+        calls.query += 1;
+        return [{ id: tabId, url: "https://zxfw.court.gov.cn/" }];
+      },
+      sendMessage: async (_id, message) => {
+        calls.messages.push(message);
+        return sendResponse;
+      },
+    },
+    storage: {
+      local: {
+        get: async () => { calls.storage += 1; return {}; },
+        set: async () => { calls.storage += 1; },
+      },
+    },
+  };
+}
+
+async function initController({ fetchImpl, chromeApi = makeChrome() } = {}) {
+  const dom = makeDom();
+  const controller = createLoginController({
+    document: dom.window.document,
+    fetchImpl,
+    chromeApi,
+  });
+  const result = await controller.init();
+  return { dom, controller, chromeApi, result };
+}
+
+test("健康检查成功后才读取账号，账号下拉不渲染密码", async () => {
+  const calls = [];
+  const { dom, controller, chromeApi, result } = await initController({
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (url.endsWith("/health")) return jsonResponse({ ok: true });
+      return jsonResponse({ ok: true, accounts: [{ account: "acct-one", password: "demo-password with spaces" }] });
+    },
+  });
+  assert.deepEqual(result, { ok: true, accounts: 1 });
+  assert.deepEqual(calls, [
+    "http://127.0.0.1:8765/health",
+    "http://127.0.0.1:8765/accounts",
+  ]);
+  const option = dom.window.document.querySelector("#login-account option");
+  assert.equal(option.value, "acct-one");
+  assert.equal(option.textContent, "acct-one");
+  assert.equal(option.title ?? "", "");
+  assert.equal(JSON.stringify(option.dataset).includes("demo-password"), false);
+  assert.equal(dom.window.document.body.textContent.includes("demo-password"), false);
+  assert.equal(dom.window.document.querySelector("#btn-auto-login").disabled, false);
+  assert.equal(chromeApi.calls.storage, 0);
+  controller.destroy();
+  dom.window.close();
+});
+
+test("本地服务不可达时显示固定启动提示，不请求账号且不渲染异常正文", async () => {
+  const rawError = "private-service-body-demo-password";
+  let calls = 0;
+  const { dom, controller, result } = await initController({
+    fetchImpl: async () => {
+      calls += 1;
+      throw new Error(rawError);
+    },
+  });
+  assert.deepEqual(result, { ok: false, error: "SERVICE_UNAVAILABLE" });
+  assert.equal(calls, 1);
+  assert.match(dom.window.document.querySelector("#login-service-status").textContent, /python scripts\/login-helper-server\.py/);
+  assert.equal(dom.window.document.body.textContent.includes(rawError), false);
+  assert.equal(dom.window.document.querySelector("#btn-auto-login").disabled, true);
+  controller.destroy();
+  dom.window.close();
+});
+
+test("账号列表为空时禁用一键登录", async () => {
+  const { dom, controller, result } = await initController({
+    fetchImpl: async (url) => url.endsWith("/health")
+      ? jsonResponse({ ok: true })
+      : jsonResponse({ ok: true, accounts: [] }),
+  });
+  assert.deepEqual(result, { ok: true, accounts: 0 });
+  assert.equal(dom.window.document.querySelector("#btn-auto-login").disabled, true);
+  assert.equal(dom.window.document.querySelectorAll("#login-account option").length, 0);
+  controller.destroy();
+  dom.window.close();
+});
+
+test("一键登录向当前标签只发送一次 AUTO_LOGIN，密码只在消息中短暂出现", async () => {
+  const chromeApi = makeChrome();
+  const { dom, controller, result } = await initController({
+    chromeApi,
+    fetchImpl: async (url) => url.endsWith("/health")
+      ? jsonResponse({ ok: true })
+      : jsonResponse({ ok: true, accounts: [{ account: "acct-one", password: "demo-password" }] }),
+  });
+  assert.deepEqual(result, { ok: true, accounts: 1 });
+  const button = dom.window.document.querySelector("#btn-auto-login");
+  button.click();
+  button.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(chromeApi.calls.query, 1);
+  assert.equal(chromeApi.calls.messages.length, 1);
+  assert.deepEqual(chromeApi.calls.messages[0], {
+    type: "AUTO_LOGIN",
+    account: "acct-one",
+    password: "demo-password",
+    serviceUrl: "http://127.0.0.1:8765",
+  });
+  assert.equal(dom.window.document.body.textContent.includes("demo-password"), false);
+  assert.match(dom.window.document.querySelector("#login-result").textContent, /登录成功/);
+  assert.equal(chromeApi.calls.storage, 0);
+  controller.destroy();
+  dom.window.close();
+});
+
+test("服务响应错误正文不进入 UI，销毁 popup 后私有凭据不能再次发送", async () => {
+  const chromeApi = makeChrome({ sendResponse: { ok: false, error: "private-service-body-demo-password" } });
+  const { dom, controller } = await initController({
+    chromeApi,
+    fetchImpl: async (url) => url.endsWith("/health")
+      ? jsonResponse({ ok: true })
+      : jsonResponse({ ok: true, accounts: [{ account: "acct-one", password: "demo-password" }] }),
+  });
+  const button = dom.window.document.querySelector("#btn-auto-login");
+  button.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const resultText = dom.window.document.querySelector("#login-result").textContent;
+  assert.match(resultText, /人工/);
+  assert.equal(resultText.includes("private-service-body-demo-password"), false);
+  const beforeDestroy = chromeApi.calls.messages.length;
+  controller.destroy();
+  button.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(chromeApi.calls.messages.length, beforeDestroy);
+  assert.equal(dom.window.document.body.textContent.includes("demo-password"), false);
+  dom.window.close();
+});
