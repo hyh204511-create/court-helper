@@ -12,3 +12,4 @@ export * from './cases/index.ts';
 export * from './screenshots/index.ts';
 export * from './storage/index.ts';
 export * from './retention/index.ts';
+export * from './admin/index.ts';

@@ -32,6 +32,7 @@ import {
   type ScheduleDaily,
 } from './retention/index.ts';
 import type { Clock } from './retention/policy.ts';
+import { registerAdminRoutes } from './admin/routes.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -69,6 +70,12 @@ function registerCors(app: FastifyInstance, config: ServerConfig): void {
     },
   });
 }
+
+const defaultRetentionLogger: RetentionLogger = {
+  warn(object, message) {
+    process.stderr.write(`${JSON.stringify({ level: 'warn', message, ...object })}\n`);
+  },
+};
 
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const config = options.config ?? loadConfig();
@@ -125,6 +132,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       repository: options.authRepository,
       service: authService,
     });
+    registerAdminRoutes(app, { authService });
     registerAuthRoutes(app, {
       config,
       prefix: '/api/v1',
@@ -179,6 +187,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     }
 
     if (options.caseRepository && options.screenshotRepository && options.storageBackend) {
+      const retentionLogger = options.retention?.logger
+        ?? (options.logger ? app.log : defaultRetentionLogger);
       const retentionService = new RetentionService({
         authRepository: options.authRepository,
         caseRepository: options.caseRepository,
@@ -186,11 +196,11 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         storageBackend: options.storageBackend,
       }, {
         clock,
-        logger: options.retention?.logger ?? app.log,
+        logger: retentionLogger,
       });
       const retentionScheduler = new RetentionScheduler(retentionService, {
         scheduleDaily: options.retention?.scheduleDaily,
-        logger: options.retention?.logger ?? app.log,
+        logger: retentionLogger,
       });
       app.addHook('onReady', async () => {
         await retentionScheduler.start();
