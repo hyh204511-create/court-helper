@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
 import { test, after } from "node:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -26,12 +26,30 @@ writeFileSync(
   "utf8",
 );
 
+const OCR_SUCCESS_DIR = join(TEMP_DIR, "ocr-success");
+const OCR_MISSING_DIR = join(TEMP_DIR, "ocr-missing");
+mkdirSync(OCR_SUCCESS_DIR);
+mkdirSync(OCR_MISSING_DIR);
+writeFileSync(
+  join(OCR_SUCCESS_DIR, "ddddocr.py"),
+  [
+    "class DdddOcr:",
+    "    def __init__(self, show_ad=False):",
+    "        pass",
+    "    def classification(self, data):",
+    "        return '  OCR-OK  '",
+  ].join("\n"),
+  "utf8",
+);
+writeFileSync(join(OCR_MISSING_DIR, "ddddocr.py"), "raise ImportError('optional dependency unavailable')\n", "utf8");
+
 const children = new Set();
 let serverQueue = Promise.resolve();
 
-function startServer(accountsPath) {
+function startServer(accountsPath, env = {}) {
   const child = spawn("python", [SERVER, "--accounts", accountsPath], {
     cwd: ROOT,
+    env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
@@ -68,12 +86,12 @@ async function stopServer(server) {
   children.delete(server.child);
 }
 
-async function withServer(accountsPath, callback) {
+async function withServer(accountsPath, callback, env = {}) {
   const previous = serverQueue;
   let release;
   serverQueue = new Promise((resolve) => { release = resolve; });
   await previous;
-  const server = startServer(accountsPath);
+  const server = startServer(accountsPath, env);
   try {
     assert.equal(await waitHealthy(server), true, "本地服务未能启动");
     return await callback(server);
@@ -141,4 +159,83 @@ test("未知路由返回稳定的非敏感 404", async () => {
     assert.equal(response.status, 404);
     assert.deepEqual(await response.json(), { ok: false, error: "NOT_FOUND" });
   });
+});
+
+test("POST /ocr 合法 JSON 经可选 ddddocr 返回 trim 后文本", async () => {
+  await withServer(
+    ACCOUNTS_FILE,
+    async (server) => {
+      const image = "Y2FwdHVyZS1ieXRlcw==";
+      const response = await fetch(`${BASE}/ocr`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image }),
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { ok: true, text: "OCR-OK" });
+      assert.equal(server.getOutput().includes(image), false);
+      assert.equal(server.getOutput().includes("OCR-OK"), false);
+    },
+    { PYTHONPATH: [OCR_SUCCESS_DIR, process.env.PYTHONPATH].filter(Boolean).join(delimiter) },
+  );
+});
+
+test("POST /ocr 未安装 ddddocr 时返回精确 DDDDOCR_MISSING", async () => {
+  await withServer(
+    ACCOUNTS_FILE,
+    async () => {
+      const response = await fetch(`${BASE}/ocr`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: "Y2FwdHVyZS1ieXRlcw==" }),
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { ok: false, error: "DDDDOCR_MISSING" });
+    },
+    { PYTHONPATH: [OCR_MISSING_DIR, process.env.PYTHONPATH].filter(Boolean).join(delimiter) },
+  );
+});
+
+test("POST /ocr 缺失/空 image 与非法 JSON 返回稳定非敏感错误", async () => {
+  await withServer(
+    ACCOUNTS_FILE,
+    async () => {
+      for (const body of [{}, { image: "" }]) {
+        const response = await fetch(`${BASE}/ocr`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        assert.equal(response.status, 400);
+        assert.deepEqual(await response.json(), { ok: false, error: "IMAGE_REQUIRED" });
+      }
+
+      const invalid = await fetch(`${BASE}/ocr`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "not-json-captcha-body",
+      });
+      assert.equal(invalid.status, 400);
+      const invalidBody = await invalid.json();
+      assert.deepEqual(invalidBody, { ok: false, error: "BAD_REQUEST" });
+      assert.equal(JSON.stringify(invalidBody).includes("not-json-captcha-body"), false);
+    },
+    { PYTHONPATH: [OCR_MISSING_DIR, process.env.PYTHONPATH].filter(Boolean).join(delimiter) },
+  );
+});
+
+test("POST /ocr 超过大小上限返回 413，不进入识别流程", async () => {
+  await withServer(
+    ACCOUNTS_FILE,
+    async () => {
+      const response = await fetch(`${BASE}/ocr`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: "x".repeat(2 * 1024 * 1024) }),
+      });
+      assert.equal(response.status, 413);
+      assert.deepEqual(await response.json(), { ok: false, error: "REQUEST_TOO_LARGE" });
+    },
+    { PYTHONPATH: [OCR_MISSING_DIR, process.env.PYTHONPATH].filter(Boolean).join(delimiter) },
+  );
 });
