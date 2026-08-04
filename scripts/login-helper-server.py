@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""court-helper 的本地账号服务（仅监听 127.0.0.1:8765）。"""
+
+import argparse
+import json
+import os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+HOST = "127.0.0.1"
+PORT = 8765
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_ACCOUNTS = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "accounts.txt"))
+
+
+def load_accounts(path):
+    """读取账号文件；注释/空行跳过，密码保留分隔符后的内部空格。"""
+    if not os.path.isfile(path):
+        return []
+
+    accounts = []
+    try:
+        with open(path, "r", encoding="utf-8") as account_file:
+            for raw_line in account_file:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                account, separator, password = line.partition(" ")
+                if not separator or not account:
+                    continue
+                password = password.strip()
+                if not password:
+                    continue
+                accounts.append({"account": account, "password": password})
+    except (OSError, UnicodeError):
+        return []
+    return accounts
+
+
+class LoginHelperHandler(BaseHTTPRequestHandler):
+    accounts_path = DEFAULT_ACCOUNTS
+
+    def _cors(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def _json(self, status, payload):
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self._cors()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self._cors()
+        self.end_headers()
+
+    def do_GET(self):
+        path = self.path.split("?", 1)[0]
+        if path == "/health":
+            self._json(200, {"ok": True})
+            return
+        if path == "/accounts":
+            self._json(200, {"ok": True, "accounts": load_accounts(self.accounts_path)})
+            return
+        self._json(404, {"ok": False, "error": "NOT_FOUND"})
+
+    def do_POST(self):
+        self._json(404, {"ok": False, "error": "NOT_FOUND"})
+
+    def log_message(self, _format, *_args):
+        # BaseHTTPRequestHandler 默认会记录请求路径/查询串；本服务不记录访问日志。
+        return
+
+
+class ReusableThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+
+
+def main():
+    parser = argparse.ArgumentParser(description="court-helper 本地账号服务")
+    parser.add_argument("--accounts", default=DEFAULT_ACCOUNTS, help="账号文件路径")
+    args = parser.parse_args()
+
+    LoginHelperHandler.accounts_path = os.path.abspath(args.accounts)
+    server = ReusableThreadingHTTPServer((HOST, PORT), LoginHelperHandler)
+    print(f"[login-helper] listening on {HOST}:{PORT}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()
