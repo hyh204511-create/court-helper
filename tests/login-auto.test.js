@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 
 import { SELECTORS } from "../extension/content/selectors.js";
-import { fetchCaptchaBase64, fillLoginForm, findExactTextView } from "../extension/content/login-auto.js";
+import { doAutoLogin, fetchCaptchaBase64, fillLoginForm, findExactTextView } from "../extension/content/login-auto.js";
 
 test("集中登录选择器能定位输入框、JPEG 验证码图和文本锚点", () => {
   const dom = new JSDOM(`
@@ -100,5 +100,224 @@ test("精确文本定位只返回登录 view，不依赖 button 标签", () => {
   assert.equal(dom.window.document.querySelector("button"), null);
   assert.equal(findExactTextView(dom.window.document, "密码登录")?.id, "password-tab");
   assert.equal(findExactTextView(dom.window.document, "登录按钮"), null);
+  dom.window.close();
+});
+
+function makeClock() {
+  const clock = {
+    current: 0,
+    sleeps: [],
+    onSleep: null,
+    now() {
+      return clock.current;
+    },
+    async sleep(ms) {
+      clock.sleeps.push(ms);
+      clock.current += ms;
+      await clock.onSleep?.(ms);
+    },
+  };
+  return clock;
+}
+
+function autoLoginOptions(dom, clock, fetchImpl, overrides = {}) {
+  return {
+    account: "demo-account",
+    password: "demo-password",
+    serviceUrl: "http://127.0.0.1:8765",
+    root: dom.window.document,
+    location: { hash: "#/pagesGrxx/pc/login/index" },
+    fetch: fetchImpl,
+    now: clock.now,
+    sleep: clock.sleep,
+    random: () => 0,
+    ...overrides,
+  };
+}
+
+function jsonResponse(payload, ok = true) {
+  return { ok, json: async () => payload };
+}
+
+test("doAutoLogin：首次 OCR、填表、点击后 hash 离开登录路由即成功", async () => {
+  const dom = makeLoginDom();
+  const clock = makeClock();
+  const location = { hash: "#/pagesGrxx/pc/login/index" };
+  let submits = 0;
+  const submit = findExactTextView(dom.window.document, "登录");
+  submit.addEventListener("click", () => {
+    submits += 1;
+    location.hash = "#/pagesWsla/pc/list/index";
+  });
+  const ocrRequests = [];
+  const result = await doAutoLogin(autoLoginOptions(
+    dom,
+    clock,
+    async (_url, request) => {
+      ocrRequests.push(JSON.parse(request.body));
+      return jsonResponse({ ok: true, text: "A7x2" });
+    },
+    { location },
+  ));
+
+  assert.deepEqual(result, { ok: true });
+  assert.equal(submits, 1);
+  assert.deepEqual(ocrRequests, [{ image: "amJzZG9t" }]);
+  dom.window.close();
+});
+
+test("doAutoLogin：OCR 服务不可达时返回 SERVICE_UNAVAILABLE，不提交表单", async () => {
+  const dom = makeLoginDom();
+  const clock = makeClock();
+  let submits = 0;
+  findExactTextView(dom.window.document, "登录").addEventListener("click", () => { submits += 1; });
+  const result = await doAutoLogin(autoLoginOptions(dom, clock, async () => {
+    throw new Error("transport detail must not escape");
+  }));
+
+  assert.deepEqual(result, { ok: false, error: "SERVICE_UNAVAILABLE" });
+  assert.equal(submits, 0);
+  assert.equal(JSON.stringify(result).includes("demo-password"), false);
+  dom.window.close();
+});
+
+test("doAutoLogin：DDDDOCR_MISSING 映射为 OCR_FAILED，不盲目提交", async () => {
+  const dom = makeLoginDom();
+  const clock = makeClock();
+  let submits = 0;
+  findExactTextView(dom.window.document, "登录").addEventListener("click", () => { submits += 1; });
+  const result = await doAutoLogin(autoLoginOptions(
+    dom,
+    clock,
+    async () => jsonResponse({ ok: false, error: "DDDDOCR_MISSING" }),
+  ));
+
+  assert.deepEqual(result, { ok: false, error: "OCR_FAILED" });
+  assert.equal(submits, 0);
+  dom.window.close();
+});
+
+test("doAutoLogin：首次超时只刷新一次，等待新图后节流并最多提交第二次", async () => {
+  const dom = makeLoginDom();
+  const clock = makeClock();
+  const location = { hash: "#/pagesGrxx/pc/login/index" };
+  const image = dom.window.document.querySelector("#captcha");
+  image.src = "data:image/jpeg;base64,old-captcha";
+  let refreshRequested = false;
+  let refreshes = 0;
+  let submits = 0;
+  image.addEventListener("click", () => {
+    refreshRequested = true;
+    refreshes += 1;
+  });
+  clock.onSleep = async () => {
+    if (refreshRequested && image.getAttribute("src") === "data:image/jpeg;base64,old-captcha") {
+      image.setAttribute("src", "data:image/jpeg;base64,new-captcha");
+    }
+  };
+  findExactTextView(dom.window.document, "登录").addEventListener("click", () => { submits += 1; });
+  const ocrRequests = [];
+  const result = await doAutoLogin(autoLoginOptions(
+    dom,
+    clock,
+    async (_url, request) => {
+      ocrRequests.push(JSON.parse(request.body));
+      return jsonResponse({ ok: true, text: "A7x2" });
+    },
+    { location },
+  ));
+
+  assert.deepEqual(result, { ok: false, error: "NEEDS_HUMAN" });
+  assert.equal(submits, 2);
+  assert.equal(refreshes, 1);
+  assert.deepEqual(ocrRequests, [{ image: "old-captcha" }, { image: "new-captcha" }]);
+  const throttleSleeps = clock.sleeps.filter((ms) => ms >= 3000 && ms <= 8000);
+  assert.equal(throttleSleeps.length, 1);
+  assert.equal(throttleSleeps[0], 3000);
+  dom.window.close();
+});
+
+test("doAutoLogin：验证码刷新超时不读取旧图、不提交第二次", async () => {
+  const dom = makeLoginDom();
+  const clock = makeClock();
+  let submits = 0;
+  let refreshes = 0;
+  const image = dom.window.document.querySelector("#captcha");
+  image.addEventListener("click", () => { refreshes += 1; });
+  findExactTextView(dom.window.document, "登录").addEventListener("click", () => { submits += 1; });
+  const result = await doAutoLogin(autoLoginOptions(
+    dom,
+    clock,
+    async () => jsonResponse({ ok: true, text: "A7x2" }),
+  ));
+
+  assert.deepEqual(result, { ok: false, error: "NEEDS_HUMAN" });
+  assert.equal(refreshes, 1);
+  assert.equal(submits, 1);
+  dom.window.close();
+});
+
+test("doAutoLogin：需要时只点击一次密码登录并等待密码框出现", async () => {
+  const dom = new JSDOM(`
+    <main>
+      <view id="password-tab">密码登录</view>
+      <input type="text" class="uni-input-input" aria-label="账号">
+      <input type="text" class="uni-input-input" aria-label="验证码">
+      <img src="data:image/jpeg;base64,amJzZG9t">
+      <view id="submit-view">登录</view>
+    </main>
+  `);
+  const clock = makeClock();
+  let tabClicks = 0;
+  let formAdded = false;
+  const tab = dom.window.document.querySelector("#password-tab");
+  tab.addEventListener("click", () => { tabClicks += 1; });
+  clock.onSleep = async () => {
+    if (!formAdded) {
+      const password = dom.window.document.createElement("input");
+      password.type = "password";
+      password.className = "uni-input-input";
+      password.setAttribute("aria-label", "密码");
+      dom.window.document.querySelector("main").insertBefore(password, dom.window.document.querySelector("img"));
+      formAdded = true;
+    }
+  };
+  const location = { hash: "#/pagesGrxx/pc/login/index" };
+  dom.window.document.querySelector("#submit-view").addEventListener("click", () => {
+    location.hash = "#/pagesWsla/pc/list/index";
+  });
+
+  const result = await doAutoLogin(autoLoginOptions(
+    dom,
+    clock,
+    async () => jsonResponse({ ok: true, text: "A7x2" }),
+    { location },
+  ));
+  assert.deepEqual(result, { ok: true });
+  assert.equal(tabClicks, 1);
+  dom.window.close();
+});
+
+test("doAutoLogin：并发调用单飞，避免双击并行提交", async () => {
+  const dom = makeLoginDom();
+  const clock = makeClock();
+  const location = { hash: "#/pagesGrxx/pc/login/index" };
+  let submits = 0;
+  findExactTextView(dom.window.document, "登录").addEventListener("click", () => {
+    submits += 1;
+    location.hash = "#/pagesWsla/pc/list/index";
+  });
+  let releaseFetch;
+  const fetchStarted = new Promise((resolve) => { releaseFetch = resolve; });
+  const fetchImpl = async () => {
+    await fetchStarted;
+    return jsonResponse({ ok: true, text: "A7x2" });
+  };
+  const first = doAutoLogin(autoLoginOptions(dom, clock, fetchImpl, { location }));
+  const second = doAutoLogin(autoLoginOptions(dom, clock, fetchImpl, { location }));
+  assert.equal(first, second);
+  releaseFetch();
+  assert.deepEqual(await first, { ok: true });
+  assert.equal(submits, 1);
   dom.window.close();
 });
