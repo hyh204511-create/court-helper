@@ -5,6 +5,7 @@
 !tests/fixtures/*.png
 *.jpg
 !tests/fixtures/*.jpg
+accounts.txt
 
 # 本地工具目录
 .obsidian/
