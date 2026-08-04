@@ -22,6 +22,7 @@ writeFileSync(
     "  # 前导空白注释也应跳过",
     "acct-first first password with spaces",
     "账号甲 密码甲 含有 空格",
+    "acct-spacing   leading  inner  ",
   ].join("\n"),
   "utf8",
 );
@@ -126,6 +127,7 @@ test("GET /accounts 过滤注释/空行，按首个空格拆分且保留密码�
       accounts: [
         { account: "acct-first", password: "first password with spaces" },
         { account: "账号甲", password: "密码甲 含有 空格" },
+        { account: "acct-spacing", password: "  leading  inner  " },
       ],
     });
     assert.equal(server.getOutput().includes("acct-first"), false);
