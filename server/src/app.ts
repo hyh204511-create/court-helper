@@ -17,6 +17,9 @@ import type { AuthRepository } from './auth/types.ts';
 import { registerPlatformAccountRoutes } from './platform-accounts/routes.ts';
 import { PlatformAccountService } from './platform-accounts/service.ts';
 import type { PlatformAccountRepository } from './platform-accounts/types.ts';
+import { registerCaseRoutes } from './cases/routes.ts';
+import { CaseService } from './cases/service.ts';
+import type { CaseRepository } from './cases/types.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -32,6 +35,7 @@ export interface BuildAppOptions {
   register?: (app: FastifyInstance) => void | Promise<void>;
   authRepository?: AuthRepository;
   platformAccountRepository?: PlatformAccountRepository;
+  caseRepository?: CaseRepository;
 }
 
 function registerCors(app: FastifyInstance, config: ServerConfig): void {
@@ -108,6 +112,19 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         prefix: '/api/v1',
         authService,
         service: platformAccountService,
+      });
+    }
+    if (options.caseRepository && options.platformAccountRepository) {
+      const caseService = new CaseService(options.caseRepository, options.platformAccountRepository);
+      registerCaseRoutes(app, {
+        authService,
+        prefix: '',
+        service: caseService,
+      });
+      registerCaseRoutes(app, {
+        authService,
+        prefix: '/api/v1',
+        service: caseService,
       });
     }
   }

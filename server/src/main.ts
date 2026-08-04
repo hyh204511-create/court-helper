@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { buildApp, loadConfig } from './app.ts';
 import { PgAuthRepository } from './auth/repository.ts';
 import { PgPlatformAccountRepository } from './platform-accounts/repository.ts';
+import { PgCaseRepository } from './cases/repository.ts';
 import {
   createObjectStorageHealthDependency,
   createPostgresHealthDependency,
@@ -14,6 +15,7 @@ const app = buildApp({
   config,
   authRepository: new PgAuthRepository(pool),
   platformAccountRepository: new PgPlatformAccountRepository(pool),
+  caseRepository: new PgCaseRepository(pool),
   dependencies: {
     database: createPostgresHealthDependency(pool),
     objectStorage: createObjectStorageHealthDependency(config),
