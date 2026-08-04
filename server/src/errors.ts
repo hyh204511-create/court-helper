@@ -58,6 +58,12 @@ export class DependencyUnavailableError extends AppError {
   }
 }
 
+export class PayloadTooLargeError extends AppError {
+  constructor(message = 'Payload too large') {
+    super(message, 'PAYLOAD_TOO_LARGE', 413, false);
+  }
+}
+
 export function errorFromFastify(error: unknown): AppError {
   if (error instanceof AppError) {
     return error;

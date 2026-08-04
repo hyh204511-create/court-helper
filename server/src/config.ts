@@ -10,6 +10,9 @@ export interface ServerConfig {
   objectStorage: {
     endpoint: string;
     bucket: string;
+    accessKeyId?: string;
+    accessKeySecret?: string;
+    localDir?: string;
   };
   auth: {
     adminInitialPassword: string;
@@ -25,6 +28,14 @@ function required(env: Environment, name: string): string {
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return value;
+}
+
+function optional(env: Environment, names: string[]): string | undefined {
+  for (const name of names) {
+    const value = env[name]?.trim();
+    if (value) return value;
+  }
+  return undefined;
 }
 
 function positiveInteger(env: Environment, name: string, fallback: number): number {
@@ -86,8 +97,25 @@ export function loadConfig(env: Environment = process.env): ServerConfig {
     true,
   );
 
-  const objectStorageEndpoint = required(env, 'OBJECT_STORAGE_ENDPOINT').replace(/\/$/, '');
-  const objectStorageBucket = required(env, 'OBJECT_STORAGE_BUCKET');
+  const localStorageDir = optional(env, ['LOCAL_STORAGE_DIR']);
+  const objectStorageEndpoint = (localStorageDir
+    ? optional(env, ['OBJECT_STORAGE_ENDPOINT']) ?? 'local://private'
+    : required(env, 'OBJECT_STORAGE_ENDPOINT')).replace(/\/$/, '');
+  const objectStorageBucket = localStorageDir
+    ? optional(env, ['OBJECT_STORAGE_BUCKET']) ?? 'local'
+    : required(env, 'OBJECT_STORAGE_BUCKET');
+  const objectStorageAccessKeyId = optional(env, [
+    'OBJECT_STORAGE_ACCESS_KEY_ID',
+    'OBJECT_STORAGE_ACCESS_KEY',
+    'COS_SECRET_ID',
+    'OSS_ACCESS_KEY_ID',
+  ]);
+  const objectStorageAccessKeySecret = optional(env, [
+    'OBJECT_STORAGE_ACCESS_KEY_SECRET',
+    'OBJECT_STORAGE_SECRET_KEY',
+    'COS_SECRET_KEY',
+    'OSS_ACCESS_KEY_SECRET',
+  ]);
   const adminInitialPassword = required(env, 'ADMIN_INITIAL_PASSWORD');
 
   const sessionTtlSeconds = positiveInteger(env, 'SESSION_TTL_SECONDS', 8 * 60 * 60);
@@ -104,6 +132,9 @@ export function loadConfig(env: Environment = process.env): ServerConfig {
     objectStorage: {
       endpoint: objectStorageEndpoint,
       bucket: objectStorageBucket,
+      accessKeyId: objectStorageAccessKeyId,
+      accessKeySecret: objectStorageAccessKeySecret,
+      localDir: localStorageDir,
     },
     auth: {
       adminInitialPassword,

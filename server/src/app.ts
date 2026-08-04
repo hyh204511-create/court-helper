@@ -1,6 +1,7 @@
 import fastify, { type FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
 
 import { loadConfig, type ServerConfig } from './config.ts';
 import { errorEnvelope, errorFromFastify, NotFoundError } from './errors.ts';
@@ -20,6 +21,10 @@ import type { PlatformAccountRepository } from './platform-accounts/types.ts';
 import { registerCaseRoutes } from './cases/routes.ts';
 import { CaseService } from './cases/service.ts';
 import type { CaseRepository } from './cases/types.ts';
+import { registerScreenshotRoutes } from './screenshots/routes.ts';
+import { ScreenshotService } from './screenshots/service.ts';
+import type { ScreenshotRepository } from './screenshots/types.ts';
+import type { StorageBackend } from './storage/types.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -36,6 +41,8 @@ export interface BuildAppOptions {
   authRepository?: AuthRepository;
   platformAccountRepository?: PlatformAccountRepository;
   caseRepository?: CaseRepository;
+  screenshotRepository?: ScreenshotRepository;
+  storageBackend?: StorageBackend;
 }
 
 function registerCors(app: FastifyInstance, config: ServerConfig): void {
@@ -55,11 +62,23 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const config = options.config ?? loadConfig();
   const dependencies: HealthDependencies = {
     database: options.dependencies?.database ?? unavailableDependency,
-    objectStorage: options.dependencies?.objectStorage ?? unavailableDependency,
+    objectStorage: options.dependencies?.objectStorage ?? options.storageBackend ?? unavailableDependency,
   };
-  const app = fastify({ logger: options.logger ?? false });
+  const app = fastify({
+    logger: options.logger ?? false,
+    bodyLimit: 11 * 1024 * 1024,
+  });
 
   app.register(cookie);
+  app.register(multipart, {
+    throwFileSizeLimit: false,
+    limits: {
+      fileSize: 10 * 1024 * 1024,
+      files: 1,
+      fields: 4,
+      parts: 5,
+    },
+  });
   registerCors(app, config);
   app.decorateRequest('requestId', '');
   if (options.authRepository) {
@@ -125,6 +144,23 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         authService,
         prefix: '/api/v1',
         service: caseService,
+      });
+    }
+    if (options.caseRepository && options.screenshotRepository && options.storageBackend) {
+      const screenshotService = new ScreenshotService(
+        options.screenshotRepository,
+        options.caseRepository,
+        options.storageBackend,
+      );
+      registerScreenshotRoutes(app, {
+        authService,
+        prefix: '',
+        service: screenshotService,
+      });
+      registerScreenshotRoutes(app, {
+        authService,
+        prefix: '/api/v1',
+        service: screenshotService,
       });
     }
   }
