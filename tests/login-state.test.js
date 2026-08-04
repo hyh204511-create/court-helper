@@ -53,7 +53,7 @@ test("登录态消息先脱敏，消息只含允许字段", () => {
 test("content 登录态上报 login/logged-in/session-expired，过期暂停且恢复不自动继续", async () => {
   await withGlobals(async () => {
     const dom = new JSDOM("<!doctype html><html><body></body></html>", {
-      url: "https://zxfw.court.gov.cn/zxfw/#/pagesWsla/pc/list/index",
+      url: "https://zxfw.court.gov.cn/zxfw/#/pagesGrxx/pc/login/index",
     });
     const sent = [];
     globalThis.window = dom.window;
@@ -70,12 +70,13 @@ test("content 登录态上报 login/logged-in/session-expired，过期暂停且�
       storage: { session: { get: async () => ({}), set: async () => undefined } },
     };
     const module = await import(`../extension/content/court-content.js?login-state-test=${importSequence++}`);
+    assert.equal(sent[0]?.state, "login");
+    sent.length = 0;
 
     module.handleLoginState("login", null, { now: () => 1000 });
     module.handleLoginState("logged-in", "3503123452X", { now: () => 1001 });
     module.handleLoginState("session-expired", "3503123452X", { now: () => 1002 });
     assert.deepEqual(sent, [
-      { type: "LOGIN_STATE", state: "login", maskedAccount: "", updatedAt: 1000 },
       { type: "LOGIN_STATE", state: "logged-in", maskedAccount: "3503****52X", updatedAt: 1001 },
       { type: "LOGIN_STATE", state: "session-expired", maskedAccount: "", updatedAt: 1002 },
     ]);
