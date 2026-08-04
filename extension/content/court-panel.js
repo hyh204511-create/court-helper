@@ -1,0 +1,162 @@
+// court-panel.js — 网页浮动面板（规格 docs/specs/panel-module.md）
+// 折叠式：默认右下角悬浮球，点击展开完整操作面板（Shadow DOM 隔离样式）。
+// - 登录全人工：面板只显示登录状态（脱敏账号），不做登录动作；
+// - 状态禁猜：未知一律待人工，面板不猜测；
+// - 复用 app-module 操作：导入/开始查询/导出由宿主（court-content.js）注入回调。
+
+/** 账号脱敏：首尾各 1 位 + ***；≤2 位整体掩码；空值返回空 */
+export function maskAccount(account) {
+  if (!account) return "";
+  const s = String(account).trim();
+  if (s.length <= 1) return "*";
+  if (s.length === 2) return `${s[0]}*`;
+  return `${s[0]}***${s[s.length - 1]}`;
+}
+
+const SHELL_HTML = `
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}button,input,select{font:inherit}
+    .fab{position:fixed;right:16px;bottom:16px;width:48px;height:48px;border-radius:50%;
+      background:#1e3a5f;color:#fff;border:1px solid #3d5f8f;cursor:pointer;
+      box-shadow:0 4px 14px rgba(0,0,0,.35);font-size:18px;z-index:2147483647;
+      display:flex;align-items:center;justify-content:center;user-select:none}
+    .fab:hover{background:#2a4d7d}
+    .shell{position:fixed;right:16px;bottom:72px;width:420px;max-height:82vh;overflow:hidden;
+      display:flex;flex-direction:column;color:#eaf2f8;background:#102333;
+      border:1px solid #36536a;border-radius:10px;box-shadow:0 18px 48px rgba(0,0,0,.55);
+      font:13px/1.5 "Microsoft YaHei",sans-serif;z-index:2147483647}
+    .shell.collapsed{display:none}
+    .top{flex:none;display:flex;align-items:center;justify-content:space-between;
+      padding:11px 14px;background:#0b1b27;border-bottom:1px solid #ffffff16}
+    .brand{font-weight:700;letter-spacing:.02em}
+    .login-status{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#8eacbf}
+    .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#8eacbf}
+    .login-status.ok .dot{background:#46d69a}.login-status.ok{color:#b8f5db}
+    .login-status.bad .dot{background:#f17068}.login-status.bad{color:#ffc6c2}
+    .collapse{width:26px;height:24px;background:#224159;border:1px solid #ffffff18;
+      border-radius:6px;color:#dbeaf5;cursor:pointer}
+    .body{min-height:0;overflow-y:auto;padding:12px}
+    .actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px}
+    .actions button{padding:9px 6px;border:1px solid #ffffff18;border-radius:6px;
+      color:#dbeaf5;background:#224159;cursor:pointer}
+    .actions button:hover{background:#2d526d}
+    .actions .primary{background:#1677b8}
+    .notice{padding:8px 10px;margin-bottom:10px;border-left:3px solid #f0b35b;
+      background:#f0b35b16;color:#ffdca8;font-size:12px}
+    .notice.bad{border-color:#f17068;background:#f1706813;color:#ffc6c2}
+    .progress-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font-size:12px;color:#8eacbf}
+    .bar{height:8px;border-radius:4px;background:#152d40;overflow:hidden;margin-bottom:10px}
+    .bar > i{display:block;height:100%;width:0;background:#46d69a;transition:width .3s}
+    .groups{display:grid;gap:5px;margin-bottom:10px;font-size:12px}
+    .groups .g{display:flex;justify-content:space-between;padding:5px 8px;background:#152d40;border-radius:6px;color:#cfe4f2}
+    .ctrl{display:flex;gap:8px}
+    .ctrl button{flex:1;padding:8px;border:1px solid #ffffff18;border-radius:6px;
+      color:#dbeaf5;background:#224159;cursor:pointer}
+    .ctrl button:hover{background:#2d526d}
+    .foot{flex:none;padding:7px 12px;color:#6f8ea2;background:#0b1b27;
+      border-top:1px solid #ffffff12;font-size:11px}
+  </style>
+  <button class="fab" title="法院立案/强执查询助手">法</button>
+  <section class="shell collapsed">
+    <header class="top">
+      <span class="brand">法院立案/强执查询助手</span>
+      <span class="login-status off"><i class="dot"></i><span class="login-text">未登录</span></span>
+      <button class="collapse" title="收起">−</button>
+    </header>
+    <div class="body">
+      <div class="notice hidden"></div>
+      <div class="actions">
+        <button class="btn-import">导入模板</button>
+        <button class="btn-query primary">开始查询</button>
+        <button class="btn-export">导出报表</button>
+      </div>
+      <div class="progress-head"><span class="progress-text">待处理: -</span></div>
+      <div class="bar"><i></i></div>
+      <div class="groups"></div>
+      <div class="ctrl">
+        <button class="btn-pause">暂停</button>
+        <button class="btn-resume">继续</button>
+      </div>
+    </div>
+    <footer class="foot">登录全人工 · 未知状态标记待人工</footer>
+  </section>`;
+
+/**
+ * 创建并挂载浮动面板。
+ * @param {object} opts
+ * @param {Document} opts.document 目标页面 document
+ * @param {object} [opts.handlers] {onImport, onQuery, onExport, onPause, onResume}
+ * @param {'open'|'closed'} [opts.shadowMode] 测试可传 'open' 以便断言；默认 'closed'
+ * @returns {object} { host, setLogin, setProgress, setReady }
+ */
+export function createCourtPanel({ document, handlers = {}, shadowMode = "closed" }) {
+  const host = document.createElement("div");
+  host.id = "court-helper-panel-root";
+  host.style.cssText = "all:initial;position:static";
+  const shadow = host.attachShadow({ mode: shadowMode });
+  shadow.innerHTML = SHELL_HTML;
+
+  const shell = shadow.querySelector(".shell");
+  const fab = shadow.querySelector(".fab");
+  const collapse = shadow.querySelector(".collapse");
+  const statusEl = shadow.querySelector(".login-status");
+  const loginText = shadow.querySelector(".login-text");
+  const notice = shadow.querySelector(".notice");
+  const progressText = shadow.querySelector(".progress-text");
+  const bar = shadow.querySelector(".bar > i");
+  const groupsEl = shadow.querySelector(".groups");
+
+  const toggle = () => shell.classList.toggle("collapsed");
+  fab.addEventListener("click", toggle);
+  collapse.addEventListener("click", toggle);
+
+  shadow.querySelector(".btn-import").addEventListener("click", () => handlers.onImport?.());
+  shadow.querySelector(".btn-query").addEventListener("click", () => handlers.onQuery?.());
+  shadow.querySelector(".btn-export").addEventListener("click", () => handlers.onExport?.());
+  shadow.querySelector(".btn-pause").addEventListener("click", () => handlers.onPause?.());
+  shadow.querySelector(".btn-resume").addEventListener("click", () => handlers.onResume?.());
+
+  /** @param {{state: 'login'|'logged-in'|'session-expired'|'unknown', account?: string|null}} s */
+  function setLogin({ state, account = null }) {
+    statusEl.classList.remove("ok", "bad", "off");
+    if (state === "logged-in") {
+      statusEl.classList.add("ok");
+      loginText.textContent = `${maskAccount(account) || "已登录"}`;
+    } else if (state === "session-expired") {
+      statusEl.classList.add("bad");
+      loginText.textContent = "已过期，请重新登录";
+    } else {
+      statusEl.classList.add("off");
+      loginText.textContent = "未登录";
+    }
+  }
+
+  /** @param {{done?: number, total?: number, groups?: Array<{account: string, count: number}>}} p */
+  function setProgress({ done = 0, total = 0, groups = [] } = {}) {
+    progressText.textContent = total ? `待处理: ${done}/${total}` : "待处理: -";
+    bar.style.width = total ? `${Math.min(100, Math.round((done / total) * 100))}%` : "0%";
+    groupsEl.innerHTML = groups
+      .map((g) => `<div class="g"><span>${maskAccount(g.account)}</span><span>${g.count} 条</span></div>`)
+      .join("");
+  }
+
+  /** @param {boolean} ready 采集器（content script）是否就绪 */
+  function setReady(ready) {
+    if (ready) {
+      notice.classList.add("hidden");
+      notice.classList.remove("bad");
+    } else {
+      notice.textContent = "采集器未就绪，请刷新页面后重试";
+      notice.classList.remove("hidden");
+      notice.classList.add("bad");
+    }
+  }
+
+  function mount() {
+    if (!document.documentElement.contains(host)) document.documentElement.appendChild(host);
+  }
+  if (document.documentElement) mount();
+  else document.addEventListener("DOMContentLoaded", mount, { once: true });
+
+  return { host, setLogin, setProgress, setReady };
+}

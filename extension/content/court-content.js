@@ -14,13 +14,128 @@ import {
 } from "./case-collectors.js";
 import { detectLoginState, getCurrentAccount } from "./login-detector.js";
 import { captureElement } from "./screen-capturer.js";
-import { runBatch, RETRY_COUNT } from "../data/batch-runner.js";
+import { runBatch, RETRY_COUNT, jitterMs } from "../data/batch-runner.js";
 import { recognizeStatus } from "./status-recognizer.js";
+import { createCourtPanel } from "./court-panel.js";
+import { importXlsx } from "../data/import-xlsx.js";
+import { buildExportWorkbook } from "../data/xlsx-io.js";
 import * as db from "../data/db.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const isDetailPage = () => location.hash.includes("wsla/detail");
 const isListPage = () => location.hash.includes("list/index");
+
+// —— 网页浮动面板（panel-module 规格） ——
+let _panel = null;
+let _batchRunning = false;
+let _batchPaused = false;
+const _resumeWaiters = [];
+
+/** 暂停/继续在节流间隙生效（不在页面动作中途打断） */
+function pauseBatch() {
+  _batchPaused = true;
+}
+function resumeBatch() {
+  _batchPaused = false;
+  const waiters = _resumeWaiters.splice(0);
+  for (const w of waiters) w();
+}
+function delayWithPause() {
+  return new Promise((resolve) => {
+    const step = () => {
+      if (_batchPaused) {
+        _resumeWaiters.push(step);
+      } else {
+        setTimeout(resolve, jitterMs());
+      }
+    };
+    step();
+  });
+}
+
+/** 按账号聚合待处理分组（进度区展示，账号脱敏在面板内做） */
+function groupByAccount(records) {
+  const map = new Map();
+  for (const r of records) {
+    const account = r.account || "未分组";
+    map.set(account, (map.get(account) || 0) + 1);
+  }
+  return [...map.entries()].map(([account, count]) => ({ account, count }));
+}
+
+/** 刷新面板登录状态 */
+function refreshPanelLogin() {
+  const state = detectLoginState({ hash: location.hash, root: document });
+  const account = getCurrentAccount(document);
+  _panel?.setLogin({ state, account });
+}
+
+/** 面板导入：文件 → 解析 → 入库（同 popup 逻辑，toast 展示摘要） */
+async function handlePanelImport(file) {
+  const buffer = await file.arrayBuffer();
+  const result = await importXlsx(buffer);
+  const li = await db.applyImport(db.STORE_CASES, result.liRows);
+  const qz = await db.applyImport(db.STORE_ENFORCEMENT, result.qzRows);
+  showToast(
+    `导入完成：立案 新增${li.imported}/更新${li.updated}，强执 新增${qz.imported}/更新${qz.updated}` +
+      (result.skipped ? `，跳过 ${result.skipped} 行（${(result.reasons || []).slice(0, 3).join("；")}）` : ""),
+    6000,
+  );
+}
+
+/** 面板导出：IndexedDB → 模板格式 xlsx → 下载 */
+async function handlePanelExport() {
+  const cases = await db.query(db.STORE_CASES, {});
+  const enforcementCases = await db.query(db.STORE_ENFORCEMENT, {});
+  const wb = await buildExportWorkbook({ cases, enforcementCases });
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `立案与强执查询表-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/** 挂载浮动面板（仅列表/详情页；其他页面不打扰） */
+function initPanel() {
+  if (!isDetailPage() && !isListPage()) return;
+  _panel = createCourtPanel({
+    document,
+    handlers: {
+      onImport: () => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".xlsx";
+        input.onchange = () => input.files?.[0] && handlePanelImport(input.files[0]).catch((e) => showToast(`导入失败：${e.message}`, 6000));
+        input.click();
+      },
+      onQuery: async () => {
+        if (_batchRunning) return; // 运行中忽略重复点击（防并发）
+        try {
+          await startBatch("li");
+        } catch (e) {
+          showToast(`开始查询失败：${e.message}`, 6000);
+        }
+      },
+      onExport: () => handlePanelExport().catch((e) => showToast(`导出失败：${e.message}`, 6000)),
+      onPause: () => {
+        if (!_batchRunning) return;
+        pauseBatch();
+        showToast("批量查询已暂停", 3000);
+      },
+      onResume: () => {
+        if (!_batchRunning) return;
+        resumeBatch();
+        showToast("批量查询已继续", 3000);
+      },
+    },
+  });
+  _panel.setReady(true);
+  refreshPanelLogin();
+  // 平台是 SPA：hash 变化时刷新登录状态
+  window.addEventListener("hashchange", refreshPanelLogin);
+}
 
 // —— 页面内进度提示（轻量，不依赖 popup 打开） ——
 let _toastTimer = null;
@@ -184,7 +299,11 @@ async function startBatch(kind) {
   const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
   const all = await db.query(store, {});
   if (!all.length) throw new Error("NO_CASES");
-  showToast(`开始批量查询 ${Math.min(all.length, 50)} 条（${kind === "qz" ? "强执" : "立案"}），请勿切换页面`, 8000);
+  const total = Math.min(all.length, 50);
+  showToast(`开始批量查询 ${total} 条（${kind === "qz" ? "强执" : "立案"}），请勿切换页面`, 8000);
+  _batchRunning = true;
+  _batchPaused = false;
+  _panel?.setProgress({ done: 0, total, groups: groupByAccount(all) });
 
   let done = 0;
   const stats = await runBatch({
@@ -196,6 +315,7 @@ async function startBatch(kind) {
         return null;
       },
     },
+    timing: { delay: delayWithPause },
     onUpdate: async (record) => {
       const storeName = record.kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
       const existing = await db.getByUid(storeName, record.uid);
@@ -206,9 +326,11 @@ async function startBatch(kind) {
         needsHuman: record.needsHuman || !record.image && ["立案成功", "强执成功"].includes(record.status),
       });
       done += 1;
-      showToast(`进度 ${done}/${stats?.total ?? "?"}：${record.status}`, 2500);
+      _panel?.setProgress({ done, total, groups: groupByAccount(all) });
+      showToast(`进度 ${done}/${total}：${record.status}`, 2500);
     },
   });
+  _batchRunning = false;
   return { ok: true, stats };
 }
 
@@ -230,6 +352,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // —— 页面加载完成后的角色分发 ——
 (async () => {
   try {
+    initPanel();
     if (isDetailPage()) {
       await runDetailCapture();
     } else if (isListPage()) {
@@ -238,6 +361,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (ok) {
         try {
           assertSelectors(document);
+          showReadyBadge();
         } catch (e) {
           showToast(`⚠ 平台页面结构疑似变更（${e.selectorKey}），请暂停使用并联系维护`, 10000);
         }
@@ -247,3 +371,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     console.warn("[court-helper] init error", e);
   }
 })();
+
+/** 就绪徽标：让用户直观看到插件已连接（右上角常驻小徽标） */
+function showReadyBadge() {
+  const state = detectLoginState({ hash: location.hash, root: document });
+  if (state !== "logged-in") return;
+  let el = document.getElementById("court-helper-badge");
+  if (el) return;
+  el = document.createElement("div");
+  el.id = "court-helper-badge";
+  el.textContent = "查询助手已就绪";
+  el.style.cssText =
+    "position:fixed;top:12px;right:12px;z-index:2147483646;background:#16a34a;color:#fff;" +
+    "padding:6px 12px;border-radius:999px;font:12px/1.4 sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.25);cursor:pointer";
+  el.title = "法院立案/强执查询助手：已连接，可点击扩展图标打开面板";
+  el.addEventListener("click", () => el.remove());
+  document.documentElement.appendChild(el);
+}
