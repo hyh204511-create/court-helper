@@ -544,7 +544,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true; // 异步响应
   }
   if (msg?.type === "PING") {
-    sendResponse({ ok: true, role: isDetailPage() ? "detail" : "list" });
+    sendResponse({
+      ok: true,
+      role: isDetailPage() ? "detail" : "list",
+      route: location.hash,
+      state: detectLoginState({ hash: location.hash, root: document }),
+    });
     return false;
   }
   return false;

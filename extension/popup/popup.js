@@ -2,6 +2,7 @@
 // 经 esbuild 打包为 ../dist/popup.bundle.js
 import { VERSION } from "../shared/message-router.js";
 import { createLoginController } from "./login-controller.js";
+import { canStartBatch, createStartBatchSender, isListRoute } from "./query-gate.js";
 import * as db from "../data/db.js";
 import { importXlsx } from "../data/import-xlsx.js";
 import { buildExportWorkbook } from "../data/xlsx-io.js";
@@ -12,6 +13,35 @@ const STORES = [
   { name: db.STORE_ENFORCEMENT, label: "强执" },
 ];
 let loginController = null;
+let pageStatus = { state: "unknown", route: "" };
+let queryInFlight = null;
+let startBatchSender = null;
+
+function updateQueryAvailability() {
+  const button = $("#btn-query");
+  if (!button) return;
+  button.disabled = !canStartBatch({
+    state: pageStatus.state,
+    route: pageStatus.route,
+    loginInProgress: loginController?.isAutoLoginInProgress?.() ?? false,
+  });
+}
+
+async function refreshPageStatus() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) throw new Error("NO_TAB");
+    const response = await chrome.tabs.sendMessage(tab.id, { type: "PING" });
+    pageStatus = {
+      state: response?.state ?? "unknown",
+      route: response?.route ?? "",
+    };
+  } catch {
+    pageStatus = { state: "unknown", route: "" };
+  }
+  updateQueryAvailability();
+  return pageStatus;
+}
 
 /** 渲染查询结果表 */
 async function renderResults() {
@@ -74,18 +104,66 @@ async function handleExport() {
 }
 
 /** 开始批量查询：通知当前标签的 content script 执行 */
-async function handleQuery() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) {
-    alert("未找到当前标签页");
-    return;
-  }
-  try {
-    const resp = await chrome.tabs.sendMessage(tab.id, { type: "START_BATCH" });
-    $("#progress-text").textContent = resp?.ok ? "批量查询已启动，请在法院平台页面查看进度" : "启动失败";
-  } catch {
-    $("#progress-text").textContent = "未检测到采集器（请刷新法院平台页面后重试）";
-  }
+export async function handleQuery() {
+  if (queryInFlight) return queryInFlight;
+  queryInFlight = (async () => {
+    let tab;
+    try {
+      [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    } catch {
+      $("#progress-text").textContent = "未找到当前法院标签页";
+      return { ok: false, error: "FORM_NOT_READY" };
+    }
+    if (!tab?.id) {
+      $("#progress-text").textContent = "未找到当前法院标签页";
+      return { ok: false, error: "FORM_NOT_READY" };
+    }
+    if (loginController?.isAutoLoginInProgress?.()) {
+      $("#progress-text").textContent = "登录进行中，请稍候";
+      updateQueryAvailability();
+      return { ok: false, error: "FORM_NOT_READY" };
+    }
+
+    let status;
+    try {
+      status = await chrome.tabs.sendMessage(tab.id, { type: "PING" });
+    } catch {
+      $("#progress-text").textContent = "未检测到采集器（请刷新法院平台页面后重试）";
+      pageStatus = { state: "unknown", route: "" };
+      updateQueryAvailability();
+      return { ok: false, error: "FORM_NOT_READY" };
+    }
+    pageStatus = { state: status?.state ?? "unknown", route: status?.route ?? "" };
+    if (!canStartBatch({
+      state: pageStatus.state,
+      route: pageStatus.route,
+      loginInProgress: loginController?.isAutoLoginInProgress?.() ?? false,
+    })) {
+      $("#progress-text").textContent = isListRoute(pageStatus.route)
+        ? "请先完成登录后再抓取"
+        : "请打开法院立案列表页后再抓取";
+      updateQueryAvailability();
+      return { ok: false, error: "FORM_NOT_READY" };
+    }
+
+    startBatchSender ??= createStartBatchSender({ chromeApi: chrome });
+    try {
+      const response = await startBatchSender(tab.id);
+      $("#progress-text").textContent = response?.ok
+        ? "批量查询已启动，请在法院平台页面查看进度"
+        : "启动失败，请人工检查页面状态";
+      return response;
+    } catch {
+      $("#progress-text").textContent = "未检测到采集器（请刷新法院平台页面后重试）";
+      return { ok: false, error: "FORM_NOT_READY" };
+    }
+  })();
+  const current = queryInFlight;
+  current.then(
+    () => { if (queryInFlight === current) queryInFlight = null; },
+    () => { if (queryInFlight === current) queryInFlight = null; },
+  );
+  return current;
 }
 
 function bindActions() {
@@ -104,16 +182,23 @@ function bindActions() {
 }
 
 function bindLoginControls() {
-  loginController = createLoginController({ document, chromeApi: chrome });
-  loginController.init();
+  loginController = createLoginController({
+    document,
+    chromeApi: chrome,
+    onLoginResult: () => { refreshPageStatus(); },
+  });
+  loginController.init().then(refreshPageStatus).catch(refreshPageStatus);
 
   const applyState = (state = {}) => {
     loginController?.setLoginState({
       state: state.state,
       maskedAccount: state.maskedAccount,
     });
+    if (state.state) pageStatus.state = state.state;
+    updateQueryAvailability();
   };
-  chrome.storage?.local?.get?.(["state", "maskedAccount"]).then(applyState).catch(() => {});
+  const readState = chrome.storage?.local?.get;
+  if (typeof readState === "function") Promise.resolve(readState(["state", "maskedAccount"])).then(applyState).catch(() => {});
   chrome.storage?.onChanged?.addListener?.((changes, areaName) => {
     if (areaName !== "local") return;
     applyState({
@@ -121,6 +206,7 @@ function bindLoginControls() {
       maskedAccount: changes.maskedAccount?.newValue,
     });
   });
+  updateQueryAvailability();
 }
 
 document.addEventListener("DOMContentLoaded", () => {

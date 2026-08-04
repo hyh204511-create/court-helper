@@ -47,6 +47,7 @@ export function createLoginController({
   fetchImpl = globalThis.fetch?.bind(globalThis),
   chromeApi = globalThis.chrome,
   serviceUrl = LOGIN_SERVICE_URL,
+  onLoginResult = null,
 } = {}) {
   const serviceStatus = getElement(document, "#login-service-status");
   const accountSelect = getElement(document, "#login-account");
@@ -172,7 +173,14 @@ export function createLoginController({
         setResult(UI_TEXT.serviceError, "error");
         return { ok: false, error: "SERVICE_UNAVAILABLE" };
       }
-    })();
+    })().then((response) => {
+      try {
+        onLoginResult?.(response);
+      } catch {
+        // UI 状态同步失败不改变登录结果。
+      }
+      return response;
+    });
     const current = autoLoginPromise;
     current.then(
       () => { if (autoLoginPromise === current) { autoLoginPromise = null; setButtonEnabled(credentials.size > 0); } },
@@ -208,6 +216,7 @@ export function createLoginController({
     loadAccounts,
     sendAutoLogin,
     setLoginState,
+    isAutoLoginInProgress: () => !!autoLoginPromise,
     destroy,
   };
 }
