@@ -39,7 +39,7 @@
 - 会话失效/过期 → 状态点红色 + 「已过期，请重新登录」，面板不阻塞（批量执行器自行暂停，见 app-module §4.3）。
 
 ### 3.1.1 MutationObserver 兜底
-- 面板初始化后监听 `document.body`，配置 `{ childList: true, subtree: true }`，用于兜底捕获用户区晚渲染或会话失效导致的 DOM 增删。
+- 面板初始化后监听 `document.documentElement`（document_start 阶段 body 可能尚未创建，html 元素恒存在），配置 `{ childList: true, subtree: true }`，用于兜底捕获用户区晚渲染或会话失效导致的 DOM 增删。
 - 观察回调读取 `getCurrentAccount(document)`；账号快照未变化时忽略，变化时更新快照并防抖 300ms，触发一次 `refreshPanelLogin()`。
 - 页面触发 `pagehide` 时断开观察器并清理未执行的防抖定时器；不监听属性/文本变化，不增加额外轮询。
 - 验收：用户区节点新增、删除分别能触发一次刷新；相同快照或 300ms 内连续变更不产生多余刷新；`pagehide` 后观察器和待执行刷新均停止。

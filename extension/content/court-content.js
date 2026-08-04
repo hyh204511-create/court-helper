@@ -76,6 +76,45 @@ async function refreshPanelLogin() {
   return state;
 }
 
+/** 监听用户区 DOM 变化，兜底刷新面板登录状态 */
+export function observePanelLogin({ root = document, view = window, refresh = refreshPanelLogin } = {}) {
+  let lastAccount = null;
+  let timer = null;
+  let observer = null;
+  let stopped = false;
+
+  const start = () => {
+    if (stopped) return;
+    lastAccount = getCurrentAccount(root);
+    // 观察 documentElement（document_start 即存在），快照比较天然过滤 body 时序
+    observer = new view.MutationObserver(() => {
+      const account = getCurrentAccount(root);
+      if (account === lastAccount) return;
+      lastAccount = account;
+      view.clearTimeout(timer);
+      timer = view.setTimeout(() => {
+        timer = null;
+        refresh();
+      }, 300);
+    });
+    observer.observe(root.documentElement, { childList: true, subtree: true });
+  };
+
+  const disconnect = () => {
+    if (stopped) return;
+    stopped = true;
+    observer?.disconnect();
+    observer = null;
+    view.clearTimeout(timer);
+    timer = null;
+    view.removeEventListener("pagehide", disconnect);
+  };
+
+  start();
+  view.addEventListener("pagehide", disconnect);
+  return disconnect;
+}
+
 /** 面板导入：文件 → 解析 → 入库（同 popup 逻辑，toast 展示摘要） */
 async function handlePanelImport(file) {
   const buffer = await file.arrayBuffer();
@@ -139,6 +178,7 @@ function initPanel() {
   });
   _panel.setReady(true);
   refreshPanelLogin();
+  observePanelLogin();
   // 平台是 SPA：hash 变化时刷新登录状态
   window.addEventListener("hashchange", refreshPanelLogin);
 }
