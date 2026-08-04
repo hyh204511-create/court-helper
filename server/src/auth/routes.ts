@@ -86,7 +86,7 @@ function assertLoginOrigin(request: FastifyRequest, config: ServerConfig, client
   }
 }
 
-function assertCookieWrite(request: FastifyRequest, service: AuthService, config: ServerConfig): void {
+export function assertCookieWrite(request: FastifyRequest, service: AuthService, config: ServerConfig): void {
   const context = request.auth;
   if (!context || context.mechanism !== 'cookie') return;
   const origin = originOf(request);
@@ -100,7 +100,7 @@ function assertCookieWrite(request: FastifyRequest, service: AuthService, config
   }
 }
 
-async function authenticateRequest(request: FastifyRequest, service: AuthService): Promise<void> {
+export async function authenticateRequest(request: FastifyRequest, service: AuthService): Promise<void> {
   const authorization = request.headers.authorization;
   if (authorization !== undefined) {
     if (typeof authorization !== 'string' || !/^Bearer\s+\S+$/.test(authorization)) {
@@ -117,7 +117,7 @@ async function authenticateRequest(request: FastifyRequest, service: AuthService
   request.auth = await service.authenticate(cookieToken, 'cookie');
 }
 
-async function requireAdmin(request: FastifyRequest, service: AuthService): Promise<void> {
+export async function requireAdmin(request: FastifyRequest, service: AuthService): Promise<void> {
   await authenticateRequest(request, service);
   if (request.auth?.user.role !== 'admin') {
     throw new ForbiddenError();
