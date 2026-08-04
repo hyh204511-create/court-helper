@@ -80,6 +80,13 @@ function uploadPayload(buffer, contentType = 'image/jpeg', overrides = {}) {
   }, { buffer, contentType });
 }
 
+function cookieHeader(response) {
+  const setCookie = response.headers['set-cookie'];
+  const first = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+  assert.ok(first);
+  return first.split(';', 1)[0];
+}
+
 async function addUser(repository) {
   return repository.createUser({
     username: 'worker',
@@ -133,6 +140,17 @@ async function loginExtension(app) {
   });
   assert.equal(response.statusCode, 200);
   return response.json().token;
+}
+
+async function loginAdmin(app) {
+  const response = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    headers: { origin: 'https://admin.example.test' },
+    payload: { username: 'admin', password: ADMIN_PASSWORD, clientType: 'admin_ui' },
+  });
+  assert.equal(response.statusCode, 200);
+  return { cookie: cookieHeader(response), csrfToken: response.json().csrfToken };
 }
 
 async function createCase(app, token) {
@@ -204,6 +222,20 @@ test('screenshot API authenticates, validates case binding, lists metadata, and 
     const token = await loginExtension(app);
     const caseId = await createCase(app, token);
     const content = Buffer.from('synthetic jpeg evidence');
+
+    const admin = await loginAdmin(app);
+    const cookieUpload = uploadPayload(content);
+    const csrfMissing = await app.inject({
+      method: 'POST',
+      url: `/cases/${caseId}/screenshots`,
+      headers: {
+        cookie: admin.cookie,
+        origin: 'https://admin.example.test',
+        ...cookieUpload.headers,
+      },
+      payload: cookieUpload.payload,
+    });
+    assert.equal(csrfMissing.statusCode, 403);
 
     const created = await upload(app, token, caseId, content);
     assert.equal(created.statusCode, 201);

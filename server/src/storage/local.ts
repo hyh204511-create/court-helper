@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { access, mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { constants } from 'node:fs';
+import type { Readable } from 'node:stream';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import type { StorageBackend } from './types.ts';
@@ -48,7 +49,7 @@ export class LocalFileStorageBackend implements StorageBackend {
     }
   }
 
-  async get(key: string) {
+  async get(key: string): Promise<Readable | null> {
     const target = this.pathFor(key);
     try {
       await access(target, constants.R_OK);
@@ -91,3 +92,4 @@ export class LocalFileStorageBackend implements StorageBackend {
 }
 
 export { LocalFileStorageBackend as LocalStorageBackend };
+export { LocalFileStorageBackend as FileStorageBackend };

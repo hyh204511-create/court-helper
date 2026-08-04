@@ -107,12 +107,14 @@ export function loadConfig(env: Environment = process.env): ServerConfig {
   const objectStorageAccessKeyId = optional(env, [
     'OBJECT_STORAGE_ACCESS_KEY_ID',
     'OBJECT_STORAGE_ACCESS_KEY',
+    'OBJECT_STORAGE_SECRET_ID',
     'COS_SECRET_ID',
     'OSS_ACCESS_KEY_ID',
   ]);
   const objectStorageAccessKeySecret = optional(env, [
     'OBJECT_STORAGE_ACCESS_KEY_SECRET',
     'OBJECT_STORAGE_SECRET_KEY',
+    'OBJECT_STORAGE_SECRET',
     'COS_SECRET_KEY',
     'OSS_ACCESS_KEY_SECRET',
   ]);

@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { MultipartFile } from '@fastify/multipart';
 
-import { authenticateRequest } from '../auth/routes.ts';
+import { assertCookieWrite, authenticateRequest } from '../auth/routes.ts';
 import { AuthService } from '../auth/service.ts';
+import type { ServerConfig } from '../config.ts';
 import {
   PayloadTooLargeError,
   ValidationError,
@@ -23,6 +24,7 @@ import {
 interface RegisterScreenshotOptions {
   service: ScreenshotService;
   authService: AuthService;
+  config: ServerConfig;
   prefix: string;
 }
 
@@ -86,24 +88,29 @@ async function multipartUpload(request: FastifyRequest, caseId: string) {
 
   const fields = new Map<string, string>();
   let file: MultipartFileData | null = null;
+  let validationError: ValidationError | null = null;
   try {
     for await (const part of request.parts()) {
       if (part.type === 'file') {
         const buffer = await readFilePart(part);
         if (part.fieldname !== 'file' || file !== null) {
-          throw new ValidationError([{ field: part.fieldname, code: 'unexpected_file' }]);
+          validationError ??= new ValidationError([{ field: part.fieldname, code: 'unexpected_file' }]);
+          continue;
         }
         file = { buffer, contentType: part.mimetype };
         continue;
       }
       if (!FIELD_NAMES.has(part.fieldname)) {
-        throw new ValidationError([{ field: part.fieldname, code: 'unknown_field' }]);
+        validationError ??= new ValidationError([{ field: part.fieldname, code: 'unknown_field' }]);
+        continue;
       }
       if (typeof part.value !== 'string') {
-        throw new ValidationError([{ field: part.fieldname, code: 'string_required' }]);
+        validationError ??= new ValidationError([{ field: part.fieldname, code: 'string_required' }]);
+        continue;
       }
       if (fields.has(part.fieldname)) {
-        throw new ValidationError([{ field: part.fieldname, code: 'duplicate_field' }]);
+        validationError ??= new ValidationError([{ field: part.fieldname, code: 'duplicate_field' }]);
+        continue;
       }
       fields.set(part.fieldname, part.value);
     }
@@ -113,6 +120,8 @@ async function multipartUpload(request: FastifyRequest, caseId: string) {
     }
     throw error;
   }
+
+  if (validationError) throw validationError;
 
   if (file === null) {
     throw new ValidationError([{ field: 'file', code: 'required' }]);
@@ -151,10 +160,11 @@ export function registerScreenshotRoutes(
   app: FastifyInstance,
   options: RegisterScreenshotOptions,
 ): void {
-  const { authService, prefix, service } = options;
+  const { authService, config, prefix, service } = options;
   const protectedPreHandler = async (request: FastifyRequest) => authenticateRequest(request, authService);
 
   app.post(route(prefix, '/cases/:id/screenshots'), { preHandler: protectedPreHandler }, async (request, reply) => {
+    assertCookieWrite(request, authService, config);
     const caseId = (request.params as { id: string }).id;
     const result = await service.upload(await multipartUpload(request, caseId));
     reply.code(result.created ? 201 : 200);

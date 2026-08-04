@@ -1,3 +1,4 @@
+import type { Readable } from 'node:stream';
 import { DependencyUnavailableError } from '../errors.ts';
 import type { ObjectStorageConfig, StorageBackend } from './types.ts';
 
@@ -21,7 +22,7 @@ export class CloudStorageBackend implements StorageBackend {
     return unavailable();
   }
 
-  async get(_key: string) {
+  async get(_key: string): Promise<Readable | null> {
     return unavailable();
   }
 

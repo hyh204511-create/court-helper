@@ -22,7 +22,7 @@ import { registerCaseRoutes } from './cases/routes.ts';
 import { CaseService } from './cases/service.ts';
 import type { CaseRepository } from './cases/types.ts';
 import { registerScreenshotRoutes } from './screenshots/routes.ts';
-import { ScreenshotService } from './screenshots/service.ts';
+import { MAX_SCREENSHOT_BYTES, ScreenshotService } from './screenshots/service.ts';
 import type { ScreenshotRepository } from './screenshots/types.ts';
 import type { StorageBackend } from './storage/types.ts';
 import {
@@ -86,14 +86,14 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   };
   const app = fastify({
     logger: options.logger ?? false,
-    bodyLimit: 11 * 1024 * 1024,
+    bodyLimit: MAX_SCREENSHOT_BYTES + 1024 * 1024,
   });
 
   app.register(cookie);
   app.register(multipart, {
     throwFileSizeLimit: false,
     limits: {
-      fileSize: 10 * 1024 * 1024,
+      fileSize: MAX_SCREENSHOT_BYTES,
       files: 1,
       fields: 4,
       parts: 5,
@@ -176,11 +176,13 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       );
       registerScreenshotRoutes(app, {
         authService,
+        config,
         prefix: '',
         service: screenshotService,
       });
       registerScreenshotRoutes(app, {
         authService,
+        config,
         prefix: '/api/v1',
         service: screenshotService,
       });

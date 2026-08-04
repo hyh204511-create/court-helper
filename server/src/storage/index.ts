@@ -1,7 +1,6 @@
 import type { ServerConfig } from '../config.ts';
 import { CloudStorageBackend } from './cloud.ts';
 import { LocalFileStorageBackend } from './local.ts';
-import { MemoryStorageBackend } from './memory.ts';
 import type { StorageBackend } from './types.ts';
 
 export * from './types.ts';
@@ -15,5 +14,3 @@ export function createStorageBackend(config: Pick<ServerConfig, 'objectStorage'>
   }
   return new CloudStorageBackend(config.objectStorage);
 }
-
-export { MemoryStorageBackend };
