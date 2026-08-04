@@ -12,7 +12,7 @@ import {
   extractBusinessFields,
   collectDetail,
 } from "./case-collectors.js";
-import { detectLoginState, getCurrentAccount } from "./login-detector.js";
+import { detectLoginState, detectLoginStateWhenStable, getCurrentAccount } from "./login-detector.js";
 import { captureElement } from "./screen-capturer.js";
 import { runBatch, RETRY_COUNT, jitterMs } from "../data/batch-runner.js";
 import { recognizeStatus } from "./status-recognizer.js";
@@ -63,11 +63,17 @@ function groupByAccount(records) {
   return [...map.entries()].map(([account, count]) => ({ account, count }));
 }
 
-/** 刷新面板登录状态 */
-function refreshPanelLogin() {
-  const state = detectLoginState({ hash: location.hash, root: document });
+/** 刷新面板登录状态（SPA 异步渲染防误报：等待用户区出现再判定） */
+async function refreshPanelLogin() {
+  const state = await detectLoginStateWhenStable({
+    hash: location.hash,
+    root: document,
+    wait: () => sleep(300),
+    timeoutMs: 5000,
+  });
   const account = getCurrentAccount(document);
   _panel?.setLogin({ state, account });
+  return state;
 }
 
 /** 面板导入：文件 → 解析 → 入库（同 popup 逻辑，toast 展示摘要） */
@@ -372,9 +378,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 })();
 
-/** 就绪徽标：让用户直观看到插件已连接（右上角常驻小徽标） */
-function showReadyBadge() {
-  const state = detectLoginState({ hash: location.hash, root: document });
+/** 就绪徽标：让用户直观看到插件已连接（右上角常驻小徽标，SPA 渲染防误报） */
+async function showReadyBadge() {
+  const state = await detectLoginStateWhenStable({
+    hash: location.hash,
+    root: document,
+    wait: () => sleep(300),
+    timeoutMs: 5000,
+  });
   if (state !== "logged-in") return;
   let el = document.getElementById("court-helper-badge");
   if (el) return;

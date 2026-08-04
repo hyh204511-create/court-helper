@@ -30,3 +30,36 @@ export function getCurrentAccount(root, selectors = SELECTORS) {
   const el = root.querySelector(selectors.header.userName);
   return (el?.textContent ?? el?.innerText ?? "").toString().trim() || null;
 }
+
+/**
+ * 等待页面稳定后再判定登录状态（SPA 异步渲染防误报）。
+ * content script 在 document_start 注入时用户区可能尚未渲染，直接判定
+ * session-expired 会把"还没渲染"误判为"会话过期"。本函数先等待用户区
+ * 出现（或超时），再按最终 DOM 判定。
+ * @param {{hash?: string, root?: object, wait?: (() => Promise<boolean>)|null, timeoutMs?: number, intervalMs?: number}} input
+ * @returns {Promise<'login'|'logged-in'|'session-expired'|'unknown'>}
+ */
+export async function detectLoginStateWhenStable({
+  hash = "",
+  root,
+  wait = null,
+  timeoutMs = 5000,
+  intervalMs = 300,
+} = {}) {
+  if (!root || typeof root.querySelector !== "function") return "unknown";
+  // 登录页路由：无需等待用户区
+  if (hash.includes("pagesGrxx/pc/login")) return "login";
+  // 用户区立即可见 → 直接判定
+  const userNameEl = root.querySelector(SELECTORS.header.userName);
+  if ((userNameEl?.textContent ?? userNameEl?.innerText ?? "").toString().trim()) return "logged-in";
+  // 用户区暂缺 → 等待其出现（SPA 渲染），超时后按最终 DOM 判定
+  if (typeof wait === "function") {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await wait();
+      const el = root.querySelector(SELECTORS.header.userName);
+      if ((el?.textContent ?? el?.innerText ?? "").toString().trim()) return "logged-in";
+    }
+  }
+  return detectLoginState({ hash, root });
+}
