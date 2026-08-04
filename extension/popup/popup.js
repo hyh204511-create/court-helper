@@ -1,6 +1,7 @@
 // popup 逻辑（Phase 6 实现：导入/查询/批量/导出）
 // 经 esbuild 打包为 ../dist/popup.bundle.js
 import { VERSION } from "../shared/message-router.js";
+import { createLoginController } from "./login-controller.js";
 import * as db from "../data/db.js";
 import { importXlsx } from "../data/import-xlsx.js";
 import { buildExportWorkbook } from "../data/xlsx-io.js";
@@ -10,6 +11,7 @@ const STORES = [
   { name: db.STORE_CASES, label: "立案" },
   { name: db.STORE_ENFORCEMENT, label: "强执" },
 ];
+let loginController = null;
 
 /** 渲染查询结果表 */
 async function renderResults() {
@@ -101,9 +103,30 @@ function bindActions() {
   $("#status-filter")?.addEventListener("change", renderResults);
 }
 
+function bindLoginControls() {
+  loginController = createLoginController({ document, chromeApi: chrome });
+  loginController.init();
+
+  const applyState = (state = {}) => {
+    loginController?.setLoginState({
+      state: state.state,
+      maskedAccount: state.maskedAccount,
+    });
+  };
+  chrome.storage?.local?.get?.(["state", "maskedAccount"]).then(applyState).catch(() => {});
+  chrome.storage?.onChanged?.addListener?.((changes, areaName) => {
+    if (areaName !== "local") return;
+    applyState({
+      state: changes.state?.newValue,
+      maskedAccount: changes.maskedAccount?.newValue,
+    });
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   const versionEl = $("#app-version");
   if (versionEl) versionEl.textContent = `v${VERSION}`;
   bindActions();
+  bindLoginControls();
   renderResults().catch((e) => console.error("[court-helper] render failed", e));
 });

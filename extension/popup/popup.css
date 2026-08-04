@@ -42,6 +42,26 @@ section { padding: 10px 12px; }
 .actions button.primary { background: #1a56db; border-color: #1a56db; color: #fff; }
 .actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.login-controls {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 6px 8px;
+  align-items: center;
+  background: #fff;
+  border-top: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+}
+.login-service-row { grid-column: 1 / -1; display: flex; justify-content: space-between; color: #667085; }
+.service-state[data-state="online"] { color: #1a7f37; }
+.service-state[data-state="offline"] { color: #b42318; }
+.login-controls label { color: #667085; }
+.login-controls select { min-width: 0; padding: 6px 8px; border: 1px solid #d0d5dd; border-radius: 6px; background: #fff; }
+.login-controls button { padding: 6px 12px; border: 1px solid #1a56db; border-radius: 6px; background: #1a56db; color: #fff; cursor: pointer; }
+.login-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+.login-result { grid-column: 1 / -1; min-height: 18px; color: #667085; }
+.login-result[data-state="success"] { color: #1a7f37; }
+.login-result[data-state="error"] { color: #b42318; }
+
 .search { display: flex; gap: 6px; }
 .search input { flex: 1; padding: 6px 8px; border: 1px solid #d0d5dd; border-radius: 6px; }
 .search select { padding: 6px 4px; border: 1px solid #d0d5dd; border-radius: 6px; }

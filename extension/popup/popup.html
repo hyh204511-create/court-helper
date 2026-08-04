@@ -17,6 +17,17 @@
     <button id="btn-query" class="primary">开始查询</button>
   </section>
 
+  <section class="login-controls">
+    <div class="login-service-row">
+      <span>本地登录服务</span>
+      <span id="login-service-status" class="service-state" data-state="checking">检查中</span>
+    </div>
+    <label for="login-account">账号</label>
+    <select id="login-account" aria-label="登录账号"></select>
+    <button id="btn-auto-login" class="primary" disabled>一键登录</button>
+    <div id="login-result" class="login-result" role="status"></div>
+  </section>
+
   <section class="search">
     <input id="search-input" type="text" placeholder="账号 / 客户名">
     <select id="status-filter">
