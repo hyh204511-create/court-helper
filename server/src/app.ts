@@ -10,10 +10,15 @@ import {
   type HealthDependencies,
 } from './health.ts';
 import { attachRequestId } from './request-id.ts';
+import { registerAuthRoutes } from './auth/routes.ts';
+import { AuthService } from './auth/service.ts';
+import type { AuthContext } from './auth/service.ts';
+import type { AuthRepository } from './auth/types.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
     requestId: string;
+    auth: AuthContext | null;
   }
 }
 
@@ -22,6 +27,7 @@ export interface BuildAppOptions {
   dependencies?: Partial<HealthDependencies>;
   logger?: boolean;
   register?: (app: FastifyInstance) => void | Promise<void>;
+  authRepository?: AuthRepository;
 }
 
 function registerCors(app: FastifyInstance, config: ServerConfig): void {
@@ -48,6 +54,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(cookie);
   registerCors(app, config);
   app.decorateRequest('requestId', '');
+  if (options.authRepository) {
+    app.decorateRequest('auth', null);
+  }
   app.addHook('onRequest', attachRequestId);
 
   app.setErrorHandler((error, request, reply) => {
@@ -64,6 +73,25 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   registerHealthRoutes(app, '', dependencies);
   registerHealthRoutes(app, '/api/v1', dependencies);
+
+  if (options.authRepository) {
+    const authService = new AuthService(options.authRepository, config);
+    app.addHook('onReady', async () => {
+      await authService.seedInitialAdmin();
+    });
+    registerAuthRoutes(app, {
+      config,
+      prefix: '',
+      repository: options.authRepository,
+      service: authService,
+    });
+    registerAuthRoutes(app, {
+      config,
+      prefix: '/api/v1',
+      repository: options.authRepository,
+      service: authService,
+    });
+  }
 
   if (options.register) {
     app.register(async (instance) => {
