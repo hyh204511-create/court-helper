@@ -2,12 +2,14 @@
 // 依据 docs/engineering/platform-recon-2026-08-03.md：
 // - 登录页路由 #/pagesGrxx/pc/login*；
 // - 已登录标志：顶栏用户区 .fd-header-operate .fd-user-name 有账号文本。
-// 登录全人工（插件不碰登录表单/凭据，见 login-module 规格）。
+// 自动登录为可选流程；本文件只负责无凭据的状态/路由检测。
 import { SELECTORS } from "./selectors.js";
 
 /** 当前是否在登录页路由 */
-function isLoginHash(hash = "") {
-  return hash.includes("pagesGrxx/pc/login");
+export function isLoginRoute(hash = "") {
+  const value = typeof hash === "string" ? hash : "";
+  const prefix = SELECTORS.route.login;
+  return value === prefix || value.startsWith(`${prefix}/`) || value.startsWith(`${prefix}?`);
 }
 
 /**
@@ -17,7 +19,7 @@ function isLoginHash(hash = "") {
  */
 export function detectLoginState({ hash = "", root } = {}) {
   if (!root || typeof root.querySelector !== "function") return "unknown";
-  if (isLoginHash(hash)) return "login";
+  if (isLoginRoute(hash)) return "login";
   const userNameEl = root.querySelector(SELECTORS.header.userName);
   if ((userNameEl?.textContent ?? userNameEl?.innerText ?? "").toString().trim()) return "logged-in";
   // 非登录页但用户区缺失 → 疑似会话失效（由调用方在页面稳定后判定）
@@ -48,7 +50,7 @@ export async function detectLoginStateWhenStable({
 } = {}) {
   if (!root || typeof root.querySelector !== "function") return "unknown";
   // 登录页路由：无需等待用户区
-  if (hash.includes("pagesGrxx/pc/login")) return "login";
+  if (isLoginRoute(hash)) return "login";
   // 用户区立即可见 → 直接判定
   const userNameEl = root.querySelector(SELECTORS.header.userName);
   if ((userNameEl?.textContent ?? userNameEl?.innerText ?? "").toString().trim()) return "logged-in";
