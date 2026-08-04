@@ -1,4 +1,5 @@
 # 敏感数据与产物
+accounts.txt
 *.xlsx
 !tests/fixtures/*.xlsx
 *.png
