@@ -78,9 +78,18 @@ export function fetchCaptchaBase64(root = globalThis.document) {
 export function findExactTextView(root, text) {
   if (!isRoot(root) || typeof text !== "string") return null;
   const candidates = root.querySelectorAll(SELECTORS.login.submitButton);
-  return [...candidates].find(
+  const exact = [...candidates].filter(
     (element) => typeof element.click === "function" && (element.textContent ?? "").trim() === text,
-  ) ?? null;
+  );
+  const score = (element) => {
+    const tag = element.tagName?.toLowerCase();
+    if (tag === "view") return 100;
+    if (tag === "button" || tag === "a" || element.getAttribute?.("role") === "button") return 80;
+    if (element.hasAttribute?.("onclick") || element.hasAttribute?.("data-clickable")) return 70;
+    if (element.children?.length === 0) return 50;
+    return 0;
+  };
+  return exact.sort((left, right) => score(right) - score(left))[0] ?? null;
 }
 
 function readImageSource(image) {

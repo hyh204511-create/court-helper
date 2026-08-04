@@ -12,7 +12,8 @@ import {
   extractBusinessFields,
   collectDetail,
 } from "./case-collectors.js";
-import { detectLoginState, detectLoginStateWhenStable, getCurrentAccount } from "./login-detector.js";
+import { detectLoginState, detectLoginStateWhenStable, getCurrentAccount, isLoginRoute } from "./login-detector.js";
+import { doAutoLogin } from "./login-auto.js";
 import { captureElement } from "./screen-capturer.js";
 import { runBatch, RETRY_COUNT, jitterMs } from "../data/batch-runner.js";
 import { recognizeStatus } from "./status-recognizer.js";
@@ -30,6 +31,19 @@ let _panel = null;
 let _batchRunning = false;
 let _batchPaused = false;
 const _resumeWaiters = [];
+const AUTO_LOGIN_ERROR_CODES = new Set([
+  "SERVICE_UNAVAILABLE",
+  "FORM_NOT_READY",
+  "OCR_FAILED",
+  "LOGIN_TIMEOUT",
+  "NEEDS_HUMAN",
+]);
+
+function sanitizeAutoLoginResponse(response) {
+  if (response?.ok === true) return { ok: true };
+  const error = AUTO_LOGIN_ERROR_CODES.has(response?.error) ? response.error : "FORM_NOT_READY";
+  return { ok: false, error };
+}
 
 /** 暂停/继续在节流间隙生效（不在页面动作中途打断） */
 function pauseBatch() {
@@ -382,6 +396,27 @@ async function startBatch(kind) {
 
 // —— 消息监听 ——
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === "AUTO_LOGIN") {
+    // 路由门禁必须先于凭据读取和任何表单 DOM 操作。
+    if (!isLoginRoute(location.hash)) {
+      sendResponse({ ok: false, error: "NOT_LOGIN_ROUTE" });
+      return false;
+    }
+    if (typeof msg.account !== "string" || !msg.account || typeof msg.password !== "string" || !msg.password) {
+      sendResponse({ ok: false, error: "FORM_NOT_READY" });
+      return false;
+    }
+    doAutoLogin({
+      account: msg.account,
+      password: msg.password,
+      serviceUrl: msg.serviceUrl,
+      root: document,
+      location,
+    })
+      .then((response) => sendResponse(sanitizeAutoLoginResponse(response)))
+      .catch(() => sendResponse({ ok: false, error: "FORM_NOT_READY" }));
+    return true;
+  }
   if (msg?.type === "START_BATCH") {
     startBatch(msg.kind === "qz" ? "qz" : "li")
       .then((resp) => sendResponse(resp))
