@@ -49,6 +49,15 @@ const SHELL_HTML = `
     .bar > i{display:block;height:100%;width:0;background:#46d69a;transition:width .3s}
     .groups{display:grid;gap:5px;margin-bottom:10px;font-size:12px}
     .groups .g{display:flex;justify-content:space-between;padding:5px 8px;background:#152d40;border-radius:6px;color:#cfe4f2}
+    .sync-box{padding:9px 10px;margin-bottom:10px;border:1px solid #ffffff12;border-radius:7px;background:#0d2030}
+    .sync-head,.sync-meta{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .sync-head{color:#cfe4f2;font-weight:600}.sync-meta{margin-top:4px;color:#8eacbf;font-size:11px}
+    .sync-state{font-weight:400;color:#8eacbf}.sync-state.ok{color:#b8f5db}.sync-state.bad{color:#ffc6c2}
+    .sync-unavailable{padding-top:6px;color:#ffc6c2;font-size:12px}
+    .btn-sync-retry{width:100%;margin-top:7px;padding:6px;border:1px solid #ffffff18;border-radius:6px;
+      color:#dbeaf5;background:#224159;cursor:pointer}.btn-sync-retry:hover{background:#2d526d}
+    .sync-conflicts{margin-top:8px;color:#ffdca8;font-size:12px}.sync-conflicts ul{display:grid;gap:3px;margin:4px 0 0 15px;color:#ffc6c2}
+    .hidden{display:none!important}
     .ctrl{display:flex;gap:8px}
     .ctrl button{flex:1;padding:8px;border:1px solid #ffffff18;border-radius:6px;
       color:#dbeaf5;background:#224159;cursor:pointer}
@@ -70,6 +79,13 @@ const SHELL_HTML = `
         <button class="btn-query primary">开始查询</button>
         <button class="btn-export">导出报表</button>
       </div>
+      <section class="sync-box" aria-live="polite">
+        <div class="sync-head"><span>服务器同步</span><span class="sync-state">未配置</span></div>
+        <div class="sync-meta"><span class="sync-pending">待上传: 0</span><span class="sync-last">最后同步: -</span></div>
+        <div class="sync-unavailable hidden"></div>
+        <button class="btn-sync-retry hidden" type="button">重试同步</button>
+        <div class="sync-conflicts hidden"><span>冲突列表</span><ul></ul></div>
+      </section>
       <div class="progress-head"><span class="progress-text">待处理: -</span></div>
       <div class="bar"><i></i></div>
       <div class="groups"></div>
@@ -85,9 +101,9 @@ const SHELL_HTML = `
  * 创建并挂载浮动面板。
  * @param {object} opts
  * @param {Document} opts.document 目标页面 document
- * @param {object} [opts.handlers] {onImport, onQuery, onExport, onPause, onResume}
+ * @param {object} [opts.handlers] {onImport, onQuery, onExport, onPause, onResume, onSyncRetry}
  * @param {'open'|'closed'} [opts.shadowMode] 测试可传 'open' 以便断言；默认 'closed'
- * @returns {object} { host, setLogin, setProgress, setReady }
+ * @returns {object} { host, setLogin, setProgress, setReady, setSyncStatus }
  */
 export function createCourtPanel({ document, handlers = {}, shadowMode = "closed" }) {
   const host = document.createElement("div");
@@ -105,6 +121,13 @@ export function createCourtPanel({ document, handlers = {}, shadowMode = "closed
   const progressText = shadow.querySelector(".progress-text");
   const bar = shadow.querySelector(".bar > i");
   const groupsEl = shadow.querySelector(".groups");
+  const syncStateText = shadow.querySelector(".sync-state");
+  const syncPending = shadow.querySelector(".sync-pending");
+  const syncLast = shadow.querySelector(".sync-last");
+  const syncUnavailable = shadow.querySelector(".sync-unavailable");
+  const syncRetry = shadow.querySelector(".btn-sync-retry");
+  const syncConflicts = shadow.querySelector(".sync-conflicts");
+  const syncConflictList = syncConflicts.querySelector("ul");
 
   const toggle = () => shell.classList.toggle("collapsed");
   fab.addEventListener("click", toggle);
@@ -115,6 +138,7 @@ export function createCourtPanel({ document, handlers = {}, shadowMode = "closed
   shadow.querySelector(".btn-export").addEventListener("click", () => handlers.onExport?.());
   shadow.querySelector(".btn-pause").addEventListener("click", () => handlers.onPause?.());
   shadow.querySelector(".btn-resume").addEventListener("click", () => handlers.onResume?.());
+  syncRetry.addEventListener("click", () => (handlers.onSyncRetry ?? handlers.onRetrySync)?.());
 
   /** @param {{state: 'login'|'logged-in'|'session-expired'|'unknown', account?: string|null}} s */
   function setLogin({ state, account = null }) {
@@ -140,6 +164,48 @@ export function createCourtPanel({ document, handlers = {}, shadowMode = "closed
       .join("");
   }
 
+  /** 同步状态只接收已脱敏的摘要，不在面板渲染凭据、截图或业务明文。 */
+  function setSyncStatus({
+    status = "idle",
+    pendingCount = 0,
+    lastSyncAt = null,
+    conflicts = [],
+    message = "",
+  } = {}) {
+    const labels = {
+      disabled: "未配置",
+      idle: "待同步",
+      syncing: "同步中",
+      online: "在线",
+      offline: "不可达",
+      paused: "已暂停",
+      error: "需重试",
+    };
+    syncStateText.textContent = labels[status] ?? "待同步";
+    syncStateText.classList.toggle("ok", status === "online");
+    syncStateText.classList.toggle("bad", status === "offline" || status === "error");
+    syncPending.textContent = `待上传: ${Number.isFinite(pendingCount) ? Math.max(0, pendingCount) : 0}`;
+    syncLast.textContent = `最后同步: ${lastSyncAt ? String(lastSyncAt) : "-"}`;
+
+    const unavailable = status === "offline";
+    syncUnavailable.textContent = unavailable ? (message || "服务器不可达，请重试") : "";
+    syncUnavailable.classList.toggle("hidden", !unavailable);
+    syncRetry.classList.toggle("hidden", !unavailable && status !== "error");
+
+    syncConflictList.textContent = "";
+    const safeConflicts = Array.isArray(conflicts) ? conflicts.slice(0, 50) : [];
+    syncConflicts.classList.toggle("hidden", safeConflicts.length === 0);
+    for (const conflict of safeConflicts) {
+      const item = shadow.ownerDocument.createElement("li");
+      const code = typeof conflict?.code === "string" ? conflict.code : "CONFLICT";
+      const id = typeof conflict?.id === "string" ? conflict.id : "待人工项";
+      item.textContent = `${code} · ${id}`;
+      syncConflictList.appendChild(item);
+    }
+  }
+
+  const setSyncState = setSyncStatus;
+
   /** @param {boolean} ready 采集器（content script）是否就绪 */
   function setReady(ready) {
     if (ready) {
@@ -158,5 +224,5 @@ export function createCourtPanel({ document, handlers = {}, shadowMode = "closed
   if (document.documentElement) mount();
   else document.addEventListener("DOMContentLoaded", mount, { once: true });
 
-  return { host, setLogin, setProgress, setReady };
+  return { host, setLogin, setProgress, setReady, setSyncStatus, setSyncState };
 }

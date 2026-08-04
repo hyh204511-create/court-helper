@@ -4,6 +4,8 @@
 // - 状态识别禁猜（UNKNOWN → needsHuman）；成功/驳回自动截图；
 // - pageOps 由浏览器端实现（content script 操作真实页面），测试注入 mock。
 import { recognizeStatus } from "../content/status-recognizer.js";
+import * as defaultDb from "./db.js";
+import * as defaultOutbox from "./outbox.js";
 
 export const BATCH_LIMIT = 50;
 export const RETRY_COUNT = 1;
@@ -25,6 +27,67 @@ export function today() {
 /** 需要截图的模板状态（成功图片/驳回图片） */
 const NEEDS_IMAGE = new Set(["立案成功", "强执成功", "已驳回"]);
 
+function stableErrorCode(value) {
+  if (typeof value !== "string" || value === "") return null;
+  return /^[A-Z][A-Z0-9_]{0,63}$/.test(value) ? value : "QUERY_FAILED";
+}
+
+function fingerprint(value) {
+  const text = JSON.stringify(value);
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+/**
+ * 本地结果先落库，再进入远端 outbox；图片只保留本地引用，不进 JSON 载荷。
+ * `persistence` 可注入测试替身，默认仅在浏览器存在 IndexedDB 时启用。
+ */
+export async function persistSyncRecord(record, { db = defaultDb, outbox = defaultOutbox } = {}) {
+  const storeName = record.kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
+  const existing = await db.getByUid(storeName, record.uid);
+  const local = await db.upsert(storeName, {
+    ...existing,
+    ...record,
+    successImage: record.image ?? existing?.successImage ?? null,
+    needsHuman: record.needsHuman || (!record.image && ["立案成功", "强执成功"].includes(record.status)),
+  });
+  const payload = {
+    clientUid: local.uid,
+    account: local.account ?? record.account ?? "",
+    platformAccountId: record.platformAccountId ?? local.platformAccountId ?? "",
+    kind: local.kind,
+    plaintiff: local.plaintiff ?? "",
+    defendant: local.defendant ?? "",
+    status: local.status,
+    filedDate: local.filedDate ?? null,
+    caseNumber: local.caseNumber ?? null,
+    rejectTime: local.rejectTime ?? null,
+    rejectReason: local.rejectReason ?? null,
+    queryTime: local.queryTime ?? null,
+    needsHuman: local.needsHuman === true,
+    errorCode: stableErrorCode(local.errorCode ?? local.error),
+    sourceUpdatedAt: new Date(local.updatedAt ?? Date.now()).toISOString(),
+  };
+  const mutationId = `case-${fingerprint(payload)}`;
+  await outbox.enqueue({
+    type: "case.sync",
+    clientMutationId: mutationId,
+    payload,
+    blobRef: record.image
+      ? {
+          storeName,
+          uid: record.uid,
+          field: record.status === "已驳回" ? "rejectImage" : "successImage",
+        }
+      : null,
+  });
+  return local;
+}
+
 /**
  * 执行批量查询。
  * @param {object} opts
@@ -34,10 +97,13 @@ const NEEDS_IMAGE = new Set(["立案成功", "强执成功", "已驳回"]);
  * @param {object} [opts.timing] {delay: () => Promise} 可注入节流（测试传空）
  * @returns {Promise<{total: number, success: number, unknown: number, needsHuman: number}>}
  */
-export async function runBatch({ cases = [], pageOps, onUpdate, timing = {} }) {
+export async function runBatch({ cases = [], pageOps, onUpdate, timing = {}, persistence } = {}) {
   const delay = timing.delay ?? (() => sleep(jitterMs()));
   const queue = cases.slice(0, BATCH_LIMIT);
   const stats = { total: queue.length, success: 0, unknown: 0, needsHuman: 0 };
+  const syncPersistence = persistence ?? (typeof indexedDB !== "undefined"
+    ? { db: defaultDb, outbox: defaultOutbox }
+    : null);
 
   for (const c of queue) {
     let raw = null;
@@ -98,7 +164,8 @@ export async function runBatch({ cases = [], pageOps, onUpdate, timing = {} }) {
     if (record.status === "UNKNOWN") stats.unknown += 1;
     if (record.status !== "UNKNOWN" && !record.needsHuman) stats.success += 1;
 
-    onUpdate?.(record);
+    if (syncPersistence) await persistSyncRecord(record, syncPersistence);
+    await onUpdate?.(record);
     await delay();
   }
 
