@@ -12,7 +12,13 @@ import {
   extractBusinessFields,
   collectDetail,
 } from "./case-collectors.js";
-import { detectLoginState, detectLoginStateWhenStable, getCurrentAccount, isLoginRoute } from "./login-detector.js";
+import {
+  createLoginStateMessage,
+  detectLoginState,
+  detectLoginStateWhenStable,
+  getCurrentAccount,
+  isLoginRoute,
+} from "./login-detector.js";
 import { doAutoLogin } from "./login-auto.js";
 import { captureElement } from "./screen-capturer.js";
 import { runBatch, RETRY_COUNT, jitterMs } from "../data/batch-runner.js";
@@ -31,6 +37,7 @@ let _panel = null;
 let _batchRunning = false;
 let _batchPaused = false;
 const _resumeWaiters = [];
+let _lastLoginReport = null;
 const AUTO_LOGIN_ERROR_CODES = new Set([
   "SERVICE_UNAVAILABLE",
   "FORM_NOT_READY",
@@ -67,6 +74,38 @@ function delayWithPause() {
   });
 }
 
+export function getBatchState() {
+  return { running: _batchRunning, paused: _batchPaused };
+}
+
+/** 上报脱敏登录态；原始账号只在当前页面内用于生成 maskedAccount。 */
+export function reportLoginState(state, account = null, { now = Date.now, sendMessage } = {}) {
+  const message = createLoginStateMessage({ state, account, updatedAt: now() });
+  const fingerprint = `${message.state}|${message.maskedAccount}`;
+  if (_lastLoginReport === fingerprint) return message;
+  _lastLoginReport = fingerprint;
+  const sender = sendMessage ?? globalThis.chrome?.runtime?.sendMessage;
+  if (typeof sender === "function") {
+    try {
+      sender(message);
+    } catch {
+      // runtime 断开时不影响页面上的登录状态与批量暂停。
+    }
+  }
+  return message;
+}
+
+/** 应用登录态到面板、runtime 上报，并在会话失效时暂停批量。 */
+export function handleLoginState(state, account = null, options = {}) {
+  const message = reportLoginState(state, account, options);
+  _panel?.setLogin({ state: message.state, account });
+  if (message.state === "session-expired") {
+    pauseBatch();
+    if (_batchRunning) showToast("会话已失效，批量查询已暂停，请重新登录后手动继续", 6000);
+  }
+  return message;
+}
+
 /** 按账号聚合待处理分组（进度区展示，账号脱敏在面板内做） */
 function groupByAccount(records) {
   const map = new Map();
@@ -86,7 +125,7 @@ async function refreshPanelLogin() {
     timeoutMs: 5000,
   });
   const account = getCurrentAccount(document);
-  _panel?.setLogin({ state, account });
+  handleLoginState(state, account);
   return state;
 }
 
@@ -121,6 +160,85 @@ export function observePanelLogin({ root = document, view = window, refresh = re
     observer = null;
     view.clearTimeout(timer);
     timer = null;
+    view.removeEventListener("pagehide", disconnect);
+  };
+
+  start();
+  view.addEventListener("pagehide", disconnect);
+  return disconnect;
+}
+
+/** 全页面 SPA 登录态观察：路由或用户区变化时刷新，不自动恢复批量队列。 */
+export function observeLoginState({ root = document, view = window, refresh = refreshPanelLogin } = {}) {
+  let timer = null;
+  let observer = null;
+  let stopped = false;
+  let lastFingerprint = null;
+
+  const fingerprint = () => {
+    let hash = "";
+    try {
+      hash = view.location?.hash ?? globalThis.location?.hash ?? "";
+    } catch {
+      // 页面销毁后，jsdom/浏览器窗口的 location getter 可能不可用。
+    }
+    let account = "";
+    try {
+      account = getCurrentAccount(root) ?? "";
+    } catch {
+      // 页面销毁时 DOM 读取同样可能失败。
+    }
+    return `${hash}|${account}`;
+  };
+  const schedule = () => {
+    if (stopped) return;
+    const next = fingerprint();
+    if (next === lastFingerprint) return;
+    lastFingerprint = next;
+    let hash = "";
+    try {
+      hash = view.location?.hash ?? globalThis.location?.hash ?? "";
+    } catch {
+      return;
+    }
+    let hasUserArea = false;
+    try {
+      hasUserArea = !!getCurrentAccount(root);
+    } catch {
+      return;
+    }
+    if (!isLoginRoute(hash) && !hash.includes("pages") && !hasUserArea) return;
+    view.clearTimeout(timer);
+    timer = view.setTimeout(() => {
+      timer = null;
+      Promise.resolve(refresh()).catch(() => {});
+    }, 300);
+  };
+  const start = () => {
+    if (stopped) return;
+    if (!root?.documentElement || typeof view.MutationObserver !== "function") return;
+    lastFingerprint = fingerprint();
+    let hash = "";
+    try {
+      hash = view.location?.hash ?? globalThis.location?.hash ?? "";
+    } catch {
+      // 页面销毁时跳过初始读取。
+    }
+    if (isLoginRoute(hash) || hash.includes("pages") || getCurrentAccount(root)) {
+      Promise.resolve(refresh()).catch(() => {});
+    }
+    observer = new view.MutationObserver(schedule);
+    observer.observe(root.documentElement, { childList: true, subtree: true });
+    view.addEventListener("hashchange", schedule);
+  };
+  const disconnect = () => {
+    if (stopped) return;
+    stopped = true;
+    observer?.disconnect();
+    observer = null;
+    view.clearTimeout(timer);
+    timer = null;
+    view.removeEventListener("hashchange", schedule);
     view.removeEventListener("pagehide", disconnect);
   };
 
@@ -230,8 +348,10 @@ async function waitFor(fn, timeoutMs = 10000, intervalMs = 300) {
 function ensureListReady() {
   if (!isListPage()) throw new Error("PAGE_NOT_LIST");
   const state = detectLoginState({ hash: location.hash, root: document });
-  if (state === "login") throw new Error("NOT_LOGGED_IN");
-  if (state === "session-expired") throw new Error("SESSION_EXPIRED");
+  if (state === "login" || state === "session-expired") {
+    handleLoginState("session-expired");
+    throw new Error("SESSION_EXPIRED");
+  }
   return state === "logged-in";
 }
 
@@ -433,6 +553,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // —— 页面加载完成后的角色分发 ——
 (async () => {
   try {
+    observeLoginState();
     initPanel();
     if (isDetailPage()) {
       await runDetailCapture();

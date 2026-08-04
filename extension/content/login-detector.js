@@ -5,6 +5,28 @@
 // 自动登录为可选流程；本文件只负责无凭据的状态/路由检测。
 import { SELECTORS } from "./selectors.js";
 
+const LOGIN_STATES = new Set(["login", "logged-in", "session-expired", "unknown"]);
+
+/** 账号脱敏：保留最小可辨识前后片段，不返回完整身份证/统一社会信用代码。 */
+export function maskAccount(account) {
+  const value = account == null ? "" : String(account).trim();
+  if (!value) return "";
+  if (value.length === 1) return "*";
+  if (value.length <= 4) return `${value[0]}****${value[value.length - 1]}`;
+  return `${value.slice(0, 4)}****${value.slice(-3)}`;
+}
+
+/** 构造只含脱敏会话信息的 runtime 消息。 */
+export function createLoginStateMessage({ state = "unknown", account = null, updatedAt = Date.now() } = {}) {
+  const safeState = LOGIN_STATES.has(state) ? state : "unknown";
+  return {
+    type: "LOGIN_STATE",
+    state: safeState,
+    maskedAccount: safeState === "logged-in" ? maskAccount(account) : "",
+    updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
+  };
+}
+
 /** 当前是否在登录页路由 */
 export function isLoginRoute(hash = "") {
   const value = typeof hash === "string" ? hash : "";
