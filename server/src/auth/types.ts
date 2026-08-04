@@ -57,4 +57,5 @@ export interface AuthRepository {
   findSessionByTokenHash(tokenHash: string): Promise<SessionRecord | null>;
   revokeSession(id: string): Promise<void>;
   revokeUserSessions(userId: string): Promise<void>;
+  deleteExpiredOrRevokedSessions(now: Date): Promise<number>;
 }

@@ -128,6 +128,17 @@ export class MemoryAuthRepository implements AuthRepository {
     }
   }
 
+  async deleteExpiredOrRevokedSessions(now: Date): Promise<number> {
+    let deleted = 0;
+    for (const [id, session] of this.sessions.entries()) {
+      if (session.revokedAt !== null || session.expiresAt.getTime() <= now.getTime()) {
+        this.sessions.delete(id);
+        deleted += 1;
+      }
+    }
+    return deleted;
+  }
+
   async listSessions(): Promise<SessionRecord[]> {
     return [...this.sessions.values()].map(copySession);
   }

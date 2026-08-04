@@ -150,4 +150,12 @@ export class PgAuthRepository implements AuthRepository {
   async revokeUserSessions(userId: string): Promise<void> {
     await this.database.query('UPDATE sessions SET revoked_at = COALESCE(revoked_at, NOW()) WHERE user_id = $1', [userId]);
   }
+
+  async deleteExpiredOrRevokedSessions(now: Date): Promise<number> {
+    const result = await this.database.query(
+      'DELETE FROM sessions WHERE expires_at <= $1 OR revoked_at IS NOT NULL RETURNING id',
+      [now],
+    );
+    return result.rows.length;
+  }
 }

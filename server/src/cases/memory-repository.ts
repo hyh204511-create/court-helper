@@ -127,4 +127,18 @@ export class MemoryCaseRepository implements CaseRepository {
     this.cases.set(id, value);
     return copyCase(value);
   }
+
+  async listExpired(before: Date): Promise<CaseRecord[]> {
+    return [...this.cases.values()]
+      .filter((value) => value.queryTime !== null && value.queryTime.getTime() < before.getTime())
+      .sort((left, right) => (
+        (left.queryTime?.getTime() ?? 0) - (right.queryTime?.getTime() ?? 0)
+        || left.id.localeCompare(right.id)
+      ))
+      .map(copyCase);
+  }
+
+  async delete(id: string): Promise<void> {
+    this.cases.delete(id);
+  }
 }

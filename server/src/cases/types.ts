@@ -84,4 +84,6 @@ export interface CaseRepository {
   currentRevision(): Promise<number>;
   create(input: CaseWriteInput): Promise<CaseRecord>;
   update(id: string, input: CaseWriteInput): Promise<CaseRecord | null>;
+  listExpired(before: Date): Promise<CaseRecord[]>;
+  delete(id: string): Promise<void>;
 }

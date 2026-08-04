@@ -1,5 +1,6 @@
-import { NotFoundError } from '../errors.ts';
+import { NotFoundError, ValidationError } from '../errors.ts';
 import type { PlatformAccountRepository } from '../platform-accounts/types.ts';
+import { isBeforeRetentionCutoff, retentionCutoff, type Clock } from '../retention/policy.ts';
 import type {
   CaseListOptions,
   CaseRecord,
@@ -135,14 +136,25 @@ export class CaseService {
   public readonly repository: CaseRepository;
   private readonly platformAccounts: PlatformAccountRepository;
 
-  constructor(repository: CaseRepository, platformAccounts: PlatformAccountRepository) {
+  private readonly clock: Clock;
+
+  constructor(repository: CaseRepository, platformAccounts: PlatformAccountRepository, clock: Clock = () => new Date()) {
     this.repository = repository;
     this.platformAccounts = platformAccounts;
+    this.clock = clock;
   }
 
   async sync(items: CaseSyncItem[]): Promise<SyncResult> {
     const acceptedItems: AcceptedCase[] = [];
     const conflicts: CaseConflict[] = [];
+
+    const cutoff = retentionCutoff(new Date(this.clock()));
+    for (const item of items) {
+      const queryTime = item.queryTime === null ? null : new Date(item.queryTime);
+      if (isBeforeRetentionCutoff(queryTime, cutoff)) {
+        throw new ValidationError([{ field: 'queryTime', code: 'retention_expired' }]);
+      }
+    }
 
     for (const item of items) {
       const account = await this.platformAccounts.findById(item.platformAccountId);

@@ -195,4 +195,16 @@ export class PgCaseRepository implements CaseRepository {
     `, values);
     return result.rows[0] ? caseFromRow(result.rows[0]) : null;
   }
+
+  async listExpired(before: Date): Promise<CaseRecord[]> {
+    const result = await this.database.query(
+      'SELECT * FROM cases WHERE query_time < $1 ORDER BY query_time ASC, id ASC',
+      [before],
+    );
+    return result.rows.map(caseFromRow);
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.database.query('DELETE FROM cases WHERE id = $1', [id]);
+  }
 }

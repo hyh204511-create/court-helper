@@ -25,6 +25,13 @@ import { registerScreenshotRoutes } from './screenshots/routes.ts';
 import { ScreenshotService } from './screenshots/service.ts';
 import type { ScreenshotRepository } from './screenshots/types.ts';
 import type { StorageBackend } from './storage/types.ts';
+import {
+  RetentionScheduler,
+  RetentionService,
+  type RetentionLogger,
+  type ScheduleDaily,
+} from './retention/index.ts';
+import type { Clock } from './retention/policy.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -43,6 +50,11 @@ export interface BuildAppOptions {
   caseRepository?: CaseRepository;
   screenshotRepository?: ScreenshotRepository;
   storageBackend?: StorageBackend;
+  clock?: Clock;
+  retention?: {
+    scheduleDaily?: ScheduleDaily;
+    logger?: RetentionLogger;
+  };
 }
 
 function registerCors(app: FastifyInstance, config: ServerConfig): void {
@@ -60,6 +72,7 @@ function registerCors(app: FastifyInstance, config: ServerConfig): void {
 
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const config = options.config ?? loadConfig();
+  const clock = options.clock ?? (() => new Date());
   const dependencies: HealthDependencies = {
     database: options.dependencies?.database ?? unavailableDependency,
     objectStorage: options.dependencies?.objectStorage ?? options.storageBackend ?? unavailableDependency,
@@ -134,7 +147,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       });
     }
     if (options.caseRepository && options.platformAccountRepository) {
-      const caseService = new CaseService(options.caseRepository, options.platformAccountRepository);
+      const caseService = new CaseService(options.caseRepository, options.platformAccountRepository, clock);
       registerCaseRoutes(app, {
         authService,
         prefix: '',
@@ -151,6 +164,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         options.screenshotRepository,
         options.caseRepository,
         options.storageBackend,
+        clock,
       );
       registerScreenshotRoutes(app, {
         authService,
@@ -161,6 +175,28 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         authService,
         prefix: '/api/v1',
         service: screenshotService,
+      });
+    }
+
+    if (options.caseRepository && options.screenshotRepository && options.storageBackend) {
+      const retentionService = new RetentionService({
+        authRepository: options.authRepository,
+        caseRepository: options.caseRepository,
+        screenshotRepository: options.screenshotRepository,
+        storageBackend: options.storageBackend,
+      }, {
+        clock,
+        logger: options.retention?.logger ?? app.log,
+      });
+      const retentionScheduler = new RetentionScheduler(retentionService, {
+        scheduleDaily: options.retention?.scheduleDaily,
+        logger: options.retention?.logger ?? app.log,
+      });
+      app.addHook('onReady', async () => {
+        await retentionScheduler.start();
+      });
+      app.addHook('onClose', async () => {
+        await retentionScheduler.stop();
       });
     }
   }

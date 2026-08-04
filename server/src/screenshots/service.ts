@@ -4,8 +4,10 @@ import {
   AppError,
   DependencyUnavailableError,
   NotFoundError,
+  ValidationError,
 } from '../errors.ts';
 import type { CaseRepository } from '../cases/types.ts';
+import { isBeforeRetentionCutoff, retentionCutoff, type Clock } from '../retention/policy.ts';
 import type { StorageBackend } from '../storage/types.ts';
 import type {
   NewScreenshot,
@@ -65,25 +67,37 @@ export class ScreenshotService {
   public readonly repository: ScreenshotRepository;
   private readonly cases: CaseRepository;
   private readonly storage: StorageBackend;
+  private readonly clock: Clock;
 
   constructor(
     repository: ScreenshotRepository,
     cases: CaseRepository,
     storage: StorageBackend,
+    clock: Clock = () => new Date(),
   ) {
     this.repository = repository;
     this.cases = cases;
     this.storage = storage;
+    this.clock = clock;
   }
 
-  private async ensureCase(caseId: string): Promise<void> {
-    if (!(await this.cases.findById(caseId))) {
+  private async ensureCase(caseId: string) {
+    const caseValue = await this.cases.findById(caseId);
+    if (!caseValue) {
       throw new NotFoundError('Case not found');
     }
+    return caseValue;
   }
 
   async upload(input: ScreenshotUploadInput): Promise<ScreenshotUploadResult> {
-    await this.ensureCase(input.caseId);
+    const caseValue = await this.ensureCase(input.caseId);
+    const cutoff = retentionCutoff(new Date(this.clock()));
+    if (
+      isBeforeRetentionCutoff(input.capturedAt, cutoff)
+      || isBeforeRetentionCutoff(caseValue.queryTime, cutoff)
+    ) {
+      throw new ValidationError([{ field: 'capturedAt', code: 'retention_expired' }]);
+    }
     const current = await this.repository.findByCaseIdAndType(input.caseId, input.type);
     const normalizedHash = input.sha256.toLowerCase();
 
