@@ -14,5 +14,7 @@ test("脱敏模板 fixture 存在且非空", () => {
 
 test("npm test 使用 node --test 默认发现规则", () => {
   const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
-  assert.equal(pkg.scripts.test, "node --test");
+  // 并发限制 2 是为了避免 16GB 机器上全并发跑 ~30 个测试文件导致
+  // argon2 native 内存分配失败（Memory allocation error）；发现规则仍为默认。
+  assert.equal(pkg.scripts.test, "node --test --test-concurrency=2");
 });

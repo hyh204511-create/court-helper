@@ -5,7 +5,7 @@
   "type": "module",
   "description": "法院立案/强执查询助手 Edge 插件（MV3）",
   "scripts": {
-    "test": "node --test",
+    "test": "node --test --test-concurrency=2",
     "server:build": "tsc -p server/tsconfig.json",
     "server:start": "node server/dist/main.js",
     "fixture": "python scripts/generate-fixtures.py",
