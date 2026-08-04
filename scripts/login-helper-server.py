@@ -28,16 +28,16 @@ def load_accounts(path):
     try:
         with open(path, "r", encoding="utf-8") as account_file:
             for raw_line in account_file:
-                line = raw_line.strip()
-                if not line or line.startswith("#"):
+                line = raw_line.rstrip("\r\n")
+                if not line.strip() or line.lstrip().startswith("#"):
                     continue
+                line = line.lstrip()
                 account, separator, password = line.partition(" ")
                 if not separator or not account:
                     continue
-                password = password.strip()
-                if not password:
+                if not password.strip():
                     continue
-                accounts.append({"account": account, "password": password})
+                accounts.append({"account": account.strip(), "password": password})
     except (OSError, UnicodeError):
         return []
     return accounts
