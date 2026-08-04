@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { detectLoginState, getCurrentAccount } from "../extension/content/login-detector.js";
+import { detectLoginState, getCurrentAccount, isLoginRoute } from "../extension/content/login-detector.js";
 
 function makeRoot(userNameText) {
   return {
@@ -17,6 +17,15 @@ function makeRoot(userNameText) {
 test("登录页路由 → login", () => {
   assert.equal(detectLoginState({ hash: "#/pagesGrxx/pc/login/index", root: makeRoot() }), "login");
   assert.equal(detectLoginState({ hash: "#/pagesGrxx/pc/login/xxx", root: makeRoot() }), "login");
+});
+
+test("isLoginRoute：只匹配集中配置的登录路由前缀", () => {
+  assert.equal(isLoginRoute("#/pagesGrxx/pc/login"), true);
+  assert.equal(isLoginRoute("#/pagesGrxx/pc/login/index"), true);
+  assert.equal(isLoginRoute("#/pagesGrxx/pc/login?redirect=list"), true);
+  assert.equal(isLoginRoute("#/pagesGrxx/pc/home/login"), false);
+  assert.equal(isLoginRoute("#/pagesGrxx/pc/log-in"), false);
+  assert.equal(isLoginRoute("#/pagesGrxx/pc/loginx"), false);
 });
 
 test("已登录（用户区有账号文本）→ logged-in", () => {
