@@ -1,8 +1,9 @@
 # 规格：login-module（登录状态、账号识别与自动登录）
 
-> 版本：0.3 ｜ 状态：实现中 ｜ 依据：计划 §Phase 2、需求确认（2026-08-04 用户拍板「升级规则：全面自动登录」）、Phase 9 服务器上线（2026-08-05 用户拍板「自动登录凭据从服务器取」）
+> 版本：0.4 ｜ 状态：实现中 ｜ 依据：计划 §Phase 2、需求确认（2026-08-04 用户拍板「升级规则：全面自动登录」）、Phase 9 服务器上线（2026-08-05 用户拍板「自动登录凭据从服务器取」）
 > v0.2 变更：登录全人工 → 登录自动化（可选）；新增自动登录范围、本地服务、验证码识别流程。
 > v0.3 变更：**自动登录凭据来源改为服务器**（`GET /platform-accounts` 列表 + `POST /platform-accounts/:id/credential` 取明文）；验证码 OCR 仍走本地 8765 服务（ddddocr）；本地 `accounts.txt` 降级为可选回退。
+> v0.4 变更：**本地服务支持 `--port` 参数**（默认 8765，测试用独立随机端口避免与既有实例冲突）；补充测试环境隔离说明（8765 残留实例历史坑）。
 
 ## 1. 目标
 
@@ -75,7 +76,7 @@ popup「一键登录」→ 读取服务器配置（地址/账号，chrome.storag
 
 ## 6. 本地服务契约（`scripts/login-helper-server.py`）
 
-- 绑定 `127.0.0.1:8765`，标准库 `http.server`，无第三方依赖（ddddocr 为可选 import）。
+- 绑定 `127.0.0.1`，默认端口 `8765`（启动参数 `--port <n>` 可覆盖；测试与多实例场景用独立随机端口，避免与既有实例冲突），标准库 `http.server`，无第三方依赖（ddddocr 为可选 import）。
 - CORS：`Access-Control-Allow-Origin: *` + OPTIONS 预检（content script fetch 为跨域）。
 - `GET /health` → `{"ok": true}`
 - `GET /accounts` → `{"ok": true, "accounts": [{"account": "...", "password": "..."}]}`
@@ -106,6 +107,7 @@ popup「一键抓取」→ START_BATCH（列表页）→ 批量执行器（app-m
     - `doAutoLogin` 全流程（mock fetch /ocr）：成功路径、失败重试 1 次路径、服务不可达路径。
   - `tests/login-helper-server.test.js`（node 子进程 spawn python + 临时 fixture）：/health、/accounts 解析、/ocr 无 ddddocr → DDDDOCR_MISSING。
 - 真实联调（验收闸门）：用户真实登录页复核自动登录链路与选择器，结果只写脱敏摘要。
+- 测试环境隔离（历史坑 2026-08-05）：`withServer` 必须用独立随机端口起子进程（`--port <n>`），**不得依赖 8765 空闲**——本机曾存在未杀干净的残留服务实例（`SO_REUSEADDR` 允许多进程同端口监听），测试请求被旧实例抢答导致间歇性失败（`/accounts` 空数组、`/ocr` 错误码漂移为 OCR_FAILED）；跑测试前若怀疑残留，先 `netstat -ano | grep 8765` 清理。`stopServer` 需强杀兜底（kill 后确认退出，超时 taskkill /F）。
 
 ## 9. 验收标准
 
