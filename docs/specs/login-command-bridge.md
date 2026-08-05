@@ -60,8 +60,8 @@ CREATE INDEX IF NOT EXISTS login_commands_status_idx ON login_commands (status, 
 
 ## 6. 扩展 SW 轮询契约（extension/sw/login-command-poll.js）
 
-- **启用条件**：storage 存在服务器配置（`serverUrl`/`serverUsername`）+ **远程登录已启用**（storage `remoteLoginEnabled: true`，由 popup「启用远程登录」开关写入；启用时用户需输入服务器密码获取 extension token，**token 存 storage.local 带 `expiresAt`（TTL 8h）**；token 过期/失效 → 轮询暂停 + popup 提示重新启用）。
-- **轮询间隔**：3s（`setInterval`）；SW 被唤醒（startup/onMessage 触发）时立即检查一次。
+- **启用条件**：storage 存在服务器配置（`serverUrl`/`serverUsername`）+ **远程登录已启用**（storage `remoteLoginEnabled: true`，由 popup「启用远程登录」开关写入；启用时用户需输入服务器密码获取 extension token，**token 存 storage.local 带 `expiresAt`（TTL 8h）**；token 过期/失效 → 清 token、轮询暂停 + popup 提示重新启用）。远程登录账号必须是服务器 `admin` 角色，因为扩展执行指令时需要经 `POST /platform-accounts/:id/credential` 取凭据，该路由保持 admin 权限。
+- **轮询间隔**：3s（`setInterval`，SW 存活时快轮询）；另用 `chrome.alarms` 每 1 分钟兜底唤醒并执行一次检查。
 - **执行流程**：
   1. `GET /login-commands?status=pending`（Bearer token）；
   2. 无指令 → 结束；有 → `tabs.query({url: 法院平台})` 找登录页 tab（`isLoginRoute`）；无匹配 tab → 回写 `failed{code: NO_TAB}`；
@@ -81,6 +81,7 @@ CREATE INDEX IF NOT EXISTS login_commands_status_idx ON login_commands (status, 
 ## 8. 安全
 
 - 指令**不携带凭据**；凭据仍走 `POST /platform-accounts/:id/credential`（extension 会话，内存流转，`Cache-Control: no-store`）。
+- 远程登录部署约束：扩展侧配置的服务器账号必须具备 `admin` 角色；普通 `user` 角色可领取/回写指令，但无法读取平台账号凭据，登录会失败并提示检查服务器账号角色。
 - 服务器登录 token 存 storage 是**用户显式启用**后的选择（TTL 8h），popup 提供「停用远程登录」即清除 token；平台账号密码永不落 storage。
 - `claimed_by` 存脱敏标识（如 `dev-<8位hex>`），不回显完整会话信息。
 - 管理 UI 创建/查看指令：admin 权限 + CSRF；extension 领取/回写：extension 会话 + claimed_by 归属校验。

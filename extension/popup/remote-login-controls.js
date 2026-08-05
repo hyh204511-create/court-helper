@@ -5,7 +5,7 @@ export const UI_TEXT = Object.freeze({
   expired: "token 过期，请重新启用",
   notConfigured: "未配置服务器",
   enabling: "正在启用...",
-  enableFailed: "启用失败，请检查服务器配置或密码",
+  enableFailed: "启用失败，请检查服务器配置、密码或服务器账号是否为 admin 角色",
 });
 
 function getElement(document, selector) {
