@@ -207,6 +207,34 @@ test('retention keeps 29-day data and the exact cutoff, but deletes 31-day cases
   assert.deepEqual((await cases.list()).map((value) => value.id), ['case-29', 'case-boundary']);
 });
 
+test('retention cleans expired cases in batches of 100 with a cursor', async () => {
+  const cases = new MemoryCaseRepository(Array.from({ length: 300 }, (_, index) => (
+    caseRecord(`case-${String(index).padStart(3, '0')}`, '2026-07-31T12:00:00.000Z', index + 1)
+  )));
+  const listCalls = [];
+  const originalListExpired = cases.listExpired.bind(cases);
+  cases.listExpired = async (...args) => {
+    listCalls.push(args);
+    return originalListExpired(...args);
+  };
+  const service = new RetentionService({
+    authRepository: new MemoryAuthRepository(),
+    caseRepository: cases,
+    screenshotRepository: new MemoryScreenshotRepository(),
+    storageBackend: new MemoryStorageBackend(),
+  }, { clock: () => new Date(NOW) });
+
+  const result = await service.cleanup();
+
+  assert.equal(result.candidateCases, 300);
+  assert.equal(result.deletedCases, 300);
+  assert.deepEqual(listCalls.map(([, limit]) => limit), [100, 100, 100]);
+  assert.equal(listCalls[0][2], undefined);
+  assert.ok(listCalls[1][2]);
+  assert.ok(listCalls[2][2]);
+  assert.equal((await cases.list()).length, 0);
+});
+
 test('retention removes storage objects before screenshot metadata and then the case', async () => {
   const events = [];
   const caseValue = caseRecord('case-order', '2026-07-31T12:00:00.000Z');
@@ -329,6 +357,45 @@ test('retention scheduler runs once on startup and can be ticked without a real 
   await scheduled[0]();
   assert.equal(runs, 2);
   await scheduler.stop();
+});
+
+test('retention startup does not run cleanup before the app is listening', async () => {
+  const authRepository = new MemoryAuthRepository();
+  const caseRepository = new MemoryCaseRepository();
+  const originalListExpired = caseRepository.listExpired.bind(caseRepository);
+  let cleanupCalls = 0;
+  let releaseCleanup;
+  const cleanupReleased = new Promise((resolve) => {
+    releaseCleanup = resolve;
+  });
+  caseRepository.listExpired = async (...args) => {
+    cleanupCalls += 1;
+    await cleanupReleased;
+    return originalListExpired(...args);
+  };
+  const app = buildApp({
+    config: config(),
+    retention: { scheduleDaily: () => () => {} },
+    dependencies: {
+      database: { check: async () => true },
+      objectStorage: { check: async () => true },
+    },
+    authRepository,
+    caseRepository,
+    screenshotRepository: new MemoryScreenshotRepository(),
+    storageBackend: new MemoryStorageBackend(),
+  });
+
+  try {
+    await app.ready();
+    assert.equal(cleanupCalls, 0);
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(cleanupCalls, 1);
+  } finally {
+    releaseCleanup();
+    await app.close();
+  }
 });
 
 test('sync and screenshot upload reject data earlier than the retention cutoff', async () => {

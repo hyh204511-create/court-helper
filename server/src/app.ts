@@ -204,8 +204,12 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         scheduleDaily: options.retention?.scheduleDaily,
         logger: retentionLogger,
       });
-      app.addHook('onReady', async () => {
-        await retentionScheduler.start();
+      app.addHook('onListen', () => {
+        void retentionScheduler.start().catch(() => {
+          retentionLogger.warn({
+            event: 'retention.scheduler_start_failed',
+          }, 'Retention scheduler start failed');
+        });
       });
       app.addHook('onClose', async () => {
         await retentionScheduler.stop();

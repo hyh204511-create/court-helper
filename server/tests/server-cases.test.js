@@ -385,6 +385,25 @@ test('postgres case repository persists revisions and supports change queries in
     assert.equal(updated.defendant, 'updated synthetic defendant');
     assert.equal((await repository.findByClientUid('client-1')).revision, 2);
     assert.deepEqual((await repository.listChanges(1, 200)).map((item) => item.revision), [2]);
+
+    await repository.create(caseItem({
+      id: '00000000-0000-0000-0000-000000000101',
+      clientUid: 'client-old',
+      eventId: 'event-old',
+      queryTime: '2026-07-01T01:02:03.000Z',
+      sourceUpdatedAt: '2026-07-01T01:02:03.000Z',
+    }));
+    const firstExpiredPage = await repository.listExpired(new Date('2026-09-01T00:00:00.000Z'), 1);
+    assert.equal(firstExpiredPage.items.length, 1);
+    assert.equal(firstExpiredPage.items[0].clientUid, 'client-old');
+    assert.ok(firstExpiredPage.nextCursor);
+    const secondExpiredPage = await repository.listExpired(
+      new Date('2026-09-01T00:00:00.000Z'),
+      1,
+      firstExpiredPage.nextCursor,
+    );
+    assert.equal(secondExpiredPage.items.length, 1);
+    assert.equal(secondExpiredPage.items[0].clientUid, 'client-1');
   } finally {
     await pool.end();
   }

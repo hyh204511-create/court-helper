@@ -51,6 +51,7 @@ export class RetentionScheduler {
     if (this.started) return;
     this.started = true;
     await this.runSafely();
+    if (!this.started) return;
     this.cancelTimer = this.scheduleDaily(async () => {
       await this.runSafely();
     });

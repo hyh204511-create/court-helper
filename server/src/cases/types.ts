@@ -88,6 +88,16 @@ export interface CaseListOptions {
   limit: number;
 }
 
+export interface ExpiredCaseCursor {
+  queryTime: Date;
+  id: string;
+}
+
+export interface ExpiredCasePage {
+  items: CaseRecord[];
+  nextCursor: ExpiredCaseCursor | null;
+}
+
 export interface CaseRepository {
   findById(id: string, createdBy?: string): Promise<CaseRecord | null>;
   findByClientUid(clientUid: string, createdBy?: string): Promise<CaseRecord | null>;
@@ -96,6 +106,6 @@ export interface CaseRepository {
   currentRevision(): Promise<number>;
   create(input: CaseWriteInput): Promise<CaseRecord>;
   update(id: string, input: CaseWriteInput, createdBy?: string): Promise<CaseRecord | null>;
-  listExpired(before: Date): Promise<CaseRecord[]>;
+  listExpired(before: Date, limit?: number, cursor?: ExpiredCaseCursor): Promise<ExpiredCasePage>;
   delete(id: string): Promise<void>;
 }

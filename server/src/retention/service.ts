@@ -1,5 +1,9 @@
 import type { AuthRepository } from '../auth/types.ts';
-import type { CaseRecord, CaseRepository } from '../cases/types.ts';
+import type {
+  CaseRecord,
+  CaseRepository,
+  ExpiredCaseCursor,
+} from '../cases/types.ts';
 import type { ScreenshotRecord, ScreenshotRepository } from '../screenshots/types.ts';
 import type { StorageBackend } from '../storage/types.ts';
 import { retentionCutoff } from './policy.ts';
@@ -30,6 +34,7 @@ export interface RetentionCleanupResult {
 }
 
 const silentLogger: RetentionLogger = { warn() {} };
+export const RETENTION_BATCH_SIZE = 100;
 
 function isMissingObjectError(error: unknown): boolean {
   const candidate = error as {
@@ -152,18 +157,24 @@ export class RetentionService {
     const now = new Date(this.clock());
     const result = emptyResult(retentionCutoff(now));
 
-    let expiredCases: CaseRecord[];
-    try {
-      expiredCases = await this.dependencies.caseRepository.listExpired(result.cutoff);
-    } catch {
-      result.failedCases += 1;
-      this.warnIfIncomplete(result);
-      return result;
-    }
-    result.candidateCases = expiredCases.length;
-
-    for (const caseValue of expiredCases) {
-      await this.deleteCase(caseValue, result);
+    let cursor: ExpiredCaseCursor | undefined;
+    while (true) {
+      let page;
+      try {
+        page = await this.dependencies.caseRepository.listExpired(
+          result.cutoff,
+          RETENTION_BATCH_SIZE,
+          cursor,
+        );
+      } catch {
+        result.failedCases += 1;
+        this.warnIfIncomplete(result);
+        return result;
+      }
+      result.candidateCases += page.items.length;
+      await Promise.all(page.items.map((caseValue) => this.deleteCase(caseValue, result)));
+      if (page.nextCursor === null) break;
+      cursor = page.nextCursor;
     }
 
     try {

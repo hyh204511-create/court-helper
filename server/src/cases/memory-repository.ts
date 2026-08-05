@@ -5,6 +5,8 @@ import type {
   CaseRecord,
   CaseRepository,
   CaseWriteInput,
+  ExpiredCaseCursor,
+  ExpiredCasePage,
 } from './types.ts';
 
 function constraintError(): Error & { code: string } {
@@ -138,14 +140,29 @@ export class MemoryCaseRepository implements CaseRepository {
     return copyCase(value);
   }
 
-  async listExpired(before: Date): Promise<CaseRecord[]> {
-    return [...this.cases.values()]
-      .filter((value) => value.queryTime !== null && value.queryTime.getTime() < before.getTime())
+  async listExpired(before: Date, limit = 100, cursor?: ExpiredCaseCursor): Promise<ExpiredCasePage> {
+    const beforeTime = before.getTime();
+    const values = [...this.cases.values()]
+      .filter((value) => {
+        if (value.queryTime === null || value.queryTime.getTime() >= beforeTime) return false;
+        if (cursor === undefined) return true;
+        const queryTime = value.queryTime.getTime();
+        const cursorTime = cursor.queryTime.getTime();
+        return queryTime > cursorTime
+          || (queryTime === cursorTime && value.id.localeCompare(cursor.id) > 0);
+      })
       .sort((left, right) => (
         (left.queryTime?.getTime() ?? 0) - (right.queryTime?.getTime() ?? 0)
         || left.id.localeCompare(right.id)
-      ))
-      .map(copyCase);
+      ));
+    const page = values.slice(0, limit);
+    const last = page[page.length - 1];
+    return {
+      items: page.map(copyCase),
+      nextCursor: values.length > limit && last?.queryTime
+        ? { queryTime: new Date(last.queryTime), id: last.id }
+        : null,
+    };
   }
 
   async delete(id: string): Promise<void> {

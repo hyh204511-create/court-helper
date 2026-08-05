@@ -6,6 +6,8 @@ import type {
   CaseRecord,
   CaseRepository,
   CaseWriteInput,
+  ExpiredCaseCursor,
+  ExpiredCasePage,
 } from './types.ts';
 
 type Queryable = {
@@ -211,12 +213,30 @@ export class PgCaseRepository implements CaseRepository {
     return result.rows[0] ? caseFromRow(result.rows[0]) : null;
   }
 
-  async listExpired(before: Date): Promise<CaseRecord[]> {
-    const result = await this.database.query(
-      'SELECT * FROM cases WHERE query_time < $1 ORDER BY query_time ASC, id ASC',
-      [before],
-    );
-    return result.rows.map(caseFromRow);
+  async listExpired(before: Date, limit = 100, cursor?: ExpiredCaseCursor): Promise<ExpiredCasePage> {
+    const values: unknown[] = [before];
+    const cursorClause = cursor
+      ? (() => {
+        values.push(cursor.queryTime, cursor.id);
+        return ' AND (query_time > $2 OR (query_time = $2 AND id > $3))';
+      })()
+      : '';
+    values.push(limit + 1);
+    const result = await this.database.query(`
+      SELECT * FROM cases
+      WHERE query_time < $1${cursorClause}
+      ORDER BY query_time ASC, id ASC
+      LIMIT $${values.length}
+    `, values);
+    const rows = result.rows.map(caseFromRow);
+    const items = rows.slice(0, limit);
+    const last = items[items.length - 1];
+    return {
+      items,
+      nextCursor: rows.length > limit && last?.queryTime
+        ? { queryTime: new Date(last.queryTime), id: last.id }
+        : null,
+    };
   }
 
   async delete(id: string): Promise<void> {
