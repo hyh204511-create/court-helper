@@ -186,6 +186,26 @@ function syncItem(event, accounts = []) {
   };
 }
 
+function eventClientUid(event) {
+  const payload = event?.payload && typeof event.payload === "object" ? event.payload : {};
+  const value = payload.clientUid ?? payload.uid;
+  return typeof value === "string" ? value : "";
+}
+
+function eventSourceUpdatedAt(event) {
+  const payload = event?.payload && typeof event.payload === "object" ? event.payload : {};
+  return asIso(payload.sourceUpdatedAt ?? payload.updatedAt);
+}
+
+function conflictDetailsFor(uid, event) {
+  if (Array.isArray(event?.conflicts) && event.conflicts.length) return event.conflicts;
+  return [{
+    clientUid: uid,
+    eventId: typeof event?.clientMutationId === "string" ? event.clientMutationId : "",
+    code: "CONFLICT",
+  }];
+}
+
 function snapshot(state) {
   return {
     ...state,
@@ -333,11 +353,37 @@ export function createSyncCoordinator({
     const changes = Array.isArray(response?.cases)
       ? response.cases
       : Array.isArray(response?.changes) ? response.changes : [];
+    const outboxEvents = typeof outbox.listOutbox === "function" ? await outbox.listOutbox() : [];
     for (const change of changes) {
       const uid = typeof change?.clientUid === "string" ? change.clientUid : "";
       if (!uid) continue;
       const local = toLocalCase(change);
       const store = local.kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
+      const matchingEvents = outboxEvents.filter((event) => eventClientUid(event) === uid);
+      if (matchingEvents.length) {
+        const localRecord = typeof db.getByUid === "function" ? await db.getByUid(store, uid) : null;
+        const unresolved = matchingEvents.find((event) => ["pending", "uploading", "conflict", "needs_human"].includes(event.status));
+        if (unresolved) {
+          if (unresolved.status !== "needs_human" && typeof outbox.markNeedsHuman === "function") {
+            await outbox.markNeedsHuman(unresolved.id, {
+              reason: "CONFLICT",
+              conflicts: conflictDetailsFor(uid, unresolved),
+            });
+          }
+          if (localRecord && !localRecord.needsHuman && typeof db.upsertByUid === "function") {
+            await db.upsertByUid(store, uid, { ...localRecord, needsHuman: true }, { keepImages: true });
+          }
+          continue;
+        }
+
+        const remoteUpdatedAt = asIso(change.sourceUpdatedAt);
+        const localUpdatedAt = [localRecord?.sourceUpdatedAt, localRecord?.updatedAt, ...matchingEvents.map(eventSourceUpdatedAt)]
+          .map(asIso)
+          .filter(Boolean)
+          .map(Date.parse)
+          .filter(Number.isFinite);
+        if (remoteUpdatedAt && localUpdatedAt.some((value) => value >= Date.parse(remoteUpdatedAt))) continue;
+      }
       await db.upsertByUid(store, uid, local, { keepImages: true });
     }
     const nextCursor = Math.max(currentCursor, cursorOf(response?.nextCursor ?? response?.cursor));
@@ -436,8 +482,8 @@ export function createSyncCoordinator({
         if (typeof health !== "function") throw new Error("HEALTH_CHECK_UNAVAILABLE");
         await health();
         await refreshAccounts();
-        const pull = await pullChanges();
         const drain = await drainOutbox();
+        const pull = await pullChanges();
         const lastSyncAt = getNow();
         await db.setSyncMeta(SYNC_META_LAST_SYNC, lastSyncAt);
         emit({ status: "online", lastSyncAt, message: "", errorCode: null });

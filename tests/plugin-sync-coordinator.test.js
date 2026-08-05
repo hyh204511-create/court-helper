@@ -14,6 +14,7 @@ import {
   STORE_CASES,
   getByUid,
   getSyncMeta,
+  upsertByUid,
   resetDb,
 } from "../extension/data/db.js";
 import { enqueue, getOutbox, pendingCount } from "../extension/data/outbox.js";
@@ -230,6 +231,86 @@ test("409 冲突转为 needs_human，并在同步状态中列出", async () => {
     code: "CONFLICT",
   }]);
   assert.equal(result.conflicts.length, 1);
+  assert.equal(result.conflicts[0].id, event.id);
+});
+
+test("同步先 drain 再 pull，冲突时保留本地编辑并标记 needs_human", async () => {
+  const uid = "uid-local-edit";
+  const event = await enqueue({
+    id: "outbox-local-edit",
+    type: "case.sync",
+    clientMutationId: "mutation-local-edit",
+    payload: {
+      clientUid: uid,
+      platformAccountId: "platform-1",
+      kind: "li",
+      plaintiff: "local value",
+      defendant: "local defendant",
+      status: "UNKNOWN",
+      needsHuman: false,
+      sourceUpdatedAt: "2026-08-05T00:10:00.000Z",
+    },
+  });
+  await upsertByUid(STORE_CASES, uid, {
+    account: "local-account",
+    plaintiff: "local value",
+    defendant: "local defendant",
+    status: "UNKNOWN",
+    caseNumber: "case-local",
+    sourceUpdatedAt: "2026-08-05T00:10:00.000Z",
+    needsHuman: false,
+  });
+
+  const requests = [];
+  const coordinator = createSyncCoordinator({
+    client: makeClient(async (url) => {
+      if (url.endsWith("/health")) {
+        requests.push("health");
+        return jsonResponse({ ok: true });
+      }
+      if (url.includes("/platform-accounts")) {
+        requests.push("accounts");
+        return jsonResponse({ platformAccounts: [] });
+      }
+      if (url.includes("/sync/cases")) {
+        requests.push("push");
+        return jsonResponse({
+          error: {
+            code: "CONFLICT",
+            message: "safe conflict",
+            retryable: false,
+            details: [{ clientUid: uid, eventId: event.clientMutationId, code: "CONFLICT" }],
+          },
+        }, { status: 409 });
+      }
+      if (url.includes("/sync/changes")) {
+        requests.push("pull");
+        return jsonResponse({
+          cases: [{
+            clientUid: uid,
+            platformAccountId: "platform-1",
+            kind: "li",
+            plaintiff: "stale server value",
+            defendant: "server defendant",
+            status: "UNKNOWN",
+            sourceUpdatedAt: "2026-08-05T00:00:00.000Z",
+            revision: 1,
+          }],
+          nextCursor: 1,
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    }),
+  });
+
+  const result = await coordinator.syncNow();
+  const local = await getByUid(STORE_CASES, uid);
+  const stored = await getOutbox(event.id);
+
+  assert.ok(requests.indexOf("push") < requests.indexOf("pull"));
+  assert.equal(local.plaintiff, "local value");
+  assert.equal(local.needsHuman, true);
+  assert.equal(stored.status, "needs_human");
   assert.equal(result.conflicts[0].id, event.id);
 });
 
