@@ -1,7 +1,9 @@
 import { NotFoundError, ValidationError } from '../errors.ts';
 import type { PlatformAccountRepository } from '../platform-accounts/types.ts';
 import { isBeforeRetentionCutoff, retentionCutoff, type Clock } from '../retention/policy.ts';
+import { ownerIdFor } from './types.ts';
 import type {
+  CaseAccess,
   CaseListOptions,
   CaseRecord,
   CaseRepository,
@@ -60,9 +62,10 @@ function dateTime(value: string | null): Date | null {
   return value === null ? null : new Date(value);
 }
 
-function writeInput(item: CaseSyncItem, id?: string): CaseWriteInput {
+function writeInput(item: CaseSyncItem, id?: string, createdBy?: string | null): CaseWriteInput {
   return {
     id,
+    createdBy,
     clientUid: item.clientUid,
     platformAccountId: item.platformAccountId,
     kind: item.kind,
@@ -132,6 +135,10 @@ function accepted(item: CaseSyncItem, value: CaseRecord): AcceptedCase {
   };
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return (error as { code?: string })?.code === '23505';
+}
+
 export class CaseService {
   public readonly repository: CaseRepository;
   private readonly platformAccounts: PlatformAccountRepository;
@@ -144,9 +151,10 @@ export class CaseService {
     this.clock = clock;
   }
 
-  async sync(items: CaseSyncItem[]): Promise<SyncResult> {
+  async sync(items: CaseSyncItem[], access: CaseAccess): Promise<SyncResult> {
     const acceptedItems: AcceptedCase[] = [];
     const conflicts: CaseConflict[] = [];
+    const ownerId = ownerIdFor(access);
 
     const cutoff = retentionCutoff(new Date(this.clock()));
     for (const item of items) {
@@ -167,10 +175,18 @@ export class CaseService {
         continue;
       }
 
-      const current = await this.repository.findByClientUid(item.clientUid);
+      const current = await this.repository.findByClientUid(item.clientUid, ownerId);
       if (!current) {
-        const created = await this.repository.create(writeInput(item));
-        acceptedItems.push(accepted(item, created));
+        try {
+          const created = await this.repository.create(writeInput(item, undefined, access.userId));
+          acceptedItems.push(accepted(item, created));
+        } catch (error) {
+          if (ownerId !== undefined && isUniqueViolation(error)) {
+            conflicts.push({ clientUid: item.clientUid, eventId: item.eventId, code: 'CONFLICT' });
+            continue;
+          }
+          throw error;
+        }
         continue;
       }
 
@@ -198,7 +214,11 @@ export class CaseService {
         continue;
       }
 
-      const updated = await this.repository.update(current.id, writeInput(item, current.id));
+      const updated = await this.repository.update(
+        current.id,
+        writeInput(item, current.id, current.createdBy),
+        ownerId,
+      );
       if (!updated) throw new NotFoundError('Case not found');
       acceptedItems.push(accepted(item, updated));
     }
@@ -210,20 +230,21 @@ export class CaseService {
     };
   }
 
-  async list(options: Partial<CaseListOptions> = {}): Promise<CaseRecord[]> {
-    return this.repository.list(options);
+  async list(options: Partial<CaseListOptions> = {}, access: CaseAccess): Promise<CaseRecord[]> {
+    const ownerId = ownerIdFor(access);
+    return this.repository.list(ownerId === undefined ? options : { ...options, createdBy: ownerId });
   }
 
-  async changes(afterRevision: number, limit: number): Promise<CaseRecord[]> {
-    return this.repository.listChanges(afterRevision, limit);
+  async changes(afterRevision: number, limit: number, access: CaseAccess): Promise<CaseRecord[]> {
+    return this.repository.listChanges(afterRevision, limit, ownerIdFor(access));
   }
 
   async currentRevision(): Promise<number> {
     return this.repository.currentRevision();
   }
 
-  async get(id: string): Promise<CaseRecord> {
-    const value = await this.repository.findById(id);
+  async get(id: string, access: CaseAccess): Promise<CaseRecord> {
+    const value = await this.repository.findById(id, ownerIdFor(access));
     if (!value) throw new NotFoundError('Case not found');
     return value;
   }

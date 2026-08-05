@@ -33,6 +33,7 @@ function dateTimeInput(value: Date | string | null): Date | null {
 function caseFromRow(row: Record<string, unknown>): CaseRecord {
   return {
     id: String(row.id),
+    createdBy: row.created_by === null || row.created_by === undefined ? null : String(row.created_by),
     clientUid: String(row.client_uid),
     platformAccountId: String(row.platform_account_id),
     kind: row.kind as CaseRecord['kind'],
@@ -59,6 +60,7 @@ function writeValues(input: CaseWriteInput): unknown[] {
     input.id ?? randomUUID(),
     input.clientUid,
     input.platformAccountId,
+    input.createdBy ?? null,
     input.kind,
     input.plaintiff,
     input.defendant,
@@ -82,18 +84,28 @@ export class PgCaseRepository implements CaseRepository {
     this.database = database as unknown as Queryable;
   }
 
-  async findById(id: string): Promise<CaseRecord | null> {
+  private async findByIdWithOwner(id: string, createdBy?: string): Promise<CaseRecord | null> {
+    const values: unknown[] = [id];
+    const ownerClause = createdBy === undefined ? '' : ' AND created_by = $2';
+    if (createdBy !== undefined) values.push(createdBy);
     const result = await this.database.query(
-      'SELECT * FROM cases WHERE id = $1 LIMIT 1',
-      [id],
+      `SELECT * FROM cases WHERE id = $1${ownerClause} LIMIT 1`,
+      values,
     );
     return result.rows[0] ? caseFromRow(result.rows[0]) : null;
   }
 
-  async findByClientUid(clientUid: string): Promise<CaseRecord | null> {
+  async findById(id: string, createdBy?: string): Promise<CaseRecord | null> {
+    return this.findByIdWithOwner(id, createdBy);
+  }
+
+  async findByClientUid(clientUid: string, createdBy?: string): Promise<CaseRecord | null> {
+    const values: unknown[] = [clientUid];
+    const ownerClause = createdBy === undefined ? '' : ' AND created_by = $2';
+    if (createdBy !== undefined) values.push(createdBy);
     const result = await this.database.query(
-      'SELECT * FROM cases WHERE client_uid = $1 LIMIT 1',
-      [clientUid],
+      `SELECT * FROM cases WHERE client_uid = $1${ownerClause} LIMIT 1`,
+      values,
     );
     return result.rows[0] ? caseFromRow(result.rows[0]) : null;
   }
@@ -106,6 +118,7 @@ export class PgCaseRepository implements CaseRepository {
       conditions.push(condition.replace('?', `$${values.length}`));
     };
 
+    if (options.createdBy !== undefined) add('created_by = ?', options.createdBy);
     if (options.kind !== undefined) add('kind = ?', options.kind);
     if (options.status !== undefined) add('status = ?', options.status);
     if (options.platformAccountId !== undefined) add('platform_account_id = ?', options.platformAccountId);
@@ -127,8 +140,8 @@ export class PgCaseRepository implements CaseRepository {
     return result.rows.map(caseFromRow);
   }
 
-  async listChanges(afterRevision: number, limit: number): Promise<CaseRecord[]> {
-    return this.list({ afterRevision, limit });
+  async listChanges(afterRevision: number, limit: number, createdBy?: string): Promise<CaseRecord[]> {
+    return this.list({ afterRevision, limit, createdBy });
   }
 
   async currentRevision(): Promise<number> {
@@ -139,12 +152,12 @@ export class PgCaseRepository implements CaseRepository {
   async create(input: CaseWriteInput): Promise<CaseRecord> {
     const result = await this.database.query(`
       INSERT INTO cases (
-        id, client_uid, platform_account_id, kind, plaintiff, defendant, status,
+        id, client_uid, platform_account_id, created_by, kind, plaintiff, defendant, status,
         filed_time, case_number, reject_time, reject_reason, query_time,
         needs_human, error_code, source_event_id, source_updated_at, revision
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
         nextval('cases_revision_seq')
       )
       RETURNING *
@@ -152,7 +165,7 @@ export class PgCaseRepository implements CaseRepository {
     return caseFromRow(result.rows[0]);
   }
 
-  async update(id: string, input: CaseWriteInput): Promise<CaseRecord | null> {
+  async update(id: string, input: CaseWriteInput, createdBy?: string): Promise<CaseRecord | null> {
     const values = [
       id,
       input.clientUid,
@@ -171,6 +184,8 @@ export class PgCaseRepository implements CaseRepository {
       input.sourceEventId,
       dateTimeInput(input.sourceUpdatedAt),
     ];
+    const ownerClause = createdBy === undefined ? '' : ' AND created_by = $17';
+    if (createdBy !== undefined) values.push(createdBy);
     const result = await this.database.query(`
       UPDATE cases
       SET client_uid = $2,
@@ -190,7 +205,7 @@ export class PgCaseRepository implements CaseRepository {
           source_updated_at = $16,
           revision = nextval('cases_revision_seq'),
           updated_at = NOW()
-      WHERE id = $1
+      WHERE id = $1${ownerClause}
       RETURNING *
     `, values);
     return result.rows[0] ? caseFromRow(result.rows[0]) : null;

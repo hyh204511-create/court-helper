@@ -48,7 +48,7 @@ test('versioned migrations create the five required tables and constraints', asy
       users: ['id', 'username', 'password_hash', 'role', 'enabled', 'deleted_at', 'created_at', 'updated_at'],
       sessions: ['id', 'user_id', 'token_hash', 'client_type', 'expires_at', 'revoked_at', 'created_at'],
       platform_accounts: ['id', 'label', 'secret_ciphertext', 'secret_iv', 'secret_tag', 'secret_version', 'enabled', 'deleted_at', 'created_by', 'created_at', 'updated_at'],
-      cases: ['id', 'client_uid', 'platform_account_id', 'kind', 'plaintiff', 'defendant', 'status', 'filed_time', 'case_number', 'reject_time', 'reject_reason', 'query_time', 'needs_human', 'error_code', 'source_event_id', 'source_updated_at', 'revision', 'created_at', 'updated_at'],
+      cases: ['id', 'client_uid', 'platform_account_id', 'created_by', 'kind', 'plaintiff', 'defendant', 'status', 'filed_time', 'case_number', 'reject_time', 'reject_reason', 'query_time', 'needs_human', 'error_code', 'source_event_id', 'source_updated_at', 'revision', 'created_at', 'updated_at'],
       screenshots: ['id', 'case_id', 'type', 'object_key', 'content_type', 'byte_size', 'sha256', 'captured_at', 'created_at'],
     };
 
@@ -164,17 +164,21 @@ test('running migrations twice is harmless and explicit rollback restores a clea
     await runMigrations(pool);
     await runMigrations(pool);
     const applied = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
-    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial']);
+    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by']);
 
     await rollbackLastMigration(pool);
     const afterRollback = await tableNames(pool);
-    assert.equal(afterRollback.has('users'), false);
-    assert.equal(afterRollback.has('screenshots'), false);
+    assert.equal(afterRollback.has('users'), true);
+    assert.equal(afterRollback.has('screenshots'), true);
+    assert.equal((await columnNames(pool, 'cases')).has('created_by'), false);
+    const appliedAfterRollback = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
+    assert.deepEqual(appliedAfterRollback.rows.map((row) => row.version), ['001_initial']);
 
     await runMigrations(pool);
     const afterReapply = await tableNames(pool);
     assert.equal(afterReapply.has('users'), true);
     assert.equal(afterReapply.has('screenshots'), true);
+    assert.equal((await columnNames(pool, 'cases')).has('created_by'), true);
   } finally {
     await close(pool);
   }

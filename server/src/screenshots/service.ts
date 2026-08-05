@@ -6,7 +6,7 @@ import {
   NotFoundError,
   ValidationError,
 } from '../errors.ts';
-import type { CaseRepository } from '../cases/types.ts';
+import { ownerIdFor, type CaseAccess, type CaseRepository } from '../cases/types.ts';
 import { isBeforeRetentionCutoff, retentionCutoff, type Clock } from '../retention/policy.ts';
 import type { StorageBackend } from '../storage/types.ts';
 import type {
@@ -81,16 +81,16 @@ export class ScreenshotService {
     this.clock = clock;
   }
 
-  private async ensureCase(caseId: string) {
-    const caseValue = await this.cases.findById(caseId);
+  private async ensureCase(caseId: string, access: CaseAccess) {
+    const caseValue = await this.cases.findById(caseId, ownerIdFor(access));
     if (!caseValue) {
       throw new NotFoundError('Case not found');
     }
     return caseValue;
   }
 
-  async upload(input: ScreenshotUploadInput): Promise<ScreenshotUploadResult> {
-    const caseValue = await this.ensureCase(input.caseId);
+  async upload(input: ScreenshotUploadInput, access: CaseAccess): Promise<ScreenshotUploadResult> {
+    const caseValue = await this.ensureCase(input.caseId, access);
     const cutoff = retentionCutoff(new Date(this.clock()));
     if (
       isBeforeRetentionCutoff(input.capturedAt, cutoff)
@@ -148,19 +148,20 @@ export class ScreenshotService {
     return { screenshot, created: current === null };
   }
 
-  async listForCase(caseId: string): Promise<ScreenshotRecord[]> {
-    await this.ensureCase(caseId);
+  async listForCase(caseId: string, access: CaseAccess): Promise<ScreenshotRecord[]> {
+    await this.ensureCase(caseId, access);
     return this.repository.listByCaseId(caseId);
   }
 
-  async get(id: string): Promise<ScreenshotRecord> {
+  async get(id: string, access: CaseAccess): Promise<ScreenshotRecord> {
     const screenshot = await this.repository.findById(id);
     if (!screenshot) throw new NotFoundError('Screenshot not found');
+    await this.ensureCase(screenshot.caseId, access);
     return screenshot;
   }
 
-  async content(id: string): Promise<{ screenshot: ScreenshotRecord; stream: NodeJS.ReadableStream }> {
-    const screenshot = await this.get(id);
+  async content(id: string, access: CaseAccess): Promise<{ screenshot: ScreenshotRecord; stream: NodeJS.ReadableStream }> {
+    const screenshot = await this.get(id, access);
     const stream = await storageCall(() => this.storage.get(screenshot.objectKey));
     if (!stream) throw new NotFoundError('Screenshot not found');
     return { screenshot, stream };

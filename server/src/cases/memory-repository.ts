@@ -67,18 +67,26 @@ export class MemoryCaseRepository implements CaseRepository {
     this.nextRevision = maxRevision + 1;
   }
 
-  async findById(id: string): Promise<CaseRecord | null> {
+  private async findByIdWithOwner(id: string, createdBy?: string): Promise<CaseRecord | null> {
     const value = this.cases.get(id);
-    return value ? copyCase(value) : null;
+    return value && (createdBy === undefined || value.createdBy === createdBy) ? copyCase(value) : null;
   }
 
-  async findByClientUid(clientUid: string): Promise<CaseRecord | null> {
-    const value = [...this.cases.values()].find((candidate) => candidate.clientUid === clientUid);
+  async findById(id: string, createdBy?: string): Promise<CaseRecord | null> {
+    return this.findByIdWithOwner(id, createdBy);
+  }
+
+  async findByClientUid(clientUid: string, createdBy?: string): Promise<CaseRecord | null> {
+    const value = [...this.cases.values()].find((candidate) => (
+      candidate.clientUid === clientUid
+      && (createdBy === undefined || candidate.createdBy === createdBy)
+    ));
     return value ? copyCase(value) : null;
   }
 
   async list(options: Partial<CaseListOptions> = {}): Promise<CaseRecord[]> {
     const values = [...this.cases.values()]
+      .filter((value) => options.createdBy === undefined || value.createdBy === options.createdBy)
       .filter((value) => options.kind === undefined || value.kind === options.kind)
       .filter((value) => options.status === undefined || value.status === options.status)
       .filter((value) => options.platformAccountId === undefined || value.platformAccountId === options.platformAccountId)
@@ -89,8 +97,8 @@ export class MemoryCaseRepository implements CaseRepository {
     return values.slice(0, options.limit ?? Number.MAX_SAFE_INTEGER).map(copyCase);
   }
 
-  async listChanges(afterRevision: number, limit: number): Promise<CaseRecord[]> {
-    return this.list({ afterRevision, limit });
+  async listChanges(afterRevision: number, limit: number, createdBy?: string): Promise<CaseRecord[]> {
+    return this.list({ afterRevision, limit, createdBy });
   }
 
   async currentRevision(): Promise<number> {
@@ -105,6 +113,7 @@ export class MemoryCaseRepository implements CaseRepository {
     const now = new Date();
     const value: CaseRecord = {
       id: input.id ?? randomUUID(),
+      createdBy: input.createdBy ?? null,
       ...writeValue(input),
       revision: this.nextRevision++,
       createdAt: now,
@@ -114,11 +123,12 @@ export class MemoryCaseRepository implements CaseRepository {
     return copyCase(value);
   }
 
-  async update(id: string, input: CaseWriteInput): Promise<CaseRecord | null> {
+  async update(id: string, input: CaseWriteInput, createdBy?: string): Promise<CaseRecord | null> {
     const current = this.cases.get(id);
-    if (!current) return null;
+    if (!current || (createdBy !== undefined && current.createdBy !== createdBy)) return null;
     const value: CaseRecord = {
       id: current.id,
+      createdBy: current.createdBy,
       ...writeValue(input),
       revision: this.nextRevision++,
       createdAt: current.createdAt,

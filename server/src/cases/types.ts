@@ -6,6 +6,15 @@ export type CaseStatus = (typeof CASE_STATUSES)[number];
 
 export type CaseDateTimeInput = Date | string | null;
 
+export interface CaseAccess {
+  userId: string;
+  role: 'admin' | 'user';
+}
+
+export function ownerIdFor(access: CaseAccess): string | undefined {
+  return access.role === 'admin' ? undefined : access.userId;
+}
+
 export interface CaseSyncItem {
   eventId: string;
   clientUid: string;
@@ -26,6 +35,7 @@ export interface CaseSyncItem {
 
 export interface CaseWriteInput {
   id?: string;
+  createdBy?: string | null;
   clientUid: string;
   platformAccountId: string;
   kind: CaseKind;
@@ -45,6 +55,7 @@ export interface CaseWriteInput {
 
 export interface CaseRecord {
   id: string;
+  createdBy: string | null;
   clientUid: string;
   platformAccountId: string;
   kind: CaseKind;
@@ -66,6 +77,7 @@ export interface CaseRecord {
 }
 
 export interface CaseListOptions {
+  createdBy?: string;
   kind?: CaseKind;
   status?: CaseStatus;
   platformAccountId?: string;
@@ -77,13 +89,13 @@ export interface CaseListOptions {
 }
 
 export interface CaseRepository {
-  findById(id: string): Promise<CaseRecord | null>;
-  findByClientUid(clientUid: string): Promise<CaseRecord | null>;
+  findById(id: string, createdBy?: string): Promise<CaseRecord | null>;
+  findByClientUid(clientUid: string, createdBy?: string): Promise<CaseRecord | null>;
   list(options?: Partial<CaseListOptions>): Promise<CaseRecord[]>;
-  listChanges(afterRevision: number, limit: number): Promise<CaseRecord[]>;
+  listChanges(afterRevision: number, limit: number, createdBy?: string): Promise<CaseRecord[]>;
   currentRevision(): Promise<number>;
   create(input: CaseWriteInput): Promise<CaseRecord>;
-  update(id: string, input: CaseWriteInput): Promise<CaseRecord | null>;
+  update(id: string, input: CaseWriteInput, createdBy?: string): Promise<CaseRecord | null>;
   listExpired(before: Date): Promise<CaseRecord[]>;
   delete(id: string): Promise<void>;
 }

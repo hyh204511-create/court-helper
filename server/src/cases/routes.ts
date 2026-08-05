@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 
-import { CASE_KINDS, CASE_STATUSES, type CaseSyncItem } from './types.ts';
+import { CASE_KINDS, CASE_STATUSES, type CaseAccess, type CaseSyncItem } from './types.ts';
 import { publicCase, CaseService } from './service.ts';
 import { AuthService } from '../auth/service.ts';
 import { authenticateRequest } from '../auth/routes.ts';
@@ -48,6 +48,11 @@ const SYNC_ITEM_FIELDS = new Set([
 
 function route(prefix: string, path: string): string {
   return `${prefix}${path}`;
+}
+
+function accessOf(request: FastifyRequest): CaseAccess {
+  const auth = request.auth as NonNullable<typeof request.auth>;
+  return { userId: auth.user.id, role: auth.user.role };
 }
 
 function bodyOf(request: FastifyRequest): RequestBody {
@@ -236,14 +241,14 @@ export function registerCaseRoutes(app: FastifyInstance, options: RegisterCaseOp
       throw new ValidationError([{ field: 'items', code: 'maximum_exceeded' }]);
     }
     const items = body.items.map((item, index) => parseSyncItem(item, index));
-    return service.sync(items);
+    return service.sync(items, accessOf(request));
   });
 
   app.get(route(prefix, '/cases'), { preHandler: protectedPreHandler }, async (request) => {
     const query = queryOf(request);
     const limit = queryLimit(query.limit);
     const optionsForPage = listOptions(query, limit + 1);
-    const values = await service.list(optionsForPage);
+    const values = await service.list(optionsForPage, accessOf(request));
     const hasMore = values.length > limit;
     const cases = (hasMore ? values.slice(0, limit) : values).map(publicCase);
     return {
@@ -254,14 +259,14 @@ export function registerCaseRoutes(app: FastifyInstance, options: RegisterCaseOp
 
   app.get(route(prefix, '/cases/:id'), { preHandler: protectedPreHandler }, async (request) => {
     const id = (request.params as { id: string }).id;
-    return publicCase(await service.get(id));
+    return publicCase(await service.get(id, accessOf(request)));
   });
 
   app.get(route(prefix, '/sync/changes'), { preHandler: protectedPreHandler }, async (request) => {
     const query = queryOf(request);
     const after = queryInteger(query.after, 'after', 0);
     const limit = queryLimit(query.limit);
-    const values = await service.changes(after, limit + 1);
+    const values = await service.changes(after, limit + 1, accessOf(request));
     const hasMore = values.length > limit;
     const cases = (hasMore ? values.slice(0, limit) : values).map(publicCase);
     return {

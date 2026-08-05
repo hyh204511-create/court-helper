@@ -20,6 +20,7 @@ import {
   type ScreenshotContentType,
   type ScreenshotType,
 } from './types.ts';
+import type { CaseAccess } from '../cases/types.ts';
 
 interface RegisterScreenshotOptions {
   service: ScreenshotService;
@@ -37,6 +38,11 @@ interface MultipartFileData {
 
 function route(prefix: string, path: string): string {
   return `${prefix}${path}`;
+}
+
+function accessOf(request: FastifyRequest): CaseAccess {
+  const auth = request.auth as NonNullable<typeof request.auth>;
+  return { userId: auth.user.id, role: auth.user.role };
 }
 
 function requiredString(fields: Map<string, string>, field: string): string {
@@ -166,21 +172,21 @@ export function registerScreenshotRoutes(
   app.post(route(prefix, '/cases/:id/screenshots'), { preHandler: protectedPreHandler }, async (request, reply) => {
     assertCookieWrite(request, authService, config);
     const caseId = (request.params as { id: string }).id;
-    const result = await service.upload(await multipartUpload(request, caseId));
+    const result = await service.upload(await multipartUpload(request, caseId), accessOf(request));
     reply.code(result.created ? 201 : 200);
     return publicScreenshot(result.screenshot, prefix);
   });
 
   app.get(route(prefix, '/cases/:id/screenshots'), { preHandler: protectedPreHandler }, async (request) => {
     const caseId = (request.params as { id: string }).id;
-    const screenshots = await service.listForCase(caseId);
+    const screenshots = await service.listForCase(caseId, accessOf(request));
     return { screenshots: screenshots.map((value) => publicScreenshot(value, prefix)) };
   });
 
   app.get(route(prefix, '/screenshots/:id/content'), { preHandler: protectedPreHandler }, async (request, reply) => {
     const download = downloadValue(request);
     const id = (request.params as { id: string }).id;
-    const { screenshot, stream } = await service.content(id);
+    const { screenshot, stream } = await service.content(id, accessOf(request));
     const extension = screenshot.contentType === 'image/png' ? 'png' : 'jpg';
     reply
       .header('cache-control', 'private, no-store')

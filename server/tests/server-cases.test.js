@@ -10,6 +10,8 @@ import { MemoryPlatformAccountRepository } from '../src/platform-accounts/memory
 import { MemoryCaseRepository } from '../src/cases/memory-repository.ts';
 import { PgCaseRepository } from '../src/cases/repository.ts';
 import { runMigrations } from '../src/db/migrator.ts';
+import { MemoryScreenshotRepository } from '../src/screenshots/memory-repository.ts';
+import { MemoryStorageBackend } from '../src/storage/memory.ts';
 
 const TEST_KEY = Buffer.alloc(32, 23).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
@@ -65,27 +67,38 @@ async function makeApp({ accountEnabled = true } = {}) {
   const authRepository = new MemoryAuthRepository();
   const platformAccountRepository = new MemoryPlatformAccountRepository([accountRecord(accountEnabled)]);
   const caseRepository = new MemoryCaseRepository();
+  const screenshotRepository = new MemoryScreenshotRepository();
+  const storageBackend = new MemoryStorageBackend();
   const app = buildApp({
     config: config(),
     dependencies: {
       database: { check: async () => true },
-      objectStorage: { check: async () => true },
+      objectStorage: storageBackend,
     },
     authRepository,
     platformAccountRepository,
     caseRepository,
+    screenshotRepository,
+    storageBackend,
   });
   await app.ready();
   await addUser(authRepository);
-  return { app, authRepository, platformAccountRepository, caseRepository };
+  return {
+    app,
+    authRepository,
+    platformAccountRepository,
+    caseRepository,
+    screenshotRepository,
+    storageBackend,
+  };
 }
 
-async function loginExtension(app) {
+async function loginExtension(app, username = 'worker', password = WORKER_PASSWORD) {
   const response = await app.inject({
     method: 'POST',
     url: '/auth/login',
     headers: { origin: 'chrome-extension://test-extension' },
-    payload: { username: 'worker', password: WORKER_PASSWORD, clientType: 'extension' },
+    payload: { username, password, clientType: 'extension' },
   });
   assert.equal(response.statusCode, 200);
   return response.json().token;
@@ -374,5 +387,120 @@ test('postgres case repository persists revisions and supports change queries in
     assert.deepEqual((await repository.listChanges(1, 200)).map((item) => item.revision), [2]);
   } finally {
     await pool.end();
+  }
+});
+
+test('case and screenshot reads are isolated by case creator', async () => {
+  const {
+    app,
+    authRepository,
+    caseRepository,
+    screenshotRepository,
+    storageBackend,
+  } = await makeApp();
+
+  try {
+    await addUser(authRepository, {
+      username: 'user-a',
+      password: 'User-a-pass-1',
+    });
+    const userBToken = await loginExtension(app);
+    const userAToken = await loginExtension(app, 'user-a', 'User-a-pass-1');
+
+    const userBCase = await sync(app, userBToken, [caseItem({
+      eventId: 'event-user-b',
+      clientUid: 'client-user-b',
+    })]);
+    assert.equal(userBCase.statusCode, 200);
+    const userBCaseId = userBCase.json().accepted[0].id;
+
+    const screenshotContent = Buffer.from('synthetic user B screenshot');
+    const screenshotObjectKey = 'screenshots/user-b/private-object';
+    await storageBackend.put(screenshotObjectKey, screenshotContent, 'image/jpeg');
+    const userBScreenshot = await screenshotRepository.create({
+      caseId: userBCaseId,
+      type: 'success',
+      objectKey: screenshotObjectKey,
+      contentType: 'image/jpeg',
+      byteSize: screenshotContent.length,
+      sha256: 'a'.repeat(64),
+      capturedAt: new Date('2026-08-04T01:02:03.000Z'),
+    });
+
+    const userACase = await sync(app, userAToken, [caseItem({
+      eventId: 'event-user-a',
+      clientUid: 'client-user-a',
+      caseNumber: 'SYNTHETIC-A-001',
+    })]);
+    assert.equal(userACase.statusCode, 200);
+
+    const attemptedOverwrite = await sync(app, userAToken, [caseItem({
+      eventId: 'event-user-a-overwrite',
+      clientUid: 'client-user-b',
+      sourceUpdatedAt: '2026-08-04T02:02:03.000Z',
+      defendant: 'unauthorized overwrite',
+    })]);
+    assert.equal(attemptedOverwrite.statusCode, 200);
+    assert.deepEqual(attemptedOverwrite.json().conflicts, [{
+      clientUid: 'client-user-b',
+      eventId: 'event-user-a-overwrite',
+      code: 'CONFLICT',
+    }]);
+    assert.equal((await caseRepository.findById(userBCaseId)).defendant, 'synthetic defendant');
+
+    const userACases = await app.inject({
+      method: 'GET',
+      url: '/cases?limit=200',
+      headers: { authorization: `Bearer ${userAToken}` },
+    });
+    assert.equal(userACases.statusCode, 200);
+    assert.deepEqual(userACases.json().cases.map((value) => value.clientUid), ['client-user-a']);
+
+    const userAChanges = await app.inject({
+      method: 'GET',
+      url: '/sync/changes?after=0&limit=200',
+      headers: { authorization: `Bearer ${userAToken}` },
+    });
+    assert.equal(userAChanges.statusCode, 200);
+    assert.deepEqual(userAChanges.json().cases.map((value) => value.clientUid), ['client-user-a']);
+
+    const hiddenCase = await app.inject({
+      method: 'GET',
+      url: `/cases/${userBCaseId}`,
+      headers: { authorization: `Bearer ${userAToken}` },
+    });
+    assert.equal(hiddenCase.statusCode, 404);
+
+    const hiddenScreenshots = await app.inject({
+      method: 'GET',
+      url: `/cases/${userBCaseId}/screenshots`,
+      headers: { authorization: `Bearer ${userAToken}` },
+    });
+    assert.equal(hiddenScreenshots.statusCode, 404);
+
+    const hiddenContent = await app.inject({
+      method: 'GET',
+      url: `/screenshots/${userBScreenshot.id}/content`,
+      headers: { authorization: `Bearer ${userAToken}` },
+    });
+    assert.equal(hiddenContent.statusCode, 404);
+
+    const adminToken = await loginExtension(app, 'admin', ADMIN_PASSWORD);
+    const adminCase = await app.inject({
+      method: 'GET',
+      url: `/cases/${userBCaseId}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    assert.equal(adminCase.statusCode, 200);
+
+    const adminScreenshots = await app.inject({
+      method: 'GET',
+      url: `/cases/${userBCaseId}/screenshots`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    assert.equal(adminScreenshots.statusCode, 200);
+    assert.deepEqual(adminScreenshots.json().screenshots.map((value) => value.id), [userBScreenshot.id]);
+  } finally {
+    await app.close();
   }
 });
