@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { EventEmitter, once } from "node:events";
+import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
 import { test, after } from "node:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -46,6 +46,7 @@ writeFileSync(join(OCR_MISSING_DIR, "ddddocr.py"), "raise ImportError('optional 
 const children = new Set();
 let serverQueue = Promise.resolve();
 const STOP_TIMEOUT_MS = 2000;
+const FORCE_KILL_TIMEOUT_MS = 5000;
 
 function startServer(accountsPath, env = {}) {
   const port = 20000 + Math.floor(Math.random() * 40001);
@@ -80,24 +81,70 @@ async function waitHealthy(server) {
   return false;
 }
 
-function forceKillProcessTree(pid) {
+export function buildTaskkillArgs(pid) {
+  return ["/PID", String(pid), "/T", "/F"];
+}
+
+function forceKillProcessTree(pid, spawnImpl = spawn, timeoutMs = FORCE_KILL_TIMEOUT_MS) {
   return new Promise((resolve) => {
-    const killer = spawn("taskkill", ["//PID", String(pid), "//T", "//F"], { stdio: "ignore" });
-    killer.once("error", resolve);
-    killer.once("exit", resolve);
+    let killer;
+    try {
+      killer = spawnImpl("taskkill", buildTaskkillArgs(pid), { stdio: "ignore" });
+    } catch {
+      resolve(false);
+      return;
+    }
+
+    let timer;
+    let settled = false;
+    const cleanup = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      killer.removeListener("error", onError);
+      killer.removeListener("exit", onExit);
+    };
+    const finish = (success) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(success);
+    };
+    const onError = () => finish(false);
+    const onExit = (code) => finish(code === 0);
+
+    killer.once("error", onError);
+    killer.once("exit", onExit);
+    timer = setTimeout(() => finish(false), timeoutMs);
   });
 }
 
-async function waitForExit(child, timeoutMs = STOP_TIMEOUT_MS) {
+async function waitForExit(child, timeoutMs = STOP_TIMEOUT_MS, timerApi = {}) {
   if (child.exitCode !== null) return true;
-  const exited = await Promise.race([
-    once(child, "exit").then(() => true),
-    new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs)),
-  ]);
-  return exited || child.exitCode !== null;
+  const setTimeoutImpl = timerApi.setTimeout ?? setTimeout;
+  const clearTimeoutImpl = timerApi.clearTimeout ?? clearTimeout;
+
+  return new Promise((resolve) => {
+    let timer;
+    let settled = false;
+    const onExit = () => finish(true);
+    const finish = (exited) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeoutImpl(timer);
+      child.removeListener("exit", onExit);
+      resolve(exited || child.exitCode !== null);
+    };
+
+    child.once("exit", onExit);
+    timer = setTimeoutImpl(() => finish(false), timeoutMs);
+    if (settled && timer !== undefined) clearTimeoutImpl(timer);
+  });
 }
 
-async function stopServer(server, forceKill = forceKillProcessTree) {
+async function stopServer(
+  server,
+  forceKill = forceKillProcessTree,
+  waitForExitImpl = waitForExit,
+) {
   const child = server?.child;
   if (!child) return;
   if (child.exitCode !== null) {
@@ -106,10 +153,13 @@ async function stopServer(server, forceKill = forceKillProcessTree) {
   }
 
   child.kill();
-  let exited = await waitForExit(child);
+  let exited = await waitForExitImpl(child);
   if (!exited && child.exitCode === null) {
-    await forceKill(child.pid);
-    exited = await waitForExit(child);
+    const forceKillSucceeded = await forceKill(child.pid);
+    if (forceKillSucceeded === false) {
+      throw new Error(`local server force kill failed: ${child.pid}`);
+    }
+    exited = await waitForExitImpl(child);
   }
   if (!exited) throw new Error(`本地服务进程未退出: ${child.pid}`);
   children.delete(child);
@@ -121,37 +171,190 @@ test("stopServer：普通 kill 超时后强杀进程树并确认退出", async (
   child.pid = 54321;
   child.kill = () => {};
   const taskkillPids = [];
+  let waitCalls = 0;
+  const quickWaitForExit = async (candidate) => {
+    assert.equal(candidate, child);
+    waitCalls += 1;
+    return waitCalls > 1;
+  };
 
   await stopServer({ child }, async (pid) => {
     taskkillPids.push(pid);
     child.exitCode = 1;
     child.emit("exit", 1, null);
-  });
+  }, quickWaitForExit);
 
   assert.deepEqual(taskkillPids, [54321]);
   assert.notEqual(child.exitCode, null);
+  assert.equal(waitCalls, 2);
 });
 
-async function withServer(accountsPath, callback, env = {}) {
+test("buildTaskkillArgs 使用 taskkill 所需的单斜杠参数", () => {
+  assert.deepEqual(buildTaskkillArgs(54321), ["/PID", "54321", "/T", "/F"]);
+});
+
+test("forceKillProcessTree 将 taskkill 非零退出码视为失败", async () => {
+  const killer = new EventEmitter();
+  let spawnCall;
+  const result = forceKillProcessTree(54321, (command, args, options) => {
+    spawnCall = { command, args, options };
+    queueMicrotask(() => killer.emit("exit", 1, null));
+    return killer;
+  });
+
+  assert.equal(await result, false);
+  assert.deepEqual(spawnCall, {
+    command: "taskkill",
+    args: ["/PID", "54321", "/T", "/F"],
+    options: { stdio: "ignore" },
+  });
+  assert.equal(killer.listenerCount("exit"), 0);
+});
+
+test("forceKillProcessTree 超时视为失败", async () => {
+  const killer = new EventEmitter();
+  const result = await forceKillProcessTree(54321, () => killer, 10);
+
+  assert.equal(result, false);
+  assert.equal(killer.listenerCount("error"), 0);
+  assert.equal(killer.listenerCount("exit"), 0);
+});
+
+test("waitForExit 在 exit 后移除监听器并清理超时定时器", async () => {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  const timers = [];
+  const clearedTimers = [];
+  const timerApi = {
+    setTimeout(callback, delay) {
+      const timer = { callback, delay };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout(timer) {
+      clearedTimers.push(timer);
+    },
+  };
+
+  const waiting = waitForExit(child, 5000, timerApi);
+  assert.equal(child.listenerCount("exit"), 1);
+  child.exitCode = 0;
+  child.emit("exit", 0, null);
+
+  assert.equal(await waiting, true);
+  assert.equal(child.listenerCount("exit"), 0);
+  assert.deepEqual(clearedTimers, [timers[0]]);
+});
+
+async function withServer(accountsPath, callback, env = {}, dependencies = {}) {
+  const {
+    startServer: startServerImpl = startServer,
+    waitHealthy: waitHealthyImpl = waitHealthy,
+    stopServer: stopServerImpl = stopServer,
+  } = dependencies;
   const previous = serverQueue;
   let release;
   serverQueue = new Promise((resolve) => { release = resolve; });
   await previous;
-  const server = startServer(accountsPath, env);
+  let server;
   try {
-    assert.equal(await waitHealthy(server), true, "本地服务未能启动");
+    server = startServerImpl(accountsPath, env);
+    assert.equal(await waitHealthyImpl(server), true, "本地服务未能启动");
     return await callback(server);
   } finally {
-    await stopServer(server);
-    release();
+    try {
+      if (server) await stopServerImpl(server);
+    } finally {
+      release();
+    }
   }
 }
 
-after(async () => {
-  for (const child of children) {
-    await stopServer({ child });
+async function cleanupChildren(stopServerImpl = stopServer, childSet = children) {
+  const errors = [];
+  for (const child of childSet) {
+    try {
+      await stopServerImpl({ child });
+    } catch (error) {
+      errors.push(error);
+    }
   }
-  rmSync(TEMP_DIR, { recursive: true, force: true });
+  if (errors.length > 0) {
+    throw new AggregateError(errors, "failed to clean up child processes");
+  }
+}
+
+test("withServer 在 stopServer 抛错后仍释放串行队列", async () => {
+  const firstServer = { child: { name: "first" }, base: "fake://first" };
+  const stopError = new Error("injected stop failure");
+  let firstStopCalls = 0;
+
+  await assert.rejects(
+    withServer(
+      "unused",
+      async () => {},
+      {},
+      {
+        startServer: () => firstServer,
+        waitHealthy: async () => true,
+        stopServer: async () => {
+          firstStopCalls += 1;
+          throw stopError;
+        },
+      },
+    ),
+    (error) => error === stopError,
+  );
+
+  const secondServer = { child: { name: "second" }, base: "fake://second" };
+  let secondAcquired = false;
+  await Promise.race([
+    withServer(
+      "unused",
+      async () => {
+        secondAcquired = true;
+      },
+      {},
+      {
+        startServer: () => secondServer,
+        waitHealthy: async () => true,
+        stopServer: async () => {},
+      },
+    ),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("server queue remained locked")), 100)),
+  ]);
+
+  assert.equal(firstStopCalls, 1);
+  assert.equal(secondAcquired, true);
+});
+
+test("cleanupChildren 尝试全部 child 并最终抛出 AggregateError", async () => {
+  const firstChild = { name: "first" };
+  const secondChild = { name: "second" };
+  const firstError = new Error("first cleanup failed");
+  const secondError = new Error("second cleanup failed");
+  const attempts = [];
+
+  await assert.rejects(
+    cleanupChildren(async ({ child }) => {
+      attempts.push(child);
+      throw attempts.length === 1 ? firstError : secondError;
+    }, new Set([firstChild, secondChild])),
+    (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.deepEqual(error.errors, [firstError, secondError]);
+      return true;
+    },
+  );
+  assert.deepEqual(attempts, [firstChild, secondChild]);
+});
+
+after(async () => {
+  try {
+    await cleanupChildren();
+  } finally {
+    rmSync(TEMP_DIR, { recursive: true, force: true });
+  }
 });
 
 test("GET /health 返回 ok:true 与 UTF-8 JSON", async () => {

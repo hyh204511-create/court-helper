@@ -275,10 +275,13 @@ test("doAutoLogin：刷新阶段无有效 JPEG 验证码图时不点击、不二
   const dom = makeLoginDom();
   const clock = makeClock();
   const location = { hash: "#/pagesGrxx/pc/login/index" };
+  const images = [...dom.window.document.querySelectorAll("img")];
   const image = dom.window.document.querySelector("#captcha");
   let captchaClicks = 0;
   let submits = 0;
-  image.addEventListener("click", () => { captchaClicks += 1; });
+  for (const currentImage of images) {
+    currentImage.addEventListener("click", () => { captchaClicks += 1; });
+  }
   findExactTextView(dom.window.document, "登录").addEventListener("click", () => {
     submits += 1;
     image.setAttribute("src", "data:image/png;base64,cG5n");
