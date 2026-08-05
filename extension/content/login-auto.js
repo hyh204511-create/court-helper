@@ -4,6 +4,7 @@ import { isLoginRoute } from "./login-detector.js";
 
 const JPEG_DATA_URL_PREFIX = "data:image/jpeg;base64,";
 const LOGIN_SUCCESS_TIMEOUT_MS = 8000;
+const RUNTIME_MESSAGE_TIMEOUT_MS = LOGIN_SUCCESS_TIMEOUT_MS;
 const PASSWORD_FORM_TIMEOUT_MS = 2000;
 const CAPTCHA_REFRESH_TIMEOUT_MS = 3000;
 const RETRY_MIN_MS = 3000;
@@ -102,6 +103,23 @@ export function getElementCenterPoint(element) {
   if (!element || typeof element.getBoundingClientRect !== "function") {
     return { ok: false, error: "FORM_NOT_READY" };
   }
+  const view = element.ownerDocument?.defaultView ?? globalThis;
+  try {
+    const style = view.getComputedStyle?.(element);
+    if (style) {
+      const visibility = (style.visibility ?? "").toString();
+      const display = (style.display ?? "").toString();
+      const opacityText = (style.opacity ?? "").toString().trim();
+      if (visibility === "hidden" || visibility === "collapse" || display === "none") {
+        return { ok: false, error: "FORM_NOT_READY" };
+      }
+      if (opacityText && Number(opacityText) <= 0) {
+        return { ok: false, error: "FORM_NOT_READY" };
+      }
+    }
+  } catch {
+    return { ok: false, error: "FORM_NOT_READY" };
+  }
   let rect;
   try {
     rect = element.getBoundingClientRect();
@@ -123,15 +141,21 @@ export function getElementCenterPoint(element) {
   };
 }
 
-function sendRuntimeMessage(sendMessage, message) {
+function sendRuntimeMessage(sendMessage, message, timeoutMs = RUNTIME_MESSAGE_TIMEOUT_MS) {
   if (typeof sendMessage !== "function") return Promise.resolve(null);
   return new Promise((resolve) => {
     let settled = false;
+    let timer = null;
     const finish = (value) => {
       if (settled) return;
       settled = true;
+      if (timer) globalThis.clearTimeout?.(timer);
       resolve(value);
     };
+    const timeout = Math.max(1, Number(timeoutMs) || RUNTIME_MESSAGE_TIMEOUT_MS);
+    if (typeof globalThis.setTimeout === "function") {
+      timer = globalThis.setTimeout(() => finish({ ok: false, error: "NEEDS_HUMAN" }), timeout);
+    }
     try {
       const result = sendMessage(message, finish);
       if (result && typeof result.then === "function") {
@@ -151,14 +175,22 @@ export async function requestTrustedClick(element, dependencies = {}) {
   const response = await sendRuntimeMessage(
     dependencies.sendMessage,
     { type: CLICK_REQUEST, x: point.x, y: point.y },
+    dependencies.runtimeMessageTimeoutMs,
   );
-  dependencies.clickSessionStarted = true;
-  return response?.ok === true ? { ok: true } : { ok: false, error: "NEEDS_HUMAN" };
+  if (response?.ok === true) {
+    dependencies.clickSessionStarted = true;
+    return { ok: true };
+  }
+  return { ok: false, error: "NEEDS_HUMAN" };
 }
 
 async function releaseTrustedClickSession(dependencies) {
   if (!dependencies?.clickSessionStarted) return;
-  await sendRuntimeMessage(dependencies.sendMessage, { type: CLICK_SESSION_END });
+  await sendRuntimeMessage(
+    dependencies.sendMessage,
+    { type: CLICK_SESSION_END },
+    dependencies.runtimeMessageTimeoutMs,
+  );
   dependencies.clickSessionStarted = false;
 }
 
@@ -211,11 +243,8 @@ async function ensurePasswordMode(root, dependencies, timeoutMs) {
   if (hasPasswordForm(root)) return true;
   const tab = findExactTextView(root, "密码登录");
   if (!tab) return false;
-  try {
-    tab.click();
-  } catch {
-    return false;
-  }
+  const click = await requestTrustedClick(tab, dependencies);
+  if (!click.ok) return false;
   return waitUntil(() => hasPasswordForm(root), {
     ...dependencies,
     timeoutMs,
@@ -320,6 +349,7 @@ async function runAutoLogin(options) {
     fetchImpl: settings.fetchImpl ?? settings.fetch ?? globalThis.fetch?.bind(globalThis),
     sendMessage: settings.sendMessage ?? globalThis.chrome?.runtime?.sendMessage?.bind(globalThis.chrome.runtime),
     clickSessionStarted: false,
+    runtimeMessageTimeoutMs: settings.runtimeMessageTimeoutMs ?? LOGIN_SUCCESS_TIMEOUT_MS,
     timeoutMs: settings.loginTimeoutMs ?? settings.timeoutMs ?? LOGIN_SUCCESS_TIMEOUT_MS,
     intervalMs: settings.pollIntervalMs ?? 100,
   };

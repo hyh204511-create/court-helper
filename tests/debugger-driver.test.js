@@ -59,6 +59,41 @@ function makeChrome({ attachError = null, sendErrorAt = -1 } = {}) {
   return { chromeApi, calls, detachListeners };
 }
 
+function makeDeferredAttachChrome() {
+  const calls = {
+    attach: [],
+    sendCommand: [],
+    detach: [],
+  };
+  const attachResolves = [];
+  const chromeApi = {
+    runtime: { lastError: null },
+    debugger: {
+      attach(target, version, callback) {
+        calls.attach.push({ target, version });
+        return new Promise((resolve) => {
+          attachResolves.push(() => {
+            callback?.();
+            resolve();
+          });
+        });
+      },
+      sendCommand(target, method, params, callback) {
+        calls.sendCommand.push({ target, method, params });
+        callback?.();
+      },
+      detach(target, callback) {
+        calls.detach.push({ target });
+        callback?.();
+      },
+      onDetach: {
+        addListener() {},
+      },
+    },
+  };
+  return { chromeApi, calls, attachResolves };
+}
+
 function request(driver, message, sender) {
   let response;
   const asyncResponse = driver.handleMessage(message, sender, (value) => {
@@ -126,6 +161,48 @@ test("debugger driver：非法院平台 tab 拒绝，不 attach", async () => {
   assert.deepEqual(response, { ok: false, error: "NEEDS_HUMAN" });
   assert.equal(calls.attach.length, 0);
   assert.equal(calls.sendCommand.length, 0);
+});
+
+test("debugger driver：非法院平台 tab 的 CLICK_SESSION_END 不 detach 法院会话", async () => {
+  const { chromeApi, calls } = makeChrome();
+  const driver = createDebuggerDriver({ chromeApi, scheduler: makeScheduler() });
+
+  assert.deepEqual(await request(driver, { type: CLICK_REQUEST, x: 10, y: 20 }, courtSender), { ok: true });
+  const response = await request(
+    driver,
+    { type: CLICK_SESSION_END },
+    { tab: { id: 23, url: "https://example.com/" } },
+  );
+
+  assert.deepEqual(response, { ok: true });
+  assert.equal(driver.isAttached(23), true);
+  assert.deepEqual(calls.detach, []);
+});
+
+test("debugger driver：同 tab 并发 CLICK_REQUEST 复用同一个 attach", async () => {
+  const { chromeApi, calls, attachResolves } = makeDeferredAttachChrome();
+  const driver = createDebuggerDriver({ chromeApi, scheduler: makeScheduler() });
+  const responses = [];
+
+  driver.handleMessage({ type: CLICK_REQUEST, x: 10, y: 20 }, courtSender, (value) => {
+    responses.push(value);
+  });
+  driver.handleMessage({ type: CLICK_REQUEST, x: 30, y: 40 }, courtSender, (value) => {
+    responses.push(value);
+  });
+
+  assert.equal(calls.attach.length, 1);
+  attachResolves[0]();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(responses, [{ ok: true }, { ok: true }]);
+  assert.equal(calls.attach.length, 1);
+  assert.deepEqual(calls.sendCommand.map((call) => [call.params.type, call.params.x, call.params.y]), [
+    ["mousePressed", 10, 20],
+    ["mousePressed", 30, 40],
+    ["mouseReleased", 10, 20],
+    ["mouseReleased", 30, 40],
+  ]);
 });
 
 test("debugger driver：sendCommand 失败回执 NEEDS_HUMAN 并清理 attach", async () => {

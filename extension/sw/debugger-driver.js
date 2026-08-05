@@ -53,6 +53,7 @@ export function createDebuggerDriver({
   autoDetachMs = DEFAULT_AUTO_DETACH_MS,
 } = {}) {
   const attachedTabs = new Map();
+  const attachingTabs = new Map();
 
   const clearDetachTimer = (state) => {
     if (state?.timer) scheduler.clearTimeout?.(state.timer);
@@ -63,6 +64,7 @@ export function createDebuggerDriver({
     const state = attachedTabs.get(tabId);
     clearDetachTimer(state);
     attachedTabs.delete(tabId);
+    attachingTabs.delete(tabId);
   };
 
   const detachTab = async (tabId) => {
@@ -91,15 +93,25 @@ export function createDebuggerDriver({
       scheduleAutoDetach(tabId);
       return;
     }
+    if (attachingTabs.has(tabId)) {
+      await attachingTabs.get(tabId);
+      scheduleAutoDetach(tabId);
+      return;
+    }
     if (typeof chromeApi?.debugger?.attach !== "function") {
       throw new Error("debugger unavailable");
     }
-    await callDebugger(chromeApi, chromeApi.debugger.attach.bind(chromeApi.debugger), [
+    const attachPromise = callDebugger(chromeApi, chromeApi.debugger.attach.bind(chromeApi.debugger), [
       tabTarget(tabId),
       DEBUGGER_PROTOCOL_VERSION,
-    ]);
-    attachedTabs.set(tabId, { timer: null });
-    scheduleAutoDetach(tabId);
+    ]).then(() => {
+      attachedTabs.set(tabId, { timer: null });
+      scheduleAutoDetach(tabId);
+    }).finally(() => {
+      attachingTabs.delete(tabId);
+    });
+    attachingTabs.set(tabId, attachPromise);
+    await attachPromise;
   };
 
   const dispatchMouseEvent = async (tabId, type, x, y) => {
@@ -137,7 +149,7 @@ export function createDebuggerDriver({
 
   const handleSessionEnd = async (sender) => {
     const tabId = sender?.tab?.id;
-    if (Number.isInteger(tabId)) await detachTab(tabId);
+    if (Number.isInteger(tabId) && isCourtPlatformUrl(sender?.tab?.url)) await detachTab(tabId);
     return { ok: true };
   };
 

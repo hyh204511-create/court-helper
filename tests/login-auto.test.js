@@ -359,6 +359,7 @@ test("doAutoLogin：需要时只点击一次密码登录并等待密码框出现
   const clock = makeClock();
   let tabClicks = 0;
   let formAdded = false;
+  const messages = [];
   const tab = dom.window.document.querySelector("#password-tab");
   tab.addEventListener("click", () => { tabClicks += 1; });
   clock.onSleep = async () => {
@@ -372,6 +373,7 @@ test("doAutoLogin：需要时只点击一次密码登录并等待密码框出现
     }
   };
   const location = { hash: "#/pagesGrxx/pc/login/index" };
+  setRect(tab, { left: 48, top: 12, width: 104, height: 32 });
   setRect(dom.window.document.querySelector("#submit-view"), { left: 8, top: 16, width: 40, height: 20 });
   setRect(dom.window.document.querySelector("img"), { left: 100, top: 100, width: 80, height: 40 });
 
@@ -382,13 +384,76 @@ test("doAutoLogin：需要时只点击一次密码登录并等待密码框出现
     {
       location,
       sendMessage: async (message) => {
-        if (message.type === CLICK_REQUEST) location.hash = "#/pagesWsla/pc/list/index";
+        messages.push(message);
+        if (message.type === CLICK_REQUEST && message.x === 28 && message.y === 26) {
+          location.hash = "#/pagesWsla/pc/list/index";
+        }
         return { ok: true };
       },
     },
   ));
   assert.deepEqual(result, { ok: true });
-  assert.equal(tabClicks, 1);
+  assert.equal(tabClicks, 0);
+  assert.deepEqual(messages, [
+    { type: CLICK_REQUEST, x: 100, y: 28 },
+    { type: CLICK_REQUEST, x: 28, y: 26 },
+    { type: "CLICK_SESSION_END" },
+  ]);
+  dom.window.close();
+});
+
+test("doAutoLogin：密码 tab 切换走 CLICK_REQUEST，不触发合成 click", async () => {
+  const dom = new JSDOM(`
+    <main>
+      <view id="password-tab">密码登录</view>
+      <input type="text" class="uni-input-input" aria-label="账号">
+      <input type="text" class="uni-input-input" aria-label="验证码">
+      <img src="data:image/jpeg;base64,amJzZG9t">
+      <view id="submit-view">登录</view>
+    </main>
+  `);
+  const clock = makeClock();
+  const location = { hash: "#/pagesGrxx/pc/login/index" };
+  const tab = dom.window.document.querySelector("#password-tab");
+  const submit = dom.window.document.querySelector("#submit-view");
+  const image = dom.window.document.querySelector("img");
+  let syntheticTabClicks = 0;
+  tab.addEventListener("click", () => { syntheticTabClicks += 1; });
+  setRect(tab, { left: 90, top: 10, width: 80, height: 30 });
+  setRect(submit, { left: 8, top: 16, width: 40, height: 20 });
+  setRect(image, { left: 100, top: 100, width: 80, height: 40 });
+  const messages = [];
+
+  const result = await doAutoLogin(autoLoginOptions(
+    dom,
+    clock,
+    async () => jsonResponse({ ok: true, text: "A7x2" }),
+    {
+      location,
+      sendMessage: async (message) => {
+        messages.push(message);
+        if (message.type === CLICK_REQUEST && message.x === 130 && message.y === 25) {
+          const password = dom.window.document.createElement("input");
+          password.type = "password";
+          password.className = "uni-input-input";
+          password.setAttribute("aria-label", "密码");
+          dom.window.document.querySelector("main").insertBefore(password, image);
+        }
+        if (message.type === CLICK_REQUEST && message.x === 28 && message.y === 26) {
+          location.hash = "#/pagesWsla/pc/list/index";
+        }
+        return { ok: true };
+      },
+    },
+  ));
+
+  assert.deepEqual(result, { ok: true });
+  assert.equal(syntheticTabClicks, 0);
+  assert.deepEqual(messages, [
+    { type: CLICK_REQUEST, x: 130, y: 25 },
+    { type: CLICK_REQUEST, x: 28, y: 26 },
+    { type: "CLICK_SESSION_END" },
+  ]);
   dom.window.close();
 });
 
@@ -465,22 +530,73 @@ test("requestTrustedClick：无有效 rect 时返回 FORM_NOT_READY 且不发消
   dom.window.close();
 });
 
+test("requestTrustedClick：visibility hidden 或 opacity 0 时返回 FORM_NOT_READY", async () => {
+  const hiddenDom = makeLoginDom();
+  const hiddenSubmit = findExactTextView(hiddenDom.window.document, "登录");
+  setRect(hiddenSubmit, { left: 10, top: 20, width: 100, height: 40 });
+  hiddenSubmit.style.visibility = "hidden";
+  const messages = [];
+
+  assert.deepEqual(getElementCenterPoint(hiddenSubmit), { ok: false, error: "FORM_NOT_READY" });
+  assert.deepEqual(await requestTrustedClick(hiddenSubmit, {
+    sendMessage: async (message) => {
+      messages.push(message);
+      return { ok: true };
+    },
+  }), { ok: false, error: "FORM_NOT_READY" });
+  assert.deepEqual(messages, []);
+  hiddenDom.window.close();
+
+  const transparentDom = makeLoginDom();
+  const transparentSubmit = findExactTextView(transparentDom.window.document, "登录");
+  setRect(transparentSubmit, { left: 10, top: 20, width: 100, height: 40 });
+  transparentSubmit.style.opacity = "0";
+  assert.deepEqual(getElementCenterPoint(transparentSubmit), { ok: false, error: "FORM_NOT_READY" });
+  transparentDom.window.close();
+});
+
+test("requestTrustedClick：sendMessage 永不回调时有界超时返回 NEEDS_HUMAN", async () => {
+  const dom = makeLoginDom();
+  const submit = findExactTextView(dom.window.document, "登录");
+  setRect(submit, { left: 10, top: 20, width: 100, height: 40 });
+
+  const response = await Promise.race([
+    requestTrustedClick(submit, {
+      runtimeMessageTimeoutMs: 5,
+      sendMessage() {
+        // Intentionally never calls the callback and returns no Promise.
+      },
+    }),
+    new Promise((resolve) => setTimeout(() => resolve({ ok: false, error: "TEST_TIMEOUT" }), 50)),
+  ]);
+
+  assert.deepEqual(response, { ok: false, error: "NEEDS_HUMAN" });
+  dom.window.close();
+});
+
 test("doAutoLogin：CLICK_REQUEST 失败时返回 NEEDS_HUMAN，不做合成点击兜底", async () => {
   const dom = makeLoginDom();
   const clock = makeClock();
   prepareClickTargets(dom.window.document);
   let syntheticClicks = 0;
+  const messages = [];
   findExactTextView(dom.window.document, "登录").addEventListener("click", () => { syntheticClicks += 1; });
 
   const result = await doAutoLogin(autoLoginOptions(
     dom,
     clock,
     async () => jsonResponse({ ok: true, text: "A7x2" }),
-    { sendMessage: async () => ({ ok: false, error: "NEEDS_HUMAN" }) },
+    {
+      sendMessage: async (message) => {
+        messages.push(message);
+        return { ok: false, error: "NEEDS_HUMAN" };
+      },
+    },
   ));
 
   assert.deepEqual(result, { ok: false, error: "NEEDS_HUMAN" });
   assert.equal(syntheticClicks, 0);
+  assert.deepEqual(messages, [{ type: CLICK_REQUEST, x: 60, y: 40 }]);
   dom.window.close();
 });
 
