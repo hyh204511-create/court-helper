@@ -98,7 +98,13 @@ test("大量终态事件不占满 drain 切片，少量到期 pending 仍会发�
 test("失败使用指数退避，达到单条上限后进入 needs_human", async () => {
   let now = 1000;
   const event = await enqueue({ type: "case.sync", payload: { n: 1 } });
-  const send = async () => { throw new Error("NETWORK_ERROR"); };
+  const send = async () => {
+    const error = new Error("validation failed");
+    error.code = "VALIDATION_ERROR";
+    error.status = 400;
+    error.retryable = false;
+    throw error;
+  };
 
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     await retry(event.id);
@@ -112,6 +118,29 @@ test("失败使用指数退避，达到单条上限后进入 needs_human", async
     } else {
       assert.equal(current.status, "needs_human");
     }
+  }
+});
+
+test("retryable 瞬时错误不消耗 needs_human 阈值，连续失败仍保持 pending", async () => {
+  let now = 1000;
+  let previousRetryAt = 0;
+  const event = await enqueue({ id: "retryable-event", type: "case.sync", payload: { n: 1 } });
+  const send = async () => {
+    const error = new Error("network temporarily unavailable");
+    error.code = "NETWORK_UNAVAILABLE";
+    error.retryable = true;
+    throw error;
+  };
+
+  for (let attempt = 1; attempt <= 10; attempt += 1) {
+    await retry(event.id);
+    await drain({ now: () => now, send, baseDelayMs: 100, maxAttempts: 5 });
+    const current = await getOutbox(event.id);
+    assert.equal(current.status, "pending");
+    assert.equal(current.attempts, attempt);
+    assert.ok(current.nextRetryAt > previousRetryAt);
+    previousRetryAt = current.nextRetryAt;
+    now = current.nextRetryAt;
   }
 });
 

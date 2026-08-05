@@ -222,7 +222,8 @@ export async function drain({
         continue;
       }
       const attempts = Number(uploading.attempts ?? 0) + 1;
-      if (attempts >= maxAttempts) {
+      const retryable = error?.retryable === true;
+      if (!retryable && attempts >= maxAttempts) {
         await update(event.id, {
           status: "needs_human",
           attempts,
