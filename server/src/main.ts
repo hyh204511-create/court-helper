@@ -6,6 +6,7 @@ import { PgPlatformAccountRepository } from './platform-accounts/repository.ts';
 import { PgLoginCommandRepository } from './login-commands/repository.ts';
 import { PgCaseRepository } from './cases/repository.ts';
 import { PgScreenshotRepository } from './screenshots/repository.ts';
+import { PgReportExportRepository } from './report-exports/repository.ts';
 import { createStorageBackend } from './storage/index.ts';
 import { createPostgresHealthDependency } from './health.ts';
 import { runMigrations } from './db/migrator.ts';
@@ -20,6 +21,7 @@ const app = buildApp({
   loginCommandRepository: new PgLoginCommandRepository(pool),
   caseRepository: new PgCaseRepository(pool),
   screenshotRepository: new PgScreenshotRepository(pool),
+  reportExportRepository: new PgReportExportRepository(pool),
   storageBackend,
   dependencies: {
     database: createPostgresHealthDependency(pool),

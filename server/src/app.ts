@@ -27,6 +27,9 @@ import type { CaseRepository } from './cases/types.ts';
 import { registerScreenshotRoutes } from './screenshots/routes.ts';
 import { MAX_SCREENSHOT_BYTES, ScreenshotService } from './screenshots/service.ts';
 import type { ScreenshotRepository } from './screenshots/types.ts';
+import { registerReportExportRoutes } from './report-exports/routes.ts';
+import { MAX_REPORT_EXPORT_BYTES, ReportExportService } from './report-exports/service.ts';
+import type { ReportExportRepository } from './report-exports/types.ts';
 import type { StorageBackend } from './storage/types.ts';
 import {
   RetentionScheduler,
@@ -54,6 +57,7 @@ export interface BuildAppOptions {
   loginCommandRepository?: LoginCommandRepository;
   caseRepository?: CaseRepository;
   screenshotRepository?: ScreenshotRepository;
+  reportExportRepository?: ReportExportRepository;
   storageBackend?: StorageBackend;
   clock?: Clock;
   retention?: {
@@ -88,16 +92,17 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     database: options.dependencies?.database ?? unavailableDependency,
     objectStorage: options.dependencies?.objectStorage ?? options.storageBackend ?? unavailableDependency,
   };
+  const maxMultipartFileBytes = Math.max(MAX_SCREENSHOT_BYTES, MAX_REPORT_EXPORT_BYTES);
   const app = fastify({
     logger: options.logger ?? false,
-    bodyLimit: MAX_SCREENSHOT_BYTES + 1024 * 1024,
+    bodyLimit: maxMultipartFileBytes + 1024 * 1024,
   });
 
   app.register(cookie);
   app.register(multipart, {
     throwFileSizeLimit: false,
     limits: {
-      fileSize: MAX_SCREENSHOT_BYTES,
+      fileSize: maxMultipartFileBytes,
       files: 1,
       fields: 4,
       parts: 5,
@@ -204,6 +209,25 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         config,
         prefix: '/api/v1',
         service: screenshotService,
+      });
+    }
+    if (options.reportExportRepository && options.storageBackend) {
+      const reportExportService = new ReportExportService(
+        options.reportExportRepository,
+        options.storageBackend,
+        clock,
+      );
+      registerReportExportRoutes(app, {
+        authService,
+        config,
+        prefix: '',
+        service: reportExportService,
+      });
+      registerReportExportRoutes(app, {
+        authService,
+        config,
+        prefix: '/api/v1',
+        service: reportExportService,
       });
     }
 
