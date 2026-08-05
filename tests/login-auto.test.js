@@ -93,6 +93,20 @@ test("fetchCaptchaBase64 只返回首个 JPEG data URL 的 base64", () => {
   empty.window.close();
 });
 
+test("fetchCaptchaBase64：多图跳过空 src 和 PNG，取首个 JPEG", () => {
+  const dom = new JSDOM(`
+    <main>
+      <img src="">
+      <img src="data:image/png;base64,cG5n">
+      <img src="data:image/jpeg;base64,first-jpeg">
+      <img src="data:image/jpeg;base64,second-jpeg">
+    </main>
+  `);
+
+  assert.equal(fetchCaptchaBase64(dom.window.document), "first-jpeg");
+  dom.window.close();
+});
+
 test("精确文本定位只返回登录 view，不依赖 button 标签", () => {
   const dom = makeLoginDom();
   const target = findExactTextView(dom.window.document, "登录");
@@ -253,6 +267,32 @@ test("doAutoLogin：验证码刷新超时不读取旧图、不提交第二次", 
 
   assert.deepEqual(result, { ok: false, error: "NEEDS_HUMAN" });
   assert.equal(refreshes, 1);
+  assert.equal(submits, 1);
+  dom.window.close();
+});
+
+test("doAutoLogin：刷新阶段无有效 JPEG 验证码图时不点击、不二次提交并待人工", async () => {
+  const dom = makeLoginDom();
+  const clock = makeClock();
+  const location = { hash: "#/pagesGrxx/pc/login/index" };
+  const image = dom.window.document.querySelector("#captcha");
+  let captchaClicks = 0;
+  let submits = 0;
+  image.addEventListener("click", () => { captchaClicks += 1; });
+  findExactTextView(dom.window.document, "登录").addEventListener("click", () => {
+    submits += 1;
+    image.setAttribute("src", "data:image/png;base64,cG5n");
+  });
+
+  const result = await doAutoLogin(autoLoginOptions(
+    dom,
+    clock,
+    async () => jsonResponse({ ok: true, text: "A7x2" }),
+    { location },
+  ));
+
+  assert.deepEqual(result, { ok: false, error: "NEEDS_HUMAN" });
+  assert.equal(captchaClicks, 0);
   assert.equal(submits, 1);
   dom.window.close();
 });
