@@ -55,7 +55,8 @@ section { padding: 10px 12px; }
 .service-state[data-state="online"] { color: #1a7f37; }
 .service-state[data-state="offline"] { color: #b42318; }
 .login-controls label { color: #667085; }
-.login-controls select { min-width: 0; padding: 6px 8px; border: 1px solid #d0d5dd; border-radius: 6px; background: #fff; }
+.login-controls select,
+.login-controls input { min-width: 0; padding: 6px 8px; border: 1px solid #d0d5dd; border-radius: 6px; background: #fff; }
 .login-controls button { padding: 6px 12px; border: 1px solid #1a56db; border-radius: 6px; background: #1a56db; color: #fff; cursor: pointer; }
 .login-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
 .login-result { grid-column: 1 / -1; min-height: 18px; color: #667085; }

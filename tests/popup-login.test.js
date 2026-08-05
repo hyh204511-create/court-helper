@@ -22,8 +22,8 @@ function makeDom() {
   `);
 }
 
-function makeChrome({ tabId = 7, sendResponse = { ok: true } } = {}) {
-  const calls = { query: 0, messages: [], storage: 0 };
+function makeChrome({ tabId = 7, sendResponse = { ok: true }, storageData = {} } = {}) {
+  const calls = { query: 0, messages: [], storage: 0, storageWrites: [] };
   return {
     calls,
     tabs: {
@@ -38,15 +38,16 @@ function makeChrome({ tabId = 7, sendResponse = { ok: true } } = {}) {
     },
     storage: {
       local: {
-        get: async () => { calls.storage += 1; return {}; },
-        set: async () => { calls.storage += 1; },
+        get: async () => { calls.storage += 1; return storageData; },
+        set: async (value) => { calls.storage += 1; calls.storageWrites.push(value); },
       },
     },
   };
 }
 
-async function initController({ fetchImpl, chromeApi = makeChrome() } = {}) {
+async function initController({ fetchImpl, chromeApi = makeChrome(), setupDom } = {}) {
   const dom = makeDom();
+  setupDom?.(dom.window.document);
   const controller = createLoginController({
     document: dom.window.document,
     fetchImpl,
@@ -65,7 +66,7 @@ test("健康检查成功后才读取账号，账号下拉不渲染密码", async
       return jsonResponse({ ok: true, accounts: [{ account: "acct-one", password: "demo-password with spaces" }] });
     },
   });
-  assert.deepEqual(result, { ok: true, accounts: 1 });
+  assert.deepEqual(result, { ok: true, accounts: 1, source: "local" });
   assert.deepEqual(calls, [
     "http://127.0.0.1:8765/health",
     "http://127.0.0.1:8765/accounts",
@@ -77,7 +78,8 @@ test("健康检查成功后才读取账号，账号下拉不渲染密码", async
   assert.equal(JSON.stringify(option.dataset).includes("demo-password"), false);
   assert.equal(dom.window.document.body.textContent.includes("demo-password"), false);
   assert.equal(dom.window.document.querySelector("#btn-auto-login").disabled, false);
-  assert.equal(chromeApi.calls.storage, 0);
+  assert.equal(chromeApi.calls.storageWrites.length, 0);
+  assert.equal(JSON.stringify(chromeApi.calls.storageWrites).includes("demo-password"), false);
   controller.destroy();
   dom.window.close();
 });
@@ -106,7 +108,7 @@ test("账号列表为空时禁用一键登录", async () => {
       ? jsonResponse({ ok: true })
       : jsonResponse({ ok: true, accounts: [] }),
   });
-  assert.deepEqual(result, { ok: true, accounts: 0 });
+  assert.deepEqual(result, { ok: true, accounts: 0, source: "local" });
   assert.equal(dom.window.document.querySelector("#btn-auto-login").disabled, true);
   assert.equal(dom.window.document.querySelectorAll("#login-account option").length, 0);
   controller.destroy();
@@ -121,7 +123,7 @@ test("一键登录向当前标签只发送一次 AUTO_LOGIN，密码只在消息
       ? jsonResponse({ ok: true })
       : jsonResponse({ ok: true, accounts: [{ account: "acct-one", password: "demo-password" }] }),
   });
-  assert.deepEqual(result, { ok: true, accounts: 1 });
+  assert.deepEqual(result, { ok: true, accounts: 1, source: "local" });
   const button = dom.window.document.querySelector("#btn-auto-login");
   button.click();
   button.click();
@@ -136,7 +138,8 @@ test("一键登录向当前标签只发送一次 AUTO_LOGIN，密码只在消息
   });
   assert.equal(dom.window.document.body.textContent.includes("demo-password"), false);
   assert.match(dom.window.document.querySelector("#login-result").textContent, /登录成功/);
-  assert.equal(chromeApi.calls.storage, 0);
+  assert.equal(chromeApi.calls.storageWrites.length, 0);
+  assert.equal(JSON.stringify(chromeApi.calls.storageWrites).includes("demo-password"), false);
   controller.destroy();
   dom.window.close();
 });
@@ -161,6 +164,189 @@ test("服务响应错误正文不进入 UI，销毁 popup 后私有凭据不能�
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(chromeApi.calls.messages.length, beforeDestroy);
   assert.equal(dom.window.document.body.textContent.includes("demo-password"), false);
+  dom.window.close();
+});
+
+test("未配置服务器时回退本地 8765 账号服务", async () => {
+  const calls = [];
+  const chromeApi = makeChrome({ storageData: { serverUrl: "", serverUsername: "" } });
+  const { dom, controller, result } = await initController({
+    chromeApi,
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (url.endsWith("/health")) return jsonResponse({ ok: true });
+      return jsonResponse({ ok: true, accounts: [{ account: "local-user", password: "local-secret" }] });
+    },
+  });
+  assert.deepEqual(result, { ok: true, accounts: 1, source: "local" });
+  assert.deepEqual(calls, [
+    "http://127.0.0.1:8765/health",
+    "http://127.0.0.1:8765/accounts",
+  ]);
+  assert.equal(dom.window.document.querySelector("#login-account option").textContent, "local-user");
+  assert.equal(JSON.stringify(chromeApi.calls.storageWrites).includes("local-secret"), false);
+  controller.destroy();
+  dom.window.close();
+});
+
+test("配置服务器后登录、列出平台账号，并在点击时取凭据发送 AUTO_LOGIN", async () => {
+  const calls = [];
+  const chromeApi = makeChrome({
+    storageData: {
+      serverUrl: "https://sync.example.test",
+      serverUsername: "worker",
+    },
+  });
+  const { dom, controller, result } = await initController({
+    chromeApi,
+    setupDom: (document) => {
+      const input = document.createElement("input");
+      input.id = "login-server-password";
+      input.type = "password";
+      input.value = "server-login-pass";
+      document.body.append(input);
+    },
+    fetchImpl: async (url, init = {}) => {
+      calls.push({ url, init });
+      if (url === "https://sync.example.test/api/v1/auth/login") {
+        assert.deepEqual(JSON.parse(init.body), {
+          username: "worker",
+          password: "server-login-pass",
+          clientType: "extension",
+        });
+        return jsonResponse({ token: "opaque-extension-token" });
+      }
+      if (url === "https://sync.example.test/api/v1/platform-accounts") {
+        assert.equal(init.headers.Authorization, "Bearer opaque-extension-token");
+        return jsonResponse({
+          platformAccounts: [
+            { id: "pa-1", label: "Court Primary", enabled: true, updatedAt: "2026-08-05T00:00:00.000Z" },
+          ],
+        });
+      }
+      if (url === "https://sync.example.test/api/v1/platform-accounts/pa-1/credential") {
+        assert.equal(init.method, "POST");
+        assert.equal(init.headers.Authorization, "Bearer opaque-extension-token");
+        return jsonResponse({ account: "court-user", password: "court-secret" });
+      }
+      throw new Error(`unexpected url ${url}`);
+    },
+  });
+  assert.deepEqual(result, { ok: true, accounts: 1, source: "server" });
+  const option = dom.window.document.querySelector("#login-account option");
+  assert.equal(option.value, "pa-1");
+  assert.equal(option.textContent, "Court Primary");
+
+  dom.window.document.querySelector("#btn-auto-login").click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(chromeApi.calls.messages, [{
+    type: "AUTO_LOGIN",
+    account: "court-user",
+    password: "court-secret",
+    serviceUrl: "http://127.0.0.1:8765",
+  }]);
+  assert.equal(JSON.stringify(chromeApi.calls.storageWrites).includes("opaque-extension-token"), false);
+  assert.equal(JSON.stringify(chromeApi.calls.storageWrites).includes("court-secret"), false);
+  assert.equal(dom.window.document.body.textContent.includes("court-secret"), false);
+  assert.equal(calls.length, 3);
+  controller.destroy();
+  dom.window.close();
+});
+
+test("服务器不可达时提示服务器不可达且不触发 AUTO_LOGIN", async () => {
+  const chromeApi = makeChrome({
+    storageData: {
+      serverUrl: "https://sync.example.test",
+      serverUsername: "worker",
+    },
+  });
+  const { dom, controller, result } = await initController({
+    chromeApi,
+    setupDom: (document) => {
+      const input = document.createElement("input");
+      input.id = "login-server-password";
+      input.type = "password";
+      input.value = "server-login-pass";
+      document.body.append(input);
+    },
+    fetchImpl: async () => {
+      throw new Error("network down with secret server-login-pass");
+    },
+  });
+  assert.deepEqual(result, { ok: false, error: "SERVER_UNREACHABLE" });
+  assert.equal(dom.window.document.querySelector("#login-service-status").dataset.state, "offline");
+  assert.equal(dom.window.document.querySelector("#btn-auto-login").disabled, true);
+  await controller.sendAutoLogin();
+  assert.equal(chromeApi.calls.messages.length, 0);
+  assert.equal(dom.window.document.body.textContent.includes("server-login-pass"), false);
+  controller.destroy();
+  dom.window.close();
+});
+
+test("服务器登录失败时提示登录失败且不触发 AUTO_LOGIN", async () => {
+  const chromeApi = makeChrome({
+    storageData: {
+      serverUrl: "https://sync.example.test",
+      serverUsername: "worker",
+    },
+  });
+  const { dom, controller, result } = await initController({
+    chromeApi,
+    setupDom: (document) => {
+      const input = document.createElement("input");
+      input.id = "login-server-password";
+      input.type = "password";
+      input.value = "wrong-pass";
+      document.body.append(input);
+    },
+    fetchImpl: async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({ error: { code: "AUTH_FAILED", message: "wrong-pass" } }),
+      text: async () => JSON.stringify({ error: { code: "AUTH_FAILED", message: "wrong-pass" } }),
+    }),
+  });
+  assert.deepEqual(result, { ok: false, error: "SERVER_AUTH_FAILED" });
+  assert.equal(dom.window.document.querySelector("#login-service-status").dataset.state, "auth-failed");
+  await controller.sendAutoLogin();
+  assert.equal(chromeApi.calls.messages.length, 0);
+  assert.equal(dom.window.document.body.textContent.includes("wrong-pass"), false);
+  controller.destroy();
+  dom.window.close();
+});
+
+test("取服务器平台凭据失败时提示凭据获取失败且不触发 AUTO_LOGIN", async () => {
+  const chromeApi = makeChrome({
+    storageData: {
+      serverUrl: "https://sync.example.test",
+      serverUsername: "worker",
+    },
+  });
+  const { dom, controller, result } = await initController({
+    chromeApi,
+    setupDom: (document) => {
+      const input = document.createElement("input");
+      input.id = "login-server-password";
+      input.type = "password";
+      input.value = "server-login-pass";
+      document.body.append(input);
+    },
+    fetchImpl: async (url) => {
+      if (url.endsWith("/auth/login")) return jsonResponse({ token: "opaque-extension-token" });
+      if (url.endsWith("/platform-accounts")) {
+        return jsonResponse({ platformAccounts: [{ id: "pa-1", label: "Court Primary", enabled: true }] });
+      }
+      return jsonResponse({ error: { message: "court-secret" } }, false);
+    },
+  });
+  assert.deepEqual(result, { ok: true, accounts: 1, source: "server" });
+  const response = await controller.sendAutoLogin();
+  assert.deepEqual(response, { ok: false, error: "CREDENTIAL_FETCH_FAILED" });
+  assert.equal(chromeApi.calls.messages.length, 0);
+  assert.equal(dom.window.document.querySelector("#login-result").dataset.state, "error");
+  assert.equal(dom.window.document.body.textContent.includes("court-secret"), false);
+  assert.equal(JSON.stringify(chromeApi.calls.storageWrites).includes("opaque-extension-token"), false);
+  controller.destroy();
   dom.window.close();
 });
 
