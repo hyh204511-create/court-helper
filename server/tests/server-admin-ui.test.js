@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
 
 import { buildApp, loadConfig } from '../src/app.ts';
 import { hashPassword } from '../src/auth/password.ts';
 import { MemoryAuthRepository } from '../src/auth/memory-repository.ts';
 import { MemoryCaseRepository } from '../src/cases/memory-repository.ts';
 import { MemoryPlatformAccountRepository } from '../src/platform-accounts/memory-repository.ts';
+import { MemoryReportExportRepository } from '../src/report-exports/memory-repository.ts';
+import { REPORT_EXPORT_CONTENT_TYPE } from '../src/report-exports/types.ts';
 import { MemoryScreenshotRepository } from '../src/screenshots/memory-repository.ts';
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
 
@@ -86,6 +89,21 @@ function caseRecord() {
   };
 }
 
+function reportExportRecord(id, createdBy, fileName, byteSize, createdAt) {
+  const timestamp = new Date(createdAt);
+  return {
+    id,
+    fileName,
+    objectKey: `report-exports/${id}.xlsx`,
+    contentType: REPORT_EXPORT_CONTENT_TYPE,
+    byteSize,
+    sha256: id.replaceAll('-', '').padEnd(64, 'a').slice(0, 64),
+    createdBy,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
 function cookieHeader(response) {
   const value = response.headers['set-cookie'];
   const first = Array.isArray(value) ? value[0] : value;
@@ -93,13 +111,15 @@ function cookieHeader(response) {
   return first.split(';', 1)[0];
 }
 
-async function makeApp() {
+async function makeApp(reportExports = []) {
   const adminHash = await hashPassword(ADMIN_PASSWORD);
   const workerHash = await hashPassword(WORKER_PASSWORD);
   const authRepository = new MemoryAuthRepository([
     userRecord(ADMIN_ID, 'admin', 'admin', adminHash),
     userRecord(WORKER_ID, 'worker', 'user', workerHash),
   ]);
+  const storageBackend = new MemoryStorageBackend();
+  const reportExportRepository = new MemoryReportExportRepository(reportExports);
   const app = buildApp({
     config: config(),
     clock: () => new Date(NOW),
@@ -111,11 +131,12 @@ async function makeApp() {
     authRepository,
     platformAccountRepository: new MemoryPlatformAccountRepository([accountRecord()]),
     caseRepository: new MemoryCaseRepository([caseRecord()]),
+    reportExportRepository,
     screenshotRepository: new MemoryScreenshotRepository(),
-    storageBackend: new MemoryStorageBackend(),
+    storageBackend,
   });
   await app.ready();
-  return { app, authRepository };
+  return { app, authRepository, reportExportRepository, storageBackend };
 }
 
 async function login(app, username, password) {
@@ -207,6 +228,191 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
       headers: { cookie: worker.cookie },
     });
     assert.equal(directApi.statusCode, 403);
+  } finally {
+    await app.close();
+  }
+});
+
+test('report export page is available to both roles and supports filtered listing, download, and deletion', async () => {
+  const adminExport = reportExportRecord(
+    'report-admin-001',
+    ADMIN_ID,
+    'admin-report.xlsx',
+    2048,
+    '2026-08-30T10:00:00.000Z',
+  );
+  const workerExport = reportExportRecord(
+    'report-worker-001',
+    WORKER_ID,
+    'worker-report.xlsx',
+    3 * 1024 * 1024,
+    '2026-08-29T10:00:00.000Z',
+  );
+  const otherExport = reportExportRecord(
+    'report-other-001',
+    '00000000-0000-0000-0000-000000000003',
+    'other-report.xlsx',
+    1024,
+    '2026-08-28T10:00:00.000Z',
+  );
+  const { app, storageBackend } = await makeApp([adminExport, workerExport, otherExport]);
+  await storageBackend.put(
+    workerExport.objectKey,
+    Buffer.alloc(workerExport.byteSize, 0x58),
+    workerExport.contentType,
+  );
+
+  try {
+    const anonymous = await app.inject({ method: 'GET', url: '/admin/report-exports' });
+    assert.equal(anonymous.statusCode, 302);
+    assert.equal(anonymous.headers.location, '/admin/login');
+
+    const admin = await login(app, 'admin', ADMIN_PASSWORD);
+    const worker = await login(app, 'worker', WORKER_PASSWORD);
+    const adminPage = await app.inject({
+      method: 'GET',
+      url: '/admin/report-exports',
+      headers: { cookie: admin.cookie },
+    });
+    assert.equal(adminPage.statusCode, 200);
+    assert.match(adminPage.body, /data-page="report-exports"/);
+    assert.match(adminPage.body, /href="\/admin\/report-exports"[^>]*aria-current="page"/);
+    assert.match(adminPage.body, /<th>导出人<\/th>/);
+
+    const workerPage = await app.inject({
+      method: 'GET',
+      url: '/admin/report-exports',
+      headers: { cookie: worker.cookie },
+    });
+    assert.equal(workerPage.statusCode, 200);
+    assert.match(workerPage.body, /data-page="report-exports"/);
+    assert.doesNotMatch(workerPage.body, /<th>导出人<\/th>/);
+    assert.match(workerPage.body, /报表导出/);
+
+    const adminList = await app.inject({
+      method: 'GET',
+      url: '/api/v1/report-exports?limit=200',
+      headers: { cookie: admin.cookie },
+    });
+    assert.equal(adminList.statusCode, 200);
+    assert.equal(adminList.json().reportExports.length, 3);
+
+    const workerList = await app.inject({
+      method: 'GET',
+      url: '/api/v1/report-exports?limit=200',
+      headers: { cookie: worker.cookie },
+    });
+    assert.equal(workerList.statusCode, 200);
+    assert.deepEqual(workerList.json().reportExports.map((item) => item.id), [workerExport.id]);
+
+    const downloaded = await app.inject({
+      method: 'GET',
+      url: `/api/v1/report-exports/${workerExport.id}/download`,
+      headers: { cookie: worker.cookie },
+    });
+    assert.equal(downloaded.statusCode, 200);
+    assert.equal(downloaded.rawPayload.length, workerExport.byteSize);
+    assert.equal(downloaded.headers['x-content-sha256'], workerExport.sha256);
+
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/report-exports/${workerExport.id}`,
+      headers: {
+        cookie: worker.cookie,
+        origin: 'https://admin.example.test',
+        'x-csrf-token': worker.csrfToken,
+      },
+    });
+    assert.equal(deleted.statusCode, 204);
+
+    const script = await app.inject({ method: 'GET', url: '/admin/assets/admin.js' });
+    assert.equal(script.statusCode, 200);
+    const dom = new JSDOM(adminPage.body, {
+      runScripts: 'outside-only',
+      url: 'https://admin.example.test/admin/report-exports',
+    });
+    const requests = [];
+    let visibleExports = [adminExport, workerExport].map((value) => ({
+      id: value.id,
+      fileName: value.fileName,
+      byteSize: value.byteSize,
+      sha256: value.sha256,
+      createdAt: value.createdAt.toISOString(),
+      createdBy: value.createdBy,
+    }));
+    const jsonResponse = (body, status = 200) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      headers: { get() { return null; } },
+      async json() { return body; },
+    });
+    dom.window.Headers = Headers;
+    dom.window.fetch = async (input, options = {}) => {
+      const requestUrl = new URL(String(input), dom.window.location.href);
+      const method = String(options.method || 'GET').toUpperCase();
+      requests.push({ method, path: requestUrl.pathname + requestUrl.search });
+      if (requestUrl.pathname === '/api/v1/auth/me') return jsonResponse({ csrfToken: 'ui-csrf' });
+      if (requestUrl.pathname === '/api/v1/users') {
+        return jsonResponse({ users: [
+          { id: ADMIN_ID, username: 'admin', role: 'admin', enabled: true },
+          { id: WORKER_ID, username: 'worker', role: 'user', enabled: true },
+        ] });
+      }
+      if (requestUrl.pathname === '/api/v1/report-exports' && method === 'GET') {
+        return jsonResponse({ reportExports: visibleExports, nextCursor: null });
+      }
+      if (requestUrl.pathname.endsWith('/download')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get(name) {
+            return name.toLowerCase() === 'content-disposition'
+              ? `attachment; filename*=UTF-8''${encodeURIComponent(adminExport.fileName)}`
+              : null;
+          } },
+          async blob() { return new dom.window.Blob(['fixture']); },
+        };
+      }
+      if (requestUrl.pathname.startsWith('/api/v1/report-exports/') && method === 'DELETE') {
+        const id = decodeURIComponent(requestUrl.pathname.split('/').pop());
+        visibleExports = visibleExports.filter((value) => value.id !== id);
+        return jsonResponse(null, 204);
+      }
+      throw new Error(`unexpected request ${method} ${requestUrl.pathname}`);
+    };
+    dom.window.confirm = () => true;
+    dom.window.URL.createObjectURL = () => 'blob:report-export';
+    dom.window.URL.revokeObjectURL = () => {};
+    dom.window.HTMLAnchorElement.prototype.click = function click() {
+      this.dataset.clicked = 'true';
+    };
+    dom.window.eval(script.body);
+
+    const waitFor = async (predicate) => {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        if (predicate()) return;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.fail('timed out waiting for report export UI');
+    };
+    await waitFor(() => dom.window.document.querySelectorAll('#report-export-rows tr').length === 2);
+    const rows = dom.window.document.querySelectorAll('#report-export-rows tr');
+    assert.equal(rows[0].children[0].textContent, adminExport.fileName);
+    assert.equal(rows[0].children[1].textContent, '2.0 KB');
+    assert.equal(rows[0].children[2].textContent, adminExport.sha256.slice(0, 8));
+    assert.equal(rows[0].children[3].textContent, 'admin');
+
+    const downloadButton = rows[0].querySelector('[data-action="download-report-export"]');
+    downloadButton.click();
+    await waitFor(() => requests.some((request) => request.path.endsWith(`/report-exports/${adminExport.id}/download`)));
+
+    const deleteButton = dom.window.document.querySelector(
+      `[data-action="delete-report-export"][data-id="${workerExport.id}"]`,
+    );
+    deleteButton.click();
+    await waitFor(() => dom.window.document.querySelectorAll('#report-export-rows tr').length === 1);
+    assert.ok(requests.some((request) => request.method === 'DELETE' && request.path.endsWith(workerExport.id)));
+    dom.window.close();
   } finally {
     await app.close();
   }

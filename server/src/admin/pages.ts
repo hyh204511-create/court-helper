@@ -1,4 +1,4 @@
-export type AdminPage = 'login' | 'users' | 'platform-accounts' | 'cases' | 'case-detail' | 'forbidden';
+export type AdminPage = 'login' | 'users' | 'platform-accounts' | 'cases' | 'case-detail' | 'report-exports' | 'forbidden';
 export type AdminRole = 'admin' | 'user';
 
 function escapeHtml(value: string): string {
@@ -14,10 +14,12 @@ function navFor(role: AdminRole, page: AdminPage): string {
   if (role === 'user') {
     return `<nav class="nav" aria-label="主导航">
       <a href="/admin/cases"${page === 'cases' || page === 'case-detail' ? ' aria-current="page"' : ''}>案件台账</a>
+      <a href="/admin/report-exports"${page === 'report-exports' ? ' aria-current="page"' : ''}>报表导出</a>
     </nav>`;
   }
   return `<nav class="nav" aria-label="主导航">
     <a href="/admin/cases"${page === 'cases' || page === 'case-detail' ? ' aria-current="page"' : ''}>案件台账</a>
+    <a href="/admin/report-exports"${page === 'report-exports' ? ' aria-current="page"' : ''}>报表导出</a>
     <a href="/admin/users"${page === 'users' ? ' aria-current="page"' : ''}>系统用户</a>
     <a href="/admin/platform-accounts"${page === 'platform-accounts' ? ' aria-current="page"' : ''}>平台账号</a>
   </nav>`;
@@ -191,6 +193,21 @@ function caseDetailPage(role: AdminRole, caseId: string): string {
     </section>`, caseId);
 }
 
+function reportExportsPage(role: AdminRole): string {
+  const exporterColumn = role === 'admin' ? '<th>导出人</th>' : '';
+  return layout('report-exports', role, '报表导出', `
+    <header class="page-head">
+      <div><p class="eyebrow">Exports / Retained Files</p><h2>报表导出</h2><p>查看保留期内的报表文件，按权限鉴权下载或删除。</p></div>
+    </header>
+    <section class="panel" aria-labelledby="report-export-list-title">
+      <div class="panel-head"><div><h3 id="report-export-list-title">导出记录</h3><p>文件内容不在页面缓存；下载由当前会话直接鉴权。</p></div></div>
+      <div class="panel-body">
+        <div class="case-status"><span data-report-export-message class="message muted" aria-live="polite">准备读取</span></div>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>文件名</th><th>大小</th><th>SHA256</th>${exporterColumn}<th>导出时间</th><th>操作</th></tr></thead><tbody id="report-export-rows"></tbody></table></div>
+      </div>
+    </section>`);
+}
+
 function forbiddenPage(): string {
   return `<!doctype html>
 <html lang="zh-CN">
@@ -218,5 +235,6 @@ export function renderAdminPage(page: AdminPage, role: AdminRole, caseId?: strin
   if (page === 'users') return usersPage();
   if (page === 'platform-accounts') return platformAccountsPage();
   if (page === 'cases') return casesPage(role);
+  if (page === 'report-exports') return reportExportsPage(role);
   return caseDetailPage(role, caseId ?? '');
 }

@@ -231,12 +231,18 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       });
     }
 
-    if (options.caseRepository && options.screenshotRepository && options.storageBackend) {
+    if (
+      options.caseRepository
+      && options.reportExportRepository
+      && options.screenshotRepository
+      && options.storageBackend
+    ) {
       const retentionLogger = options.retention?.logger
         ?? (options.logger ? app.log : defaultRetentionLogger);
       const retentionService = new RetentionService({
         authRepository: options.authRepository,
         caseRepository: options.caseRepository,
+        reportExportRepository: options.reportExportRepository,
         screenshotRepository: options.screenshotRepository,
         storageBackend: options.storageBackend,
       }, {

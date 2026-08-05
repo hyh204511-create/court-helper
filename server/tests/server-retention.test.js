@@ -7,6 +7,8 @@ import { hashPassword } from '../src/auth/password.ts';
 import { MemoryAuthRepository } from '../src/auth/memory-repository.ts';
 import { MemoryCaseRepository } from '../src/cases/memory-repository.ts';
 import { MemoryPlatformAccountRepository } from '../src/platform-accounts/memory-repository.ts';
+import { MemoryReportExportRepository } from '../src/report-exports/memory-repository.ts';
+import { REPORT_EXPORT_CONTENT_TYPE } from '../src/report-exports/types.ts';
 import { MemoryScreenshotRepository } from '../src/screenshots/memory-repository.ts';
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
 import { RetentionScheduler, RetentionService } from '../src/retention/index.ts';
@@ -59,6 +61,21 @@ function screenshotRecord(id, caseId, objectKey) {
   };
 }
 
+function reportExportRecord(id, createdAt, objectKey) {
+  const timestamp = new Date(createdAt);
+  return {
+    id,
+    fileName: `${id}.xlsx`,
+    objectKey,
+    contentType: REPORT_EXPORT_CONTENT_TYPE,
+    byteSize: 7,
+    sha256: createHash('sha256').update(id).digest('hex'),
+    createdBy: WORKER_ID,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
 function userRecord(id, username, role = 'user') {
   const createdAt = new Date('2026-08-31T00:00:00.000Z');
   return {
@@ -85,13 +102,14 @@ function sessionRecord(id, userId, expiresAt, revokedAt = null) {
   };
 }
 
-function retentionDependencies({ cases = [], screenshots = [], sessions = [], storage = new MemoryStorageBackend() } = {}) {
+function retentionDependencies({ cases = [], screenshots = [], reportExports = [], sessions = [], storage = new MemoryStorageBackend() } = {}) {
   return {
     authRepository: new MemoryAuthRepository([
       userRecord(ADMIN_ID, 'admin', 'admin'),
       userRecord(WORKER_ID, 'worker'),
     ], sessions),
     caseRepository: new MemoryCaseRepository(cases),
+    reportExportRepository: new MemoryReportExportRepository(reportExports),
     screenshotRepository: new MemoryScreenshotRepository(screenshots),
     storageBackend: storage,
   };
@@ -198,6 +216,7 @@ test('retention keeps 29-day data and the exact cutoff, but deletes 31-day cases
   const service = new RetentionService({
     authRepository: new MemoryAuthRepository(),
     caseRepository: cases,
+    reportExportRepository: new MemoryReportExportRepository(),
     screenshotRepository: new MemoryScreenshotRepository(),
     storageBackend: new MemoryStorageBackend(),
   }, { clock: () => new Date(NOW) });
@@ -220,6 +239,7 @@ test('retention cleans expired cases in batches of 100 with a cursor', async () 
   const service = new RetentionService({
     authRepository: new MemoryAuthRepository(),
     caseRepository: cases,
+    reportExportRepository: new MemoryReportExportRepository(),
     screenshotRepository: new MemoryScreenshotRepository(),
     storageBackend: new MemoryStorageBackend(),
   }, { clock: () => new Date(NOW) });
@@ -263,6 +283,7 @@ test('retention removes storage objects before screenshot metadata and then the 
   const service = new RetentionService({
     authRepository: new MemoryAuthRepository(),
     caseRepository: cases,
+    reportExportRepository: new MemoryReportExportRepository(),
     screenshotRepository: screenshots,
     storageBackend: storage,
   }, { clock: () => new Date(NOW) });
@@ -295,6 +316,7 @@ test('retention leaves failed data for the next run and retries it', async () =>
   const service = new RetentionService({
     authRepository: new MemoryAuthRepository(),
     caseRepository: cases,
+    reportExportRepository: new MemoryReportExportRepository(),
     screenshotRepository: screenshots,
     storageBackend: storage,
   }, { clock: () => new Date(NOW), logger: { warn() {} } });
@@ -311,6 +333,75 @@ test('retention leaves failed data for the next run and retries it', async () =>
   assert.equal(await screenshots.findById(screenshotValue.id), null);
 });
 
+test('retention removes expired report exports after their storage objects, keeps the cutoff, and retries failed objects', async () => {
+  const expired = reportExportRecord(
+    'report-expired',
+    '2026-07-31T12:00:00.000Z',
+    'report-exports/report-expired.xlsx',
+  );
+  const boundary = reportExportRecord(
+    'report-boundary',
+    CUTOFF.toISOString(),
+    'report-exports/report-boundary.xlsx',
+  );
+  const fresh = reportExportRecord(
+    'report-fresh',
+    '2026-08-02T12:00:00.000Z',
+    'report-exports/report-fresh.xlsx',
+  );
+  const retry = reportExportRecord(
+    'report-retry',
+    '2026-07-30T12:00:00.000Z',
+    'report-exports/report-retry.xlsx',
+  );
+  const reportExports = new MemoryReportExportRepository([expired, boundary, fresh, retry]);
+  const storage = new MemoryStorageBackend();
+  await storage.put(expired.objectKey, Buffer.from('expired'), expired.contentType);
+  await storage.put(retry.objectKey, Buffer.from('retry'), retry.contentType);
+  const events = [];
+  const originalStorageDelete = storage.delete.bind(storage);
+  let failRetry = true;
+  storage.delete = async (key) => {
+    if (key === retry.objectKey && failRetry) throw new Error('synthetic storage outage');
+    events.push(`storage:${key}`);
+    await originalStorageDelete(key);
+  };
+  const originalReportExportDelete = reportExports.delete.bind(reportExports);
+  reportExports.delete = async (id) => {
+    events.push(`record:${id}`);
+    await originalReportExportDelete(id);
+  };
+  const service = new RetentionService({
+    authRepository: new MemoryAuthRepository(),
+    caseRepository: new MemoryCaseRepository(),
+    reportExportRepository: reportExports,
+    screenshotRepository: new MemoryScreenshotRepository(),
+    storageBackend: storage,
+  }, { clock: () => new Date(NOW), logger: { warn() {} } });
+
+  const first = await service.cleanup();
+
+  assert.equal(first.deletedReportExports, 1);
+  assert.equal(first.failedObjects, 1);
+  assert.deepEqual(events, [
+    `storage:${expired.objectKey}`,
+    `record:${expired.id}`,
+  ]);
+  assert.equal(await reportExports.findById(expired.id), null);
+  assert.ok(await reportExports.findById(boundary.id));
+  assert.ok(await reportExports.findById(fresh.id));
+  assert.ok(await reportExports.findById(retry.id));
+  assert.equal(await storage.exists(expired.objectKey), false);
+  assert.equal(await storage.exists(retry.objectKey), true);
+
+  failRetry = false;
+  const second = await service.cleanup();
+
+  assert.equal(second.deletedReportExports, 1);
+  assert.equal(await reportExports.findById(retry.id), null);
+  assert.equal(await storage.exists(retry.objectKey), false);
+});
+
 test('retention removes expired and revoked sessions but never users or platform accounts', async () => {
   const auth = new MemoryAuthRepository([
     userRecord(ADMIN_ID, 'admin', 'admin'),
@@ -323,6 +414,7 @@ test('retention removes expired and revoked sessions but never users or platform
   const service = new RetentionService({
     authRepository: auth,
     caseRepository: new MemoryCaseRepository(),
+    reportExportRepository: new MemoryReportExportRepository(),
     screenshotRepository: new MemoryScreenshotRepository(),
     storageBackend: new MemoryStorageBackend(),
   }, { clock: () => new Date(NOW) });
@@ -362,6 +454,7 @@ test('retention scheduler runs once on startup and can be ticked without a real 
 test('retention startup does not run cleanup before the app is listening', async () => {
   const authRepository = new MemoryAuthRepository();
   const caseRepository = new MemoryCaseRepository();
+  const reportExportRepository = new MemoryReportExportRepository();
   const originalListExpired = caseRepository.listExpired.bind(caseRepository);
   let cleanupCalls = 0;
   let releaseCleanup;
@@ -382,6 +475,7 @@ test('retention startup does not run cleanup before the app is listening', async
     },
     authRepository,
     caseRepository,
+    reportExportRepository,
     screenshotRepository: new MemoryScreenshotRepository(),
     storageBackend: new MemoryStorageBackend(),
   });

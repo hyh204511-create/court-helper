@@ -91,6 +91,7 @@ export function registerAdminRoutes(app: FastifyInstance, options: RegisterAdmin
   app.get('/admin/users', async (request, reply) => renderProtectedPage('users', request, reply, authService, 'admin'));
   app.get('/admin/platform-accounts', async (request, reply) => renderProtectedPage('platform-accounts', request, reply, authService, 'admin'));
   app.get('/admin/cases', async (request, reply) => renderProtectedPage('cases', request, reply, authService, null));
+  app.get('/admin/report-exports', async (request, reply) => renderProtectedPage('report-exports', request, reply, authService, null));
   app.get('/admin/cases/:id', async (request, reply) => renderProtectedPage(
     'case-detail',
     request,

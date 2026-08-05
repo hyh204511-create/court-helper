@@ -335,6 +335,23 @@ function dateLabel(value) {
   return Number.isFinite(date.getTime()) ? date.toLocaleString('zh-CN', { hour12: false }) : '—';
 }
 
+function reportExportSizeLabel(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return '—';
+  if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / 1024).toFixed(1) + ' KB';
+}
+
+function reportExportDownloadName(response, fallback) {
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (encoded) {
+    try { return decodeURIComponent(encoded[1]); } catch { /* Use the safe fallback. */ }
+  }
+  const plain = disposition.match(/filename="?([^";]+)"?/i);
+  return plain ? plain[1] : (fallback || 'report-export.xlsx');
+}
+
 function renderStatus(value) {
   return element('span', statusLabel(value), 'status-pill status-' + statusLabel(value));
 }
@@ -792,6 +809,108 @@ function initPlatformAccounts() {
   void loadPlatformAccounts();
 }
 
+async function downloadReportExport(id, fallbackFileName) {
+  const response = await fetch(API_BASE + '/report-exports/' + encodeURIComponent(id) + '/download', {
+    credentials: 'same-origin',
+  });
+  if (response.status === 401) {
+    window.location.assign('/admin/login');
+    throw new ApiError(401, 'AUTH_REQUIRED');
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new ApiError(response.status, body?.error?.code, body?.error?.requestId);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = reportExportDownloadName(response, fallbackFileName);
+  anchor.hidden = true;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function loadReportExportUsers() {
+  if (document.body.dataset.role !== 'admin') return new Map();
+  const result = await api('/users');
+  return new Map((result.users || []).map((user) => [user.id, user.username]));
+}
+
+async function loadReportExports() {
+  const target = $('#report-export-rows');
+  const message = $('[data-report-export-message]');
+  if (!target) return;
+  try {
+    const [result, userNames] = await Promise.all([
+      api('/report-exports?limit=200'),
+      loadReportExportUsers(),
+    ]);
+    const reportExports = result.reportExports || [];
+    clear(target);
+    if (!reportExports.length) {
+      const row = element('tr');
+      const cell = element('td', '暂无报表导出');
+      cell.colSpan = document.body.dataset.role === 'admin' ? 6 : 5;
+      row.appendChild(cell);
+      target.appendChild(row);
+    }
+    reportExports.forEach((reportExport) => {
+      const row = element('tr');
+      row.dataset.id = reportExport.id;
+      row.dataset.fileName = reportExport.fileName || 'report-export.xlsx';
+      row.appendChild(element('td', reportExport.fileName || '—'));
+      row.appendChild(element('td', reportExportSizeLabel(reportExport.byteSize)));
+      row.appendChild(element('td', String(reportExport.sha256 || '').slice(0, 8) || '—'));
+      if (document.body.dataset.role === 'admin') {
+        row.appendChild(element('td', userNames.get(reportExport.createdBy) || '未知用户'));
+      }
+      row.appendChild(element('td', dateLabel(reportExport.createdAt)));
+      const actions = element('td', null, 'row-actions');
+      actions.append(
+        actionButton('下载', 'download-report-export', reportExport.id),
+        actionButton('删除', 'delete-report-export', reportExport.id, 'small-button danger'),
+      );
+      row.appendChild(actions);
+      target.appendChild(row);
+    });
+    setMessage(message, '已更新', 'success');
+  } catch (error) {
+    setMessage(message, errorMessage(error));
+  }
+}
+
+function initReportExports() {
+  const list = $('#report-export-rows');
+  const message = $('[data-report-export-message]');
+  if (list) list.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-action]');
+    if (!button) return;
+    const row = button.closest('tr');
+    const id = button.dataset.id;
+    if (!row || !id) return;
+    try {
+      button.disabled = true;
+      if (button.dataset.action === 'download-report-export') {
+        await downloadReportExport(id, row.dataset.fileName);
+        setMessage(message, '下载已开始', 'success');
+      } else if (button.dataset.action === 'delete-report-export') {
+        if (!window.confirm('确认删除该报表导出？')) return;
+        await api('/report-exports/' + encodeURIComponent(id), { method: 'DELETE' });
+        setMessage(message, '已删除，正在刷新', 'success');
+        await loadReportExports();
+      }
+    } catch (error) {
+      setMessage(message, errorMessage(error));
+    } finally {
+      button.disabled = false;
+    }
+  });
+  void loadReportExports();
+}
+
 function renderDetail(caseValue, screenshots) {
   const fields = $('#case-fields');
   const gallery = $('#screenshot-list');
@@ -871,6 +990,7 @@ async function initPage() {
     if (page === 'cases') initCases();
     else if (page === 'users') initUsers();
     else if (page === 'platform-accounts') initPlatformAccounts();
+    else if (page === 'report-exports') initReportExports();
     else if (page === 'case-detail') void loadCaseDetail();
   } catch (error) {
     setMessage($('[data-page-status]'), errorMessage(error));

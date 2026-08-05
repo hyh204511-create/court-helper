@@ -4,6 +4,11 @@ import type {
   CaseRepository,
   ExpiredCaseCursor,
 } from '../cases/types.ts';
+import type {
+  ReportExportCursor,
+  ReportExportRecord,
+  ReportExportRepository,
+} from '../report-exports/types.ts';
 import type { ScreenshotRecord, ScreenshotRepository } from '../screenshots/types.ts';
 import type { StorageBackend } from '../storage/types.ts';
 import { retentionCutoff } from './policy.ts';
@@ -12,6 +17,7 @@ import type { Clock } from './policy.ts';
 export interface RetentionDependencies {
   authRepository: AuthRepository;
   caseRepository: CaseRepository;
+  reportExportRepository: ReportExportRepository;
   screenshotRepository: ScreenshotRepository;
   storageBackend: StorageBackend;
 }
@@ -26,10 +32,12 @@ export interface RetentionCleanupResult {
   deletedCases: number;
   deletedScreenshots: number;
   deletedObjects: number;
+  deletedReportExports: number;
   deletedSessions: number;
   failedObjects: number;
   failedScreenshots: number;
   failedCases: number;
+  failedReportExports: number;
   failedSessions: number;
 }
 
@@ -61,10 +69,12 @@ function emptyResult(cutoff: Date): RetentionCleanupResult {
     deletedCases: 0,
     deletedScreenshots: 0,
     deletedObjects: 0,
+    deletedReportExports: 0,
     deletedSessions: 0,
     failedObjects: 0,
     failedScreenshots: 0,
     failedCases: 0,
+    failedReportExports: 0,
     failedSessions: 0,
   };
 }
@@ -88,6 +98,7 @@ export class RetentionService {
       result.failedObjects === 0
       && result.failedScreenshots === 0
       && result.failedCases === 0
+      && result.failedReportExports === 0
       && result.failedSessions === 0
     ) return;
 
@@ -97,10 +108,12 @@ export class RetentionService {
       deletedCases: result.deletedCases,
       deletedScreenshots: result.deletedScreenshots,
       deletedObjects: result.deletedObjects,
+      deletedReportExports: result.deletedReportExports,
       deletedSessions: result.deletedSessions,
       failedObjects: result.failedObjects,
       failedScreenshots: result.failedScreenshots,
       failedCases: result.failedCases,
+      failedReportExports: result.failedReportExports,
       failedSessions: result.failedSessions,
     }, 'Retention cleanup incomplete');
   }
@@ -153,6 +166,56 @@ export class RetentionService {
     }
   }
 
+  private async deleteReportExport(
+    reportExport: ReportExportRecord,
+    result: RetentionCleanupResult,
+  ): Promise<void> {
+    try {
+      await this.dependencies.storageBackend.delete(reportExport.objectKey);
+      result.deletedObjects += 1;
+    } catch (error) {
+      if (!isMissingObjectError(error)) {
+        result.failedObjects += 1;
+        return;
+      }
+    }
+
+    try {
+      await this.dependencies.reportExportRepository.delete(reportExport.id);
+      result.deletedReportExports += 1;
+    } catch {
+      result.failedReportExports += 1;
+    }
+  }
+
+  private async cleanupReportExports(
+    cutoff: Date,
+    result: RetentionCleanupResult,
+  ): Promise<void> {
+    let cursor: ReportExportCursor | undefined;
+    while (true) {
+      let page;
+      try {
+        page = await this.dependencies.reportExportRepository.list({
+          limit: RETENTION_BATCH_SIZE,
+          cursor,
+        });
+      } catch {
+        result.failedReportExports += 1;
+        return;
+      }
+
+      for (const reportExport of page.items) {
+        if (reportExport.createdAt.getTime() < cutoff.getTime()) {
+          await this.deleteReportExport(reportExport, result);
+        }
+      }
+
+      if (page.nextCursor === null) return;
+      cursor = page.nextCursor;
+    }
+  }
+
   async cleanup(): Promise<RetentionCleanupResult> {
     const now = new Date(this.clock());
     const result = emptyResult(retentionCutoff(now));
@@ -176,6 +239,8 @@ export class RetentionService {
       if (page.nextCursor === null) break;
       cursor = page.nextCursor;
     }
+
+    await this.cleanupReportExports(result.cutoff, result);
 
     try {
       result.deletedSessions = await this.dependencies.authRepository.deleteExpiredOrRevokedSessions(now);
