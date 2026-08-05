@@ -126,6 +126,10 @@ button:disabled { cursor: not-allowed; opacity: .48; transform: none; }
 .status-pill.status-待人工 { color: #754c16; background: var(--amber-soft); }
 .status-pill.status-已驳回 { color: #7e2f2a; background: #f2d7d2; }
 .status-pill.status-立案成功, .status-pill.status-强执成功 { color: #245c49; background: #d9ebdf; }
+.status-pill.status-login-pending { color: #754c16; background: var(--amber-soft); }
+.status-pill.status-login-executing { color: #0f4c6d; background: #d8e8f2; }
+.status-pill.status-login-success { color: #245c49; background: #d9ebdf; }
+.status-pill.status-login-failed, .status-pill.status-login-expired { color: #7e2f2a; background: #f2d7d2; }
 .row-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .small-button { padding: 6px 9px; border-color: var(--line); color: var(--ink); background: transparent; font-size: 11px; }
 .small-button:hover { border-color: var(--amber); background: var(--amber-soft); }
@@ -336,6 +340,105 @@ function renderStatus(value) {
 }
 
 let platformLabels = new Map();
+let loginCommandTimers = new Map();
+
+function loginCommandStatusLabel(status) {
+  if (status === 'pending') return '指令已创建';
+  if (status === 'executing') return '执行中';
+  if (status === 'success') return '成功';
+  if (status === 'failed') return '失败';
+  if (status === 'expired') return '已过期';
+  return status || '—';
+}
+
+function loginCommandStatusKind(status) {
+  return ['pending', 'executing', 'success', 'failed', 'expired'].includes(status) ? status : 'pending';
+}
+
+function renderLoginCommandPill(status, suffix = '') {
+  const text = loginCommandStatusLabel(status) + (suffix ? ' ' + suffix : '');
+  return element('span', text, 'status-pill status-login-' + loginCommandStatusKind(status));
+}
+
+function setRowLoginStatus(row, status, suffix = '') {
+  const target = $('[data-login-command-status]', row);
+  if (!target) return;
+  clear(target);
+  target.appendChild(renderLoginCommandPill(status, suffix));
+}
+
+function loginCommandResult(command) {
+  if (!command) return '—';
+  if (command.status === 'failed') {
+    return [command.resultCode, command.resultMessage].filter(Boolean).join(' · ') || '失败';
+  }
+  if (command.status === 'success') return '成功';
+  if (command.status === 'expired') return '已过期';
+  return '—';
+}
+
+function stopLoginCommandPolling(commandId) {
+  const timer = loginCommandTimers.get(commandId);
+  if (timer) clearInterval(timer);
+  loginCommandTimers.delete(commandId);
+}
+
+async function loadLoginCommands() {
+  const target = $('#login-command-rows');
+  if (!target) return [];
+  const result = await api('/login-commands?limit=100');
+  const commands = result.commands || [];
+  clear(target);
+  if (!commands.length) {
+    const row = element('tr');
+    const cell = element('td', '暂无登录指令');
+    cell.colSpan = 5;
+    row.appendChild(cell);
+    target.appendChild(row);
+    return commands;
+  }
+  commands.forEach((command) => {
+    const row = element('tr');
+    row.appendChild(element('td', command.accountLabel || '—'));
+    const status = element('td');
+    status.appendChild(renderLoginCommandPill(command.status));
+    row.appendChild(status);
+    row.appendChild(element('td', loginCommandResult(command)));
+    row.appendChild(element('td', dateLabel(command.createdAt)));
+    row.appendChild(element('td', dateLabel(command.updatedAt)));
+    target.appendChild(row);
+  });
+  return commands;
+}
+
+function startLoginCommandPolling(row, commandId, button) {
+  stopLoginCommandPolling(commandId);
+  const startedAt = Date.now();
+  const poll = async () => {
+    try {
+      const commands = await loadLoginCommands();
+      const command = commands.find((item) => item.id === commandId);
+      if (command) {
+        const suffix = command.status === 'failed' && command.resultCode ? '(' + command.resultCode + ')' : '';
+        setRowLoginStatus(row, command.status, suffix);
+        if (['success', 'failed', 'expired'].includes(command.status)) {
+          stopLoginCommandPolling(commandId);
+          if (button) button.disabled = row.dataset.enabled !== 'true';
+        }
+      }
+      if (Date.now() - startedAt >= 60000) {
+        stopLoginCommandPolling(commandId);
+        if (button) button.disabled = row.dataset.enabled !== 'true';
+      }
+    } catch {
+      setRowLoginStatus(row, 'failed', '(REQUEST_FAILED)');
+      stopLoginCommandPolling(commandId);
+      if (button) button.disabled = row.dataset.enabled !== 'true';
+    }
+  };
+  void poll();
+  loginCommandTimers.set(commandId, setInterval(poll, 2000));
+}
 
 async function loadPlatformLabels() {
   try {
@@ -588,8 +691,15 @@ async function loadPlatformAccounts() {
       row.appendChild(element('td', account.label));
       row.appendChild(element('td', account.enabled ? '启用' : '停用'));
       row.appendChild(element('td', dateLabel(account.updatedAt)));
+      const loginStatus = element('td');
+      loginStatus.dataset.loginCommandStatus = 'true';
+      loginStatus.appendChild(element('span', '—', 'muted'));
+      row.appendChild(loginStatus);
       const actions = element('td', null, 'row-actions');
+      const remoteLogin = actionButton('远程登录', 'remote-login', account.id);
+      remoteLogin.disabled = !account.enabled;
       actions.append(
+        remoteLogin,
         actionButton('编辑', 'edit-account', account.id),
         actionButton(account.enabled ? '停用' : '启用', 'toggle-account', account.id),
         actionButton('删除', 'delete-account', account.id, 'small-button danger'),
@@ -598,6 +708,7 @@ async function loadPlatformAccounts() {
       target.appendChild(row);
     });
     setMessage(message, '已更新', 'success');
+    await loadLoginCommands();
   } catch (error) {
     setMessage(message, errorMessage(error));
   }
@@ -638,6 +749,18 @@ function initPlatformAccounts() {
     const id = button.dataset.id;
     const row = button.closest('tr');
     try {
+      if (button.dataset.action === 'remote-login') {
+        button.disabled = true;
+        setRowLoginStatus(row, 'pending');
+        const command = await api('/login-commands', {
+          method: 'POST',
+          body: JSON.stringify({ platformAccountId: id }),
+        });
+        setMessage($('[data-platform-message]'), '登录指令已创建', 'success');
+        await loadLoginCommands();
+        startLoginCommandPolling(row, command.id, button);
+        return;
+      }
       if (button.dataset.action === 'edit-account') {
         $('#platform-label').value = row.firstChild.textContent;
         $('#platform-enabled').value = row.dataset.enabled === 'true' ? 'true' : 'false';
@@ -658,6 +781,11 @@ function initPlatformAccounts() {
       setMessage($('[data-platform-message]'), '操作已保存', 'success');
       await loadPlatformAccounts();
     } catch (error) {
+      if (button.dataset.action === 'remote-login') {
+        const duplicate = error instanceof ApiError && error.code === 'DUPLICATE_PENDING';
+        setRowLoginStatus(row, duplicate ? 'pending' : 'failed', duplicate ? '(已有未完成指令)' : '(REQUEST_FAILED)');
+        button.disabled = row.dataset.enabled !== 'true';
+      }
       setMessage($('[data-platform-message]'), errorMessage(error));
     }
   });

@@ -9,6 +9,7 @@ export * from './auth/service.ts';
 export * from './auth/token.ts';
 export * from './auth/types.ts';
 export * from './cases/index.ts';
+export * from './login-commands/index.ts';
 export * from './screenshots/index.ts';
 export * from './storage/index.ts';
 export * from './retention/index.ts';

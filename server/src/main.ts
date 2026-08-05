@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { buildApp, loadConfig } from './app.ts';
 import { PgAuthRepository } from './auth/repository.ts';
 import { PgPlatformAccountRepository } from './platform-accounts/repository.ts';
+import { PgLoginCommandRepository } from './login-commands/repository.ts';
 import { PgCaseRepository } from './cases/repository.ts';
 import { PgScreenshotRepository } from './screenshots/repository.ts';
 import { createStorageBackend } from './storage/index.ts';
@@ -16,6 +17,7 @@ const app = buildApp({
   config,
   authRepository: new PgAuthRepository(pool),
   platformAccountRepository: new PgPlatformAccountRepository(pool),
+  loginCommandRepository: new PgLoginCommandRepository(pool),
   caseRepository: new PgCaseRepository(pool),
   screenshotRepository: new PgScreenshotRepository(pool),
   storageBackend,

@@ -139,7 +139,11 @@ function platformAccountsPage(): string {
     </section>
     <section class="panel" aria-labelledby="platform-list-title">
       <div class="panel-head"><div><h3 id="platform-list-title">账号列表</h3><p>列表和普通响应只返回标签、状态与更新时间。</p></div></div>
-      <div class="panel-body table-wrap"><table class="data-table"><thead><tr><th>标签</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="platform-rows"></tbody></table></div>
+      <div class="panel-body table-wrap"><table class="data-table"><thead><tr><th>标签</th><th>状态</th><th>更新时间</th><th>登录状态</th><th>操作</th></tr></thead><tbody id="platform-rows"></tbody></table></div>
+    </section>
+    <section class="panel" aria-labelledby="login-command-list-title">
+      <div class="panel-head"><div><h3 id="login-command-list-title">登录指令</h3><p>最近 100 条远程登录指令，仅显示账号标签、状态、结果与时间。</p></div></div>
+      <div class="panel-body table-wrap"><table class="data-table"><thead><tr><th>账号</th><th>状态</th><th>结果</th><th>创建时间</th><th>更新时间</th></tr></thead><tbody id="login-command-rows"></tbody></table></div>
     </section>`);
 }
 

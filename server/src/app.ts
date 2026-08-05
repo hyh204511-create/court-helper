@@ -18,6 +18,9 @@ import type { AuthRepository } from './auth/types.ts';
 import { registerPlatformAccountRoutes } from './platform-accounts/routes.ts';
 import { PlatformAccountService } from './platform-accounts/service.ts';
 import type { PlatformAccountRepository } from './platform-accounts/types.ts';
+import { registerLoginCommandRoutes } from './login-commands/routes.ts';
+import { LoginCommandService } from './login-commands/service.ts';
+import type { LoginCommandRepository } from './login-commands/types.ts';
 import { registerCaseRoutes } from './cases/routes.ts';
 import { CaseService } from './cases/service.ts';
 import type { CaseRepository } from './cases/types.ts';
@@ -48,6 +51,7 @@ export interface BuildAppOptions {
   register?: (app: FastifyInstance) => void | Promise<void>;
   authRepository?: AuthRepository;
   platformAccountRepository?: PlatformAccountRepository;
+  loginCommandRepository?: LoginCommandRepository;
   caseRepository?: CaseRepository;
   screenshotRepository?: ScreenshotRepository;
   storageBackend?: StorageBackend;
@@ -152,6 +156,21 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         prefix: '/api/v1',
         authService,
         service: platformAccountService,
+      });
+    }
+    if (options.loginCommandRepository) {
+      const loginCommandService = new LoginCommandService(options.loginCommandRepository, { now: clock });
+      registerLoginCommandRoutes(app, {
+        config,
+        prefix: '',
+        authService,
+        service: loginCommandService,
+      });
+      registerLoginCommandRoutes(app, {
+        config,
+        prefix: '/api/v1',
+        authService,
+        service: loginCommandService,
       });
     }
     if (options.caseRepository && options.platformAccountRepository) {
