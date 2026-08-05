@@ -2,6 +2,7 @@
 // 经 esbuild 打包为 ../dist/popup.bundle.js
 import { VERSION } from "../shared/message-router.js";
 import { createLoginController } from "./login-controller.js";
+import { createRemoteLoginControls } from "./remote-login-controls.js";
 import { canStartBatch, createStartBatchSender, isListRoute } from "./query-gate.js";
 import * as db from "../data/db.js";
 import { importXlsx } from "../data/import-xlsx.js";
@@ -13,6 +14,7 @@ const STORES = [
   { name: db.STORE_ENFORCEMENT, label: "强执" },
 ];
 let loginController = null;
+let remoteLoginControls = null;
 let pageStatus = { state: "unknown", route: "" };
 let queryInFlight = null;
 let startBatchSender = null;
@@ -209,10 +211,19 @@ function bindLoginControls() {
   updateQueryAvailability();
 }
 
+function bindRemoteLoginControls() {
+  remoteLoginControls = createRemoteLoginControls({
+    document,
+    chromeApi: chrome,
+  });
+  remoteLoginControls.init().catch(() => {});
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   const versionEl = $("#app-version");
   if (versionEl) versionEl.textContent = `v${VERSION}`;
   bindActions();
   bindLoginControls();
+  bindRemoteLoginControls();
   renderResults().catch((e) => console.error("[court-helper] render failed", e));
 });

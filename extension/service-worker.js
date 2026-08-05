@@ -3,6 +3,12 @@ import { sanitizeSyncState } from "./shared/message-router.js";
 import { createRemoteClient } from "./data/remote-client.js";
 import { createSyncCoordinator } from "./data/sync-coordinator.js";
 import { createDebuggerDriver } from "./sw/debugger-driver.js";
+import {
+  DISABLE_REMOTE_LOGIN,
+  ENABLE_REMOTE_LOGIN,
+  REMOTE_LOGIN_STATUS_REQUEST,
+  createLoginCommandPoller,
+} from "./sw/login-command-poll.js";
 
 const SYNC_STATUS_REQUEST = "SYNC_STATUS_REQUEST";
 const SYNC_CONFIG_KEYS = Object.freeze([
@@ -17,6 +23,7 @@ const SYNC_CONFIG_KEYS = Object.freeze([
 
 let syncCoordinator = null;
 const debuggerDriver = createDebuggerDriver();
+const loginCommandPoller = createLoginCommandPoller();
 
 function stringValue(...values) {
   return values.find((value) => typeof value === "string" && value.trim() !== "")?.trim() ?? "";
@@ -108,6 +115,33 @@ export function getSyncCoordinator() {
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
 
+function wakeLoginCommandPoller({ immediate = true } = {}) {
+  return loginCommandPoller.start({ immediate }).catch(() => null);
+}
+
+if (globalThis.chrome?.runtime?.onStartup?.addListener) {
+  chrome.runtime.onStartup.addListener(() => {
+    wakeLoginCommandPoller({ immediate: true });
+  });
+}
+
+if (globalThis.chrome?.runtime?.onInstalled?.addListener) {
+  chrome.runtime.onInstalled.addListener(() => {
+    wakeLoginCommandPoller({ immediate: true });
+  });
+}
+
+if (globalThis.chrome?.storage?.onChanged?.addListener) {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local") return;
+    if (changes.remoteLoginEnabled?.newValue === false) {
+      loginCommandPoller.stop({ clearToken: true }).catch(() => {});
+    } else if (changes.remoteLoginEnabled?.newValue === true) {
+      wakeLoginCommandPoller({ immediate: true });
+    }
+  });
+}
+
 self.addEventListener("message", (event) => {
   if (event.data?.type === "AUTO_LOGIN") return;
   const response = handleMessage(event.data);
@@ -138,10 +172,35 @@ function handleSyncRetry(sendResponse) {
   return true;
 }
 
+function handleRemoteLoginMessage(message, sendResponse) {
+  if (message?.type === ENABLE_REMOTE_LOGIN) {
+    loginCommandPoller.enable({ serverPassword: message.serverPassword })
+      .then((response) => sendResponse(response))
+      .catch(() => sendResponse({ ok: false, reason: "REMOTE_ERROR" }));
+    return true;
+  }
+  if (message?.type === DISABLE_REMOTE_LOGIN) {
+    loginCommandPoller.disable()
+      .then((response) => sendResponse({ ...response, status: "stopped", enabled: false }))
+      .catch(() => sendResponse({ ok: false, status: "stopped", enabled: false }));
+    return true;
+  }
+  if (message?.type === REMOTE_LOGIN_STATUS_REQUEST) {
+    loginCommandPoller.getStatus()
+      .then((status) => sendResponse({ ok: true, ...status }))
+      .catch(() => sendResponse({ ok: false, status: "stopped", enabled: false }));
+    return true;
+  }
+  return false;
+}
+
 if (globalThis.chrome?.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (debuggerDriver.canHandle(message)) {
       return debuggerDriver.handleMessage(message, sender, sendResponse);
+    }
+    if (message?.type !== ENABLE_REMOTE_LOGIN && message?.type !== DISABLE_REMOTE_LOGIN) {
+      wakeLoginCommandPoller({ immediate: true });
     }
     // AUTO_LOGIN 只在 content script 处理，service worker 不接收、不转发、不持久化。
     if (message?.type === "AUTO_LOGIN") return false;
@@ -155,6 +214,9 @@ if (globalThis.chrome?.runtime?.onMessage?.addListener) {
     }
     if (message?.type === "SYNC_RETRY") {
       return handleSyncRetry(sendResponse);
+    }
+    if (handleRemoteLoginMessage(message, sendResponse)) {
+      return true;
     }
     const response = handleMessage(message);
     if (response) sendResponse(response);

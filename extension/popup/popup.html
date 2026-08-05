@@ -30,6 +30,17 @@
     <div id="login-result" class="login-result" role="status"></div>
   </section>
 
+  <section class="remote-login-controls">
+    <div class="remote-login-row">
+      <span>远程登录</span>
+      <span id="remote-login-status" class="remote-login-state" data-state="checking">正在检查...</span>
+    </div>
+    <label for="remote-login-password">服务器密码</label>
+    <input id="remote-login-password" type="password" autocomplete="current-password">
+    <button id="btn-enable-remote-login" class="primary">启用</button>
+    <button id="btn-disable-remote-login">停用</button>
+  </section>
+
   <section class="search">
     <input id="search-input" type="text" placeholder="账号 / 客户名">
     <select id="status-filter">
