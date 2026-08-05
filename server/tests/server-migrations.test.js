@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { newDb } from 'pg-mem';
 
 import { runMigrations, rollbackLastMigration } from '../src/db/migrator.ts';
@@ -182,4 +183,17 @@ test('running migrations twice is harmless and explicit rollback restores a clea
   } finally {
     await close(pool);
   }
+});
+
+test('startup runs migrations before listening and exposes an offline migration command', async () => {
+  const mainSource = await readFile(new URL('../src/main.ts', import.meta.url), 'utf8');
+  const packageJson = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+
+  assert.equal(packageJson.scripts['server:migrate'], 'npm run server:build && node server/dist/migrate.js');
+  const migrationCall = mainSource.indexOf('await runMigrations(pool);');
+  const listenCall = mainSource.indexOf('await app.listen');
+  assert.ok(migrationCall >= 0, 'main must run migrations');
+  assert.ok(listenCall > migrationCall, 'main must migrate before listening');
+  assert.match(mainSource, /Database migration failed before server startup/);
+  assert.match(mainSource, /Check DATABASE_URL/);
 });

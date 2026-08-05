@@ -7,6 +7,7 @@
   "scripts": {
     "test": "node --test --test-concurrency=2",
     "server:build": "tsc -p server/tsconfig.json",
+    "server:migrate": "npm run server:build && node server/dist/migrate.js",
     "server:start": "node server/dist/main.js",
     "fixture": "python scripts/generate-fixtures.py",
     "build": "esbuild extension/popup/popup.js --bundle --format=esm --outfile=extension/dist/popup.bundle.js && esbuild extension/content/court-content.js --bundle --format=iife --outfile=extension/dist/court-content.bundle.js"

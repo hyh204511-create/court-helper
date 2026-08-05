@@ -7,6 +7,7 @@ import { PgCaseRepository } from './cases/repository.ts';
 import { PgScreenshotRepository } from './screenshots/repository.ts';
 import { createStorageBackend } from './storage/index.ts';
 import { createPostgresHealthDependency } from './health.ts';
+import { runMigrations } from './db/migrator.ts';
 
 const config = loadConfig();
 const pool = new Pool({ connectionString: config.databaseUrl });
@@ -32,4 +33,22 @@ const shutdown = async () => {
 process.once('SIGINT', () => void shutdown());
 process.once('SIGTERM', () => void shutdown());
 
-await app.listen({ host: '127.0.0.1', port: config.port });
+let migrationsReady = false;
+try {
+  await runMigrations(pool);
+  migrationsReady = true;
+} catch {
+  console.error(
+    'Database migration failed before server startup. Check DATABASE_URL, database reachability, credentials, and migration permissions.',
+  );
+  try {
+    await pool.end();
+  } catch {
+    // Preserve the actionable migration failure message.
+  }
+  process.exitCode = 1;
+}
+
+if (migrationsReady) {
+  await app.listen({ host: '127.0.0.1', port: config.port });
+}
