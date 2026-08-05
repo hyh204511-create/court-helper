@@ -4,12 +4,13 @@ import type { MultipartFile } from '@fastify/multipart';
 import { assertCookieWrite, authenticateRequest } from '../auth/routes.ts';
 import { AuthService } from '../auth/service.ts';
 import type { ServerConfig } from '../config.ts';
-import { PayloadTooLargeError, ValidationError } from '../errors.ts';
+import { NotFoundError, PayloadTooLargeError, ValidationError } from '../errors.ts';
 import type { ReportExportAccess } from './types.ts';
 import {
   decodeReportExportCursor,
   encodeReportExportCursor,
   MAX_REPORT_EXPORT_BYTES,
+  isReportExportUuid,
   publicReportExport,
   publicReportExportUpload,
   ReportExportService,
@@ -149,6 +150,12 @@ function queryCursor(value: unknown) {
   return decodeReportExportCursor(value);
 }
 
+function reportExportId(request: FastifyRequest): string {
+  const id = (request.params as { id?: unknown }).id;
+  if (!isReportExportUuid(id)) throw new NotFoundError('Report export not found');
+  return id;
+}
+
 export function registerReportExportRoutes(
   app: FastifyInstance,
   options: RegisterReportExportOptions,
@@ -176,7 +183,7 @@ export function registerReportExportRoutes(
   });
 
   app.get(route(prefix, '/report-exports/:id/download'), { preHandler: protectedPreHandler }, async (request, reply) => {
-    const id = (request.params as { id: string }).id;
+    const id = reportExportId(request);
     const { reportExport, stream } = await service.download(id, accessOf(request));
     reply
       .header('cache-control', 'private, no-store')
@@ -188,13 +195,13 @@ export function registerReportExportRoutes(
   });
 
   app.get(route(prefix, '/report-exports/:id'), { preHandler: protectedPreHandler }, async (request) => {
-    const id = (request.params as { id: string }).id;
+    const id = reportExportId(request);
     return publicReportExport(await service.get(id, accessOf(request)));
   });
 
   app.delete(route(prefix, '/report-exports/:id'), { preHandler: protectedPreHandler }, async (request, reply) => {
     assertCookieWrite(request, authService, config);
-    const id = (request.params as { id: string }).id;
+    const id = reportExportId(request);
     await service.delete(id, accessOf(request));
     return reply.code(204).send();
   });

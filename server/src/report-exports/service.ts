@@ -21,6 +21,7 @@ import type {
 import { REPORT_EXPORT_CONTENT_TYPE } from './types.ts';
 
 export const MAX_REPORT_EXPORT_BYTES = 20 * 1024 * 1024;
+export const REPORT_EXPORT_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface ReportExportUploadInput {
   fileName: string;
@@ -44,6 +45,34 @@ async function storageCall<T>(operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();
   } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new DependencyUnavailableError();
+  }
+}
+
+function isMissingObjectError(error: unknown): boolean {
+  const candidate = error as {
+    code?: unknown;
+    status?: unknown;
+    statusCode?: unknown;
+  };
+  const code = typeof candidate?.code === 'string' ? candidate.code.toLowerCase() : '';
+  return (
+    code === 'enoent'
+    || code === 'nosuchkey'
+    || code === 'nosuchobject'
+    || code === 'notfound'
+    || code === 'object_not_found'
+    || candidate?.status === 404
+    || candidate?.statusCode === 404
+  );
+}
+
+async function storageDeleteCall(operation: () => Promise<void>): Promise<void> {
+  try {
+    await operation();
+  } catch (error) {
+    if (isMissingObjectError(error)) return;
     if (error instanceof AppError) throw error;
     throw new DependencyUnavailableError();
   }
@@ -116,6 +145,10 @@ export function publicReportExportUpload(value: ReportExportRecord, created: boo
     createdAt: value.createdAt.toISOString(),
     created,
   };
+}
+
+export function isReportExportUuid(value: unknown): value is string {
+  return typeof value === 'string' && REPORT_EXPORT_UUID_PATTERN.test(value);
 }
 
 export class ReportExportService {
@@ -204,7 +237,7 @@ export class ReportExportService {
 
   async delete(id: string, access: ReportExportAccess): Promise<void> {
     const reportExport = await this.getForAction(id, access);
-    await storageCall(() => this.storage.delete(reportExport.objectKey));
+    await storageDeleteCall(() => this.storage.delete(reportExport.objectKey));
     await this.repository.delete(reportExport.id);
   }
 }
@@ -222,7 +255,7 @@ export function decodeReportExportCursor(value: string): ReportExportCursor {
       createdAt?: unknown;
       id?: unknown;
     };
-    if (typeof parsed.createdAt !== 'string' || typeof parsed.id !== 'string' || parsed.id === '') throw new Error('invalid cursor');
+    if (typeof parsed.createdAt !== 'string' || !isReportExportUuid(parsed.id)) throw new Error('invalid cursor');
     const createdAt = new Date(parsed.createdAt);
     if (!Number.isFinite(createdAt.getTime())) throw new Error('invalid cursor');
     return { createdAt, id: parsed.id };

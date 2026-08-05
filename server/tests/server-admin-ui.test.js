@@ -235,21 +235,21 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
 
 test('report export page is available to both roles and supports filtered listing, download, and deletion', async () => {
   const adminExport = reportExportRecord(
-    'report-admin-001',
+    '00000000-0000-0000-0000-000000000201',
     ADMIN_ID,
     'admin-report.xlsx',
     2048,
     '2026-08-30T10:00:00.000Z',
   );
   const workerExport = reportExportRecord(
-    'report-worker-001',
+    '00000000-0000-0000-0000-000000000202',
     WORKER_ID,
     'worker-report.xlsx',
     3 * 1024 * 1024,
     '2026-08-29T10:00:00.000Z',
   );
   const otherExport = reportExportRecord(
-    'report-other-001',
+    '00000000-0000-0000-0000-000000000203',
     '00000000-0000-0000-0000-000000000003',
     'other-report.xlsx',
     1024,
@@ -354,7 +354,7 @@ test('report export page is available to both roles and supports filtered listin
       if (requestUrl.pathname === '/api/v1/auth/me') return jsonResponse({ csrfToken: 'ui-csrf' });
       if (requestUrl.pathname === '/api/v1/users') {
         return jsonResponse({ users: [
-          { id: ADMIN_ID, username: 'admin', role: 'admin', enabled: true },
+          { id: ADMIN_ID, username: 'admin-user-3', role: 'admin', enabled: true },
           { id: WORKER_ID, username: 'worker', role: 'user', enabled: true },
         ] });
       }
@@ -400,7 +400,8 @@ test('report export page is available to both roles and supports filtered listin
     assert.equal(rows[0].children[0].textContent, adminExport.fileName);
     assert.equal(rows[0].children[1].textContent, '2.0 KB');
     assert.equal(rows[0].children[2].textContent, adminExport.sha256.slice(0, 8));
-    assert.equal(rows[0].children[3].textContent, 'admin');
+    assert.equal(rows[0].children[3].textContent, 'a***3');
+    assert.doesNotMatch(dom.window.document.querySelector('.data-table').textContent, /admin-user-3/);
 
     const downloadButton = rows[0].querySelector('[data-action="download-report-export"]');
     downloadButton.click();
@@ -412,6 +413,104 @@ test('report export page is available to both roles and supports filtered listin
     deleteButton.click();
     await waitFor(() => dom.window.document.querySelectorAll('#report-export-rows tr').length === 1);
     assert.ok(requests.some((request) => request.method === 'DELETE' && request.path.endsWith(workerExport.id)));
+    dom.window.close();
+  } finally {
+    await app.close();
+  }
+});
+
+test('report export page appends cursor pages and hides the load-more button at the end', async () => {
+  const firstExport = reportExportRecord(
+    'report-page-001',
+    ADMIN_ID,
+    'first-page.xlsx',
+    1024,
+    '2026-08-30T10:00:00.000Z',
+  );
+  const secondExport = reportExportRecord(
+    'report-page-002',
+    ADMIN_ID,
+    'second-page.xlsx',
+    2048,
+    '2026-08-29T10:00:00.000Z',
+  );
+  const { app } = await makeApp();
+
+  try {
+    const admin = await login(app, 'admin', ADMIN_PASSWORD);
+    const page = await app.inject({
+      method: 'GET',
+      url: '/admin/report-exports',
+      headers: { cookie: admin.cookie },
+    });
+    const script = await app.inject({ method: 'GET', url: '/admin/assets/admin.js' });
+    const dom = new JSDOM(page.body, {
+      runScripts: 'outside-only',
+      url: 'https://admin.example.test/admin/report-exports',
+    });
+    const requests = [];
+    const jsonResponse = (body, status = 200) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      headers: { get() { return null; } },
+      async json() { return body; },
+    });
+    dom.window.Headers = Headers;
+    dom.window.fetch = async (input, options = {}) => {
+      const requestUrl = new URL(String(input), dom.window.location.href);
+      const method = String(options.method || 'GET').toUpperCase();
+      requests.push({ method, path: requestUrl.pathname + requestUrl.search });
+      if (requestUrl.pathname === '/api/v1/auth/me') return jsonResponse({ csrfToken: 'ui-csrf' });
+      if (requestUrl.pathname === '/api/v1/users') {
+        return jsonResponse({ users: [{ id: ADMIN_ID, username: 'admin-user-3', role: 'admin', enabled: true }] });
+      }
+      if (requestUrl.pathname === '/api/v1/report-exports' && method === 'GET') {
+        return requestUrl.searchParams.get('cursor') === 'page-two-cursor'
+          ? jsonResponse({
+            reportExports: [secondExport].map((value) => ({
+              id: value.id,
+              fileName: value.fileName,
+              byteSize: value.byteSize,
+              sha256: value.sha256,
+              createdAt: value.createdAt.toISOString(),
+              createdBy: value.createdBy,
+            })),
+            nextCursor: null,
+          })
+          : jsonResponse({
+            reportExports: [firstExport].map((value) => ({
+              id: value.id,
+              fileName: value.fileName,
+              byteSize: value.byteSize,
+              sha256: value.sha256,
+              createdAt: value.createdAt.toISOString(),
+              createdBy: value.createdBy,
+            })),
+            nextCursor: 'page-two-cursor',
+          });
+      }
+      throw new Error(`unexpected request ${method} ${requestUrl.pathname}`);
+    };
+    dom.window.eval(script.body);
+
+    const waitFor = async (predicate) => {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        if (predicate()) return;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.fail('timed out waiting for paginated report export UI');
+    };
+    await waitFor(() => dom.window.document.querySelectorAll('#report-export-rows tr').length === 1);
+    const next = dom.window.document.querySelector('#report-export-next');
+    assert.ok(next);
+    assert.equal(next.textContent, '加载更多');
+    assert.equal(next.style.display, 'inline-flex');
+
+    next.click();
+    await waitFor(() => dom.window.document.querySelectorAll('#report-export-rows tr').length === 2);
+    assert.equal(dom.window.document.querySelectorAll('#report-export-rows tr')[1].children[0].textContent, secondExport.fileName);
+    assert.equal(next.style.display, 'none');
+    assert.ok(requests.some((request) => request.path.includes('cursor=page-two-cursor')));
     dom.window.close();
   } finally {
     await app.close();

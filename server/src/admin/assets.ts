@@ -1,3 +1,11 @@
+export function maskAdminUsername(value: unknown): string {
+  const username = typeof value === 'string' ? value.trim() : '';
+  if (!username) return '';
+  if (username.length <= 1) return '*';
+  if (username.length === 2) return `${username[0]}*`;
+  return `${username[0]}***${username[username.length - 1]}`;
+}
+
 export const ADMIN_STYLES = String.raw`
 :root {
   --ink: #17232d;
@@ -199,6 +207,7 @@ let csrfToken = null;
 let casePollTimer = null;
 let caseCursor = null;
 let nextCaseCursor = null;
+let nextReportExportCursor = null;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -340,6 +349,14 @@ function reportExportSizeLabel(value) {
   if (!Number.isFinite(bytes) || bytes < 0) return '—';
   if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   return (bytes / 1024).toFixed(1) + ' KB';
+}
+
+function maskAdminUsername(value) {
+  const username = typeof value === 'string' ? value.trim() : '';
+  if (!username) return '';
+  if (username.length <= 1) return '*';
+  if (username.length === 2) return username[0] + '*';
+  return username[0] + '***' + username[username.length - 1];
 }
 
 function reportExportDownloadName(response, fallback) {
@@ -839,18 +856,36 @@ async function loadReportExportUsers() {
   return new Map((result.users || []).map((user) => [user.id, user.username]));
 }
 
-async function loadReportExports() {
+function reportExportListPath(cursor) {
+  const params = new URLSearchParams({ limit: '200' });
+  if (cursor) params.set('cursor', cursor);
+  return '/report-exports?' + params.toString();
+}
+
+function ensureReportExportNextButton(message) {
+  const existing = $('#report-export-next');
+  if (existing || !message?.parentElement) return existing;
+  const next = element('button', '加载更多', 'secondary');
+  next.id = 'report-export-next';
+  next.type = 'button';
+  next.style.display = 'none';
+  message.parentElement.appendChild(next);
+  return next;
+}
+
+async function loadReportExports(append = false) {
   const target = $('#report-export-rows');
   const message = $('[data-report-export-message]');
   if (!target) return;
   try {
+    const cursor = append ? nextReportExportCursor : null;
     const [result, userNames] = await Promise.all([
-      api('/report-exports?limit=200'),
+      api(reportExportListPath(cursor)),
       loadReportExportUsers(),
     ]);
     const reportExports = result.reportExports || [];
-    clear(target);
-    if (!reportExports.length) {
+    if (!append) clear(target);
+    if (!append && !reportExports.length) {
       const row = element('tr');
       const cell = element('td', '暂无报表导出');
       cell.colSpan = document.body.dataset.role === 'admin' ? 6 : 5;
@@ -865,7 +900,7 @@ async function loadReportExports() {
       row.appendChild(element('td', reportExportSizeLabel(reportExport.byteSize)));
       row.appendChild(element('td', String(reportExport.sha256 || '').slice(0, 8) || '—'));
       if (document.body.dataset.role === 'admin') {
-        row.appendChild(element('td', userNames.get(reportExport.createdBy) || '未知用户'));
+        row.appendChild(element('td', maskAdminUsername(userNames.get(reportExport.createdBy)) || '未知用户'));
       }
       row.appendChild(element('td', dateLabel(reportExport.createdAt)));
       const actions = element('td', null, 'row-actions');
@@ -876,6 +911,9 @@ async function loadReportExports() {
       row.appendChild(actions);
       target.appendChild(row);
     });
+    nextReportExportCursor = result.nextCursor || null;
+    const next = $('#report-export-next');
+    if (next) next.style.display = nextReportExportCursor === null ? 'none' : 'inline-flex';
     setMessage(message, '已更新', 'success');
   } catch (error) {
     setMessage(message, errorMessage(error));
@@ -885,6 +923,7 @@ async function loadReportExports() {
 function initReportExports() {
   const list = $('#report-export-rows');
   const message = $('[data-report-export-message]');
+  const next = ensureReportExportNextButton(message);
   if (list) list.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-action]');
     if (!button) return;
@@ -906,6 +945,15 @@ function initReportExports() {
       setMessage(message, errorMessage(error));
     } finally {
       button.disabled = false;
+    }
+  });
+  if (next) next.addEventListener('click', async () => {
+    if (nextReportExportCursor === null || next.disabled) return;
+    next.disabled = true;
+    try {
+      await loadReportExports(true);
+    } finally {
+      next.disabled = false;
     }
   });
   void loadReportExports();

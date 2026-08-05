@@ -60,6 +60,21 @@ class CountingStorageBackend extends MemoryStorageBackend {
   }
 }
 
+class MissingDeleteStorageBackend extends CountingStorageBackend {
+  missingKeys = new Set();
+
+  async delete(key) {
+    if (this.missingKeys.has(key)) {
+      this.deleteCount += 1;
+      this.events.push(`storage-delete:${key}`);
+      const error = new Error('object missing');
+      error.code = 'ENOENT';
+      throw error;
+    }
+    return super.delete(key);
+  }
+}
+
 function multipart(fields = {}, file = undefined) {
   const boundary = '----court-helper-report-export-boundary';
   const chunks = [];
@@ -103,10 +118,9 @@ async function readStream(stream) {
   return Buffer.concat(chunks);
 }
 
-async function makeApp() {
+async function makeApp(storageBackend = new CountingStorageBackend()) {
   const authRepository = new MemoryAuthRepository();
   const reportExportRepository = new MemoryReportExportRepository();
-  const storageBackend = new CountingStorageBackend();
   const app = buildApp({
     config: config(),
     dependencies: {
@@ -314,6 +328,43 @@ test('report export routes enforce authentication, ownership, pagination, and ad
   }
 });
 
+test('report export routes reject malformed UUID ids and cursor ids at the boundary', async () => {
+  const { app } = await makeApp();
+
+  try {
+    const token = await login(app, 'user-a', USER_A_PASSWORD);
+    const malformedId = 'not-a-uuid';
+    const invalidIdRequests = [
+      { method: 'GET', url: `/api/v1/report-exports/${malformedId}` },
+      { method: 'GET', url: `/api/v1/report-exports/${malformedId}/download` },
+      { method: 'DELETE', url: `/api/v1/report-exports/${malformedId}` },
+    ];
+
+    for (const request of invalidIdRequests) {
+      const response = await app.inject({
+        ...request,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      assert.equal(response.statusCode, 404);
+      assert.equal(response.json().error.code, 'NOT_FOUND');
+    }
+
+    const invalidCursor = Buffer.from(JSON.stringify({
+      createdAt: '2026-08-31T00:00:00.000Z',
+      id: malformedId,
+    }), 'utf8').toString('base64url');
+    const cursorResponse = await app.inject({
+      method: 'GET',
+      url: `/api/v1/report-exports?cursor=${invalidCursor}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(cursorResponse.statusCode, 400);
+    assert.equal(cursorResponse.json().error.code, 'VALIDATION_ERROR');
+  } finally {
+    await app.close();
+  }
+});
+
 test('report export download streams content with sanitized filename and digest headers', async () => {
   const { app, reportExportRepository, storageBackend } = await makeApp();
 
@@ -387,6 +438,39 @@ test('report export deletion removes the object before metadata and repeated del
       `record-delete:${record.id}`,
     ]);
     assert.equal(await storageBackend.exists(record.objectKey), false);
+    assert.equal(await reportExportRepository.findById(record.id), null);
+
+    const repeated = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/report-exports/${record.id}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(repeated.statusCode, 404);
+  } finally {
+    await app.close();
+  }
+});
+
+test('report export deletion treats a missing storage object as success and removes metadata', async () => {
+  const storageBackend = new MissingDeleteStorageBackend();
+  const { app, reportExportRepository } = await makeApp(storageBackend);
+
+  try {
+    const token = await login(app, 'user-a', USER_A_PASSWORD);
+    const created = await upload(app, token);
+    assert.equal(created.statusCode, 201);
+    const record = await reportExportRepository.findById(created.json().id);
+    assert.ok(record);
+
+    await storageBackend.delete(record.objectKey);
+    storageBackend.missingKeys.add(record.objectKey);
+
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/report-exports/${record.id}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(deleted.statusCode, 204);
     assert.equal(await reportExportRepository.findById(record.id), null);
 
     const repeated = await app.inject({
