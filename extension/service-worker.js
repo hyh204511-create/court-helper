@@ -23,6 +23,7 @@ const SYNC_CONFIG_KEYS = Object.freeze([
 ]);
 
 let syncCoordinator = null;
+let remoteClient = null;
 const debuggerDriver = createDebuggerDriver();
 const loginCommandPoller = createLoginCommandPoller();
 
@@ -86,13 +87,17 @@ export async function initializeSyncCoordinator({
 } = {}) {
   if (syncCoordinator) return syncCoordinator;
   const config = await readSyncConfig(chromeApi);
-  if (!config) return null;
+  if (!config) {
+    remoteClient = null;
+    return null;
+  }
   const client = createRemoteClient({
     baseUrl: config.baseUrl,
     token: config.token,
     fetchImpl,
   });
   if (!client) return null;
+  remoteClient = client;
 
   const coordinator = createSyncCoordinator({
     client,
@@ -111,6 +116,10 @@ export async function initializeSyncCoordinator({
 
 export function getSyncCoordinator() {
   return syncCoordinator;
+}
+
+export function getRemoteClient() {
+  return remoteClient;
 }
 
 self.addEventListener("install", () => self.skipWaiting());
@@ -178,6 +187,36 @@ export const syncInitialization = globalThis.chrome?.storage?.local?.get
   ? initializeSyncCoordinator().catch(() => null)
   : Promise.resolve(null);
 
+async function handleExportUpload(message) {
+  if (!remoteClient) {
+    try {
+      await syncInitialization;
+    } catch {
+      // Initialization failure is reported as not configured below.
+    }
+  }
+  if (!remoteClient) return { ok: false, code: "NOT_CONFIGURED" };
+
+  try {
+    const result = await remoteClient.uploadReportExport({
+      blob: message?.blob,
+      fileName: message?.fileName,
+      sha256: message?.sha256,
+      clientExportId: message?.clientExportId,
+    });
+    return {
+      ok: true,
+      exportId: result?.id,
+      fileName: result?.fileName,
+      byteSize: result?.byteSize,
+      createdAt: result?.createdAt,
+    };
+  } catch (error) {
+    const code = typeof error?.code === "string" && error.code ? error.code : "REMOTE_ERROR";
+    return { ok: false, code };
+  }
+}
+
 function handleSyncRetry(sendResponse) {
   Promise.resolve(syncInitialization)
     .then((coordinator) => coordinator?.retry?.())
@@ -228,6 +267,12 @@ if (globalThis.chrome?.runtime?.onMessage?.addListener) {
     }
     if (message?.type === "SYNC_RETRY") {
       return handleSyncRetry(sendResponse);
+    }
+    if (message?.type === "EXPORT_UPLOAD") {
+      handleExportUpload(message)
+        .then((response) => sendResponse(response))
+        .catch(() => sendResponse({ ok: false, code: "REMOTE_ERROR" }));
+      return true;
     }
     if (handleRemoteLoginMessage(message, sendResponse)) {
       return true;

@@ -7,6 +7,7 @@ import { canStartBatch, createStartBatchSender, isListRoute } from "./query-gate
 import * as db from "../data/db.js";
 import { importXlsx } from "../data/import-xlsx.js";
 import { buildExportWorkbook } from "../data/xlsx-io.js";
+import { exportUploadMessage, exportWorkbookToServer } from "../data/export-uploader.js";
 
 const $ = (sel) => document.querySelector(sel);
 const STORES = [
@@ -17,6 +18,7 @@ let loginController = null;
 let remoteLoginControls = null;
 let pageStatus = { state: "unknown", route: "" };
 let queryInFlight = null;
+let exportInFlight = null;
 let startBatchSender = null;
 
 function updateQueryAvailability() {
@@ -81,6 +83,15 @@ async function renderResults() {
 const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const shorten = (s, n) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
+function selectedQueryKind() {
+  return $("#query-kind")?.value === "qz" ? "qz" : "li";
+}
+
+function updateQueryKindHint() {
+  const hint = $("#query-kind-hint");
+  if (hint) hint.hidden = selectedQueryKind() !== "qz";
+}
+
 /** 导入模板文件 → 解析 → 入库 */
 async function handleImport(file) {
   const buffer = await file.arrayBuffer();
@@ -92,21 +103,48 @@ async function handleImport(file) {
 }
 
 /** 导出报表：立案块 + 强执块（同模板格式，含图片） */
-async function handleExport() {
-  const cases = await db.query(db.STORE_CASES, {});
-  const enforcementCases = await db.query(db.STORE_ENFORCEMENT, {});
-  const wb = await buildExportWorkbook({ cases, enforcementCases });
-  const buf = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `立案与强执查询表-${new Date().toISOString().slice(0, 10)}.xlsx`;
+export async function downloadAndUploadExportBlob({
+  blob,
+  fileName,
+  documentApi = document,
+  chromeApi = chrome,
+  uploader = exportWorkbookToServer,
+  urlApi = URL,
+} = {}) {
+  const a = documentApi.createElement("a");
+  const objectUrl = urlApi.createObjectURL(blob);
+  a.href = objectUrl;
+  a.download = fileName;
   a.click();
-  URL.revokeObjectURL(a.href);
+  urlApi.revokeObjectURL(objectUrl);
+  const result = await uploader({ blob, fileName, chromeApi });
+  const progress = documentApi.querySelector("#progress-text");
+  if (progress) progress.textContent = exportUploadMessage(result);
+  return result;
+}
+
+export function handleExport() {
+  if (exportInFlight) return exportInFlight;
+  const current = (async () => {
+    const cases = await db.query(db.STORE_CASES, {});
+    const enforcementCases = await db.query(db.STORE_ENFORCEMENT, {});
+    const wb = await buildExportWorkbook({ cases, enforcementCases });
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const fileName = `立案与强执查询表-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    return downloadAndUploadExportBlob({ blob, fileName });
+  })();
+  exportInFlight = current;
+  current.then(
+    () => { if (exportInFlight === current) exportInFlight = null; },
+    () => { if (exportInFlight === current) exportInFlight = null; },
+  );
+  return current;
 }
 
 /** 开始批量查询：通知当前标签的 content script 执行 */
-export async function handleQuery() {
+export async function handleQuery(kind = selectedQueryKind()) {
+  const queryKind = kind === "qz" ? "qz" : "li";
   if (queryInFlight) return queryInFlight;
   queryInFlight = (async () => {
     let tab;
@@ -150,7 +188,7 @@ export async function handleQuery() {
 
     startBatchSender ??= createStartBatchSender({ chromeApi: chrome });
     try {
-      const response = await startBatchSender(tab.id);
+      const response = await startBatchSender(tab.id, queryKind);
       $("#progress-text").textContent = response?.ok
         ? "批量查询已启动，请在法院平台页面查看进度"
         : "启动失败，请人工检查页面状态";
@@ -178,9 +216,11 @@ function bindActions() {
   });
   $("#btn-export")?.addEventListener("click", handleExport);
   $("#btn-query")?.addEventListener("click", handleQuery);
+  $("#query-kind")?.addEventListener("change", updateQueryKindHint);
   $("#btn-search")?.addEventListener("click", renderResults);
   $("#search-input")?.addEventListener("keydown", (e) => e.key === "Enter" && renderResults());
   $("#status-filter")?.addEventListener("change", renderResults);
+  updateQueryKindHint();
 }
 
 function bindLoginControls() {

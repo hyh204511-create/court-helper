@@ -41,6 +41,10 @@ const SHELL_HTML = `
       color:#dbeaf5;background:#224159;cursor:pointer}
     .actions button:hover{background:#2d526d}
     .actions .primary{background:#1677b8}
+    .query-kind-row{display:flex;align-items:center;gap:8px;margin:-4px 0 12px;color:#8eacbf}
+    .query-kind{min-width:90px;padding:5px 7px;border:1px solid #ffffff22;border-radius:6px;
+      color:#dbeaf5;background:#224159}
+    .query-kind-hint{font-size:11px;color:#ffdca8}
     .notice{padding:8px 10px;margin-bottom:10px;border-left:3px solid #f0b35b;
       background:#f0b35b16;color:#ffdca8;font-size:12px}
     .notice.bad{border-color:#f17068;background:#f1706813;color:#ffc6c2}
@@ -79,6 +83,14 @@ const SHELL_HTML = `
         <button class="btn-query primary">开始查询</button>
         <button class="btn-export">导出报表</button>
       </div>
+      <div class="query-kind-row">
+        <label for="court-helper-query-kind">查询类型</label>
+        <select id="court-helper-query-kind" class="query-kind">
+          <option value="li">立案</option>
+          <option value="qz">强执</option>
+        </select>
+        <span class="query-kind-hint hidden">强执查询前请先在页面顶部切换到执行 tab</span>
+      </div>
       <section class="sync-box" aria-live="polite">
         <div class="sync-head"><span>服务器同步</span><span class="sync-state">未配置</span></div>
         <div class="sync-meta"><span class="sync-pending">待上传: 0</span><span class="sync-last">最后同步: -</span></div>
@@ -115,6 +127,8 @@ export function createCourtPanel({ document, handlers = {}, shadowMode = "closed
   const shell = shadow.querySelector(".shell");
   const fab = shadow.querySelector(".fab");
   const collapse = shadow.querySelector(".collapse");
+  const queryKind = shadow.querySelector(".query-kind");
+  const queryKindHint = shadow.querySelector(".query-kind-hint");
   const statusEl = shadow.querySelector(".login-status");
   const loginText = shadow.querySelector(".login-text");
   const notice = shadow.querySelector(".notice");
@@ -134,7 +148,12 @@ export function createCourtPanel({ document, handlers = {}, shadowMode = "closed
   collapse.addEventListener("click", toggle);
 
   shadow.querySelector(".btn-import").addEventListener("click", () => handlers.onImport?.());
-  shadow.querySelector(".btn-query").addEventListener("click", () => handlers.onQuery?.());
+  queryKind.addEventListener("change", () => {
+    queryKindHint.classList.toggle("hidden", queryKind.value !== "qz");
+  });
+  shadow.querySelector(".btn-query").addEventListener("click", () => (
+    handlers.onQuery?.(queryKind.value === "qz" ? "qz" : "li")
+  ));
   shadow.querySelector(".btn-export").addEventListener("click", () => handlers.onExport?.());
   shadow.querySelector(".btn-pause").addEventListener("click", () => handlers.onPause?.());
   shadow.querySelector(".btn-resume").addEventListener("click", () => handlers.onResume?.());

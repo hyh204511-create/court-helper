@@ -3,7 +3,14 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 
 import { createLoginController } from "../extension/popup/login-controller.js";
-import { LIST_ROUTE, canStartBatch, createStartBatchSender, startBatchMessage } from "../extension/popup/query-gate.js";
+import {
+  LIST_ROUTE,
+  LIST_ROUTES,
+  canStartBatch,
+  createStartBatchSender,
+  isListRoute,
+  startBatchMessage,
+} from "../extension/popup/query-gate.js";
 
 function jsonResponse(payload, ok = true) {
   return { ok, json: async () => payload };
@@ -351,11 +358,24 @@ test("取服务器平台凭据失败时提示凭据获取失败且不触发 AUTO
 });
 
 test("一键抓取只在已登录立案列表页且未登录操作进行时可用", () => {
+  assert.deepEqual(LIST_ROUTES, [
+    "#/pagesWsla/pc/list/index",
+    "#/pages/pc/case-list/index",
+  ]);
+  for (const route of LIST_ROUTES) {
+    assert.equal(isListRoute(route), true);
+    assert.equal(isListRoute(`${route}/`), true);
+    assert.equal(isListRoute(`${route}?page=2`), true);
+    assert.equal(canStartBatch({ state: "logged-in", route, loginInProgress: false }), true);
+  }
+  assert.equal(isListRoute("#/pagesWsla/pc/detail/index"), false);
+  assert.equal(isListRoute("#/pagesGrxx/pc/login/index"), false);
   assert.equal(canStartBatch({ state: "logged-in", route: LIST_ROUTE, loginInProgress: false }), true);
   assert.equal(canStartBatch({ state: "login", route: LIST_ROUTE, loginInProgress: false }), false);
   assert.equal(canStartBatch({ state: "logged-in", route: "#/pagesGrxx/pc/login/index", loginInProgress: false }), false);
   assert.equal(canStartBatch({ state: "logged-in", route: LIST_ROUTE, loginInProgress: true }), false);
   assert.deepEqual(startBatchMessage(), { type: "START_BATCH", kind: "li" });
+  assert.deepEqual(startBatchMessage("qz"), { type: "START_BATCH", kind: "qz" });
 });
 
 test("一键抓取 sender 快速双击只发送一个既有 START_BATCH 消息", async () => {

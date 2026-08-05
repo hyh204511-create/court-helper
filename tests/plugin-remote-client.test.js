@@ -98,3 +98,51 @@ test("截图上传使用 multipart 且携带幂等键，不把 Blob 放进 JSON"
   assert.equal(requests[0].init.body.get("eventId"), "event-1");
   assert.equal(requests[0].init.body.get("file").type, "image/jpeg");
 });
+
+test("报表导出上传使用 multipart、携带 sha256/clientExportId 与幂等键", async () => {
+  const requests = [];
+  const client = createRemoteClient({
+    baseUrl: "https://sync.example.test/api/v1",
+    token: "opaque-token",
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init });
+      return jsonResponse({
+        id: "export-1",
+        fileName: "立案与强执查询表-2026-08-06.xlsx",
+        byteSize: 7,
+        sha256: "a".repeat(64),
+        createdAt: "2026-08-06T00:00:00.000Z",
+        created: true,
+      }, { status: 201 });
+    },
+  });
+
+  const blob = new Blob(["xlsx"], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const result = await client.uploadReportExport({
+    blob,
+    fileName: "立案与强执查询表-2026-08-06.xlsx",
+    sha256: "a".repeat(64),
+    clientExportId: "client-export-1",
+  });
+
+  assert.deepEqual(result, {
+    id: "export-1",
+    fileName: "立案与强执查询表-2026-08-06.xlsx",
+    byteSize: 7,
+    sha256: "a".repeat(64),
+    createdAt: "2026-08-06T00:00:00.000Z",
+    created: true,
+  });
+  assert.equal(requests[0].url, "https://sync.example.test/api/v1/report-exports");
+  assert.equal(requests[0].init.method, "POST");
+  assert.equal(requests[0].init.headers.Authorization, "Bearer opaque-token");
+  assert.equal(requests[0].init.headers["Idempotency-Key"], "client-export-1");
+  assert.ok(requests[0].init.body instanceof FormData);
+  assert.equal(requests[0].init.body.get("sha256"), "a".repeat(64));
+  assert.equal(requests[0].init.body.get("clientExportId"), "client-export-1");
+  const file = requests[0].init.body.get("file");
+  assert.equal(file.name, "立案与强执查询表-2026-08-06.xlsx");
+  assert.equal(file.type, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+});

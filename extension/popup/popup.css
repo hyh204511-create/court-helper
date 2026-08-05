@@ -42,6 +42,10 @@ section { padding: 10px 12px; }
 .actions button.primary { background: #1a56db; border-color: #1a56db; color: #fff; }
 .actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.query-kind-row { display: flex; align-items: center; gap: 8px; padding-top: 0; color: #667085; }
+.query-kind-row select { padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 6px; background: #fff; }
+#query-kind-hint { font-size: 11px; color: #b54708; }
+
 .login-controls {
   display: grid;
   grid-template-columns: auto 1fr auto;

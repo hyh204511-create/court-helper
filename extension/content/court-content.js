@@ -26,6 +26,7 @@ import { recognizeStatus } from "./status-recognizer.js";
 import { createCourtPanel } from "./court-panel.js";
 import { importXlsx } from "../data/import-xlsx.js";
 import { buildExportWorkbook } from "../data/xlsx-io.js";
+import { exportUploadMessage, exportWorkbookToServer } from "../data/export-uploader.js";
 import * as db from "../data/db.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -36,6 +37,7 @@ const isListPage = () => location.hash.includes("list/index");
 let _panel = null;
 let _batchRunning = false;
 let _batchPaused = false;
+let _exportInFlight = null;
 const _resumeWaiters = [];
 let _lastLoginReport = null;
 const AUTO_LOGIN_ERROR_CODES = new Set([
@@ -277,17 +279,31 @@ async function handlePanelImport(file) {
 }
 
 /** 面板导出：IndexedDB → 模板格式 xlsx → 下载 */
-async function handlePanelExport() {
-  const cases = await db.query(db.STORE_CASES, {});
-  const enforcementCases = await db.query(db.STORE_ENFORCEMENT, {});
-  const wb = await buildExportWorkbook({ cases, enforcementCases });
-  const buf = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `立案与强执查询表-${new Date().toISOString().slice(0, 10)}.xlsx`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+function handlePanelExport() {
+  if (_exportInFlight) return _exportInFlight;
+  const current = (async () => {
+    const cases = await db.query(db.STORE_CASES, {});
+    const enforcementCases = await db.query(db.STORE_ENFORCEMENT, {});
+    const wb = await buildExportWorkbook({ cases, enforcementCases });
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const fileName = `立案与强执查询表-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const a = document.createElement("a");
+    const objectUrl = URL.createObjectURL(blob);
+    a.href = objectUrl;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(objectUrl);
+    const result = await exportWorkbookToServer({ blob, fileName, chromeApi: chrome });
+    showToast(exportUploadMessage(result), 6000);
+    return result;
+  })();
+  _exportInFlight = current;
+  current.then(
+    () => { if (_exportInFlight === current) _exportInFlight = null; },
+    () => { if (_exportInFlight === current) _exportInFlight = null; },
+  );
+  return current;
 }
 
 /** 挂载浮动面板（仅列表/详情页；其他页面不打扰） */
@@ -306,10 +322,10 @@ function initPanel() {
         input.onchange = () => input.files?.[0] && handlePanelImport(input.files[0]).catch((e) => showToast(`导入失败：${e.message}`, 6000));
         input.click();
       },
-      onQuery: async () => {
+      onQuery: async (kind = "li") => {
         if (_batchRunning) return; // 运行中忽略重复点击（防并发）
         try {
-          await startBatch("li");
+          await startBatch(kind === "qz" ? "qz" : "li");
         } catch (e) {
           showToast(`开始查询失败：${e.message}`, 6000);
         }

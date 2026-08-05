@@ -11,14 +11,14 @@ function setup({ hash = "#/pagesWsla/pc/list/index" } = {}) {
     url: `https://zxfw.court.gov.cn/zxfw/${hash}`,
   });
   const { document } = dom.window;
-  const calls = { import: 0, export: 0, query: 0, pause: 0, resume: 0 };
+  const calls = { import: 0, export: 0, query: 0, queryKinds: [], pause: 0, resume: 0 };
   const panel = createCourtPanel({
     document,
     shadowMode: "open",
     handlers: {
       onImport: () => { calls.import += 1; },
       onExport: () => { calls.export += 1; },
-      onQuery: () => { calls.query += 1; },
+      onQuery: (kind) => { calls.query += 1; calls.queryKinds.push(kind); },
       onPause: () => { calls.pause += 1; },
       onResume: () => { calls.resume += 1; },
     },
@@ -102,8 +102,25 @@ test("操作区按钮触发回调：导入/开始查询/导出", () => {
   assert.equal(calls.import, 1);
   click(host.shadowRoot.querySelector(".btn-query"));
   assert.equal(calls.query, 1);
+  assert.deepEqual(calls.queryKinds, ["li"]);
   click(host.shadowRoot.querySelector(".btn-export"));
   assert.equal(calls.export, 1);
+});
+
+test("面板查询类型选择：强执传递 qz 并显示执行 tab 提示", () => {
+  const { document, calls } = setup();
+  const host = document.getElementById("court-helper-panel-root");
+  const select = host.shadowRoot.querySelector(".query-kind");
+  assert.ok(select);
+  assert.deepEqual([...select.options].map((option) => [option.value, option.textContent]), [
+    ["li", "立案"],
+    ["qz", "强执"],
+  ]);
+  select.value = "qz";
+  select.dispatchEvent(new select.ownerDocument.defaultView.Event("change", { bubbles: true }));
+  assert.ok(host.shadowRoot.querySelector(".query-kind-hint").textContent.includes("执行 tab"));
+  click(host.shadowRoot.querySelector(".btn-query"));
+  assert.deepEqual(calls.queryKinds, ["qz"]);
 });
 
 test("进度渲染：done/total 与待处理分组文本", () => {
