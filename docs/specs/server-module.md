@@ -23,6 +23,7 @@
 | `platform_accounts` | `id`，`label`（非密唯一标签），`secret_ciphertext`，`secret_iv`，`secret_tag`，`secret_version=1`，`enabled`，`deleted_at`，`created_by`，`created_at`，`updated_at` |
 | `cases` | `id`，`client_uid`（唯一，对应 IndexedDB `uid`），`platform_account_id`，`kind` ∈ `{li,qz}`，`plaintiff`，`defendant`，`status` ∈ `{立案成功,强执成功,已驳回,审核中,UNKNOWN}`，`filed_time`，`case_number`，`reject_time`，`reject_reason`，`query_time`，`needs_human`，`error_code`，`source_event_id`，`source_updated_at`，`revision`（全局单调递增），`created_at`，`updated_at` |
 | `screenshots` | `id`，`case_id`，`type` ∈ `{success,reject,enforcement_success}`，`object_key`（唯一且不经普通 API 返回），`content_type` ∈ `{image/jpeg,image/png}`，`byte_size`，`sha256`，`captured_at`，`created_at`；`(case_id,type)` 唯一，重传相同哈希为幂等，替换时清理旧对象 |
+| `report_exports` | `id`，`file_name`（净化名，仅 basename），`object_key`（唯一且不经普通 API 返回），`content_type`（固定 xlsx），`byte_size`，`sha256`，`created_by`，`created_at`，`updated_at`；`(sha256,created_by)` 唯一，同用户重传同文件幂等返回既有记录；详见 report-export-module 规格 |
 
 - `cases.platform_account_id` 外键指向平台账号；平台账号“删除”为停用 + 软删除，已有案件不级联删除。
 - `cases.revision` 每次有效新增/更新取数据库序列新值，作为轮询游标；案件不保存图片二进制。
@@ -49,6 +50,10 @@
 | `GET /screenshots/:id/content?download=0|1` | admin,user | 鉴权后由服务端从私有桶流式返回，设置 `Cache-Control: private, no-store`；私有桶不得公开读 |
 | `POST /sync/cases` | admin,user | 一批最多 50 条结果幂等 upsert，返回逐项 `accepted/conflicts` 和最新 `cursor` |
 | `GET /sync/changes?after=<revision>&limit=<n>` | admin,user | 返回保留期内、revision 更大的案件和截图元数据；不含图片二进制或任何凭据，`limit≤200` |
+| `POST /report-exports` | admin,user | multipart 上传报表 xlsx（`sha256` + `file`，≤ 20 MiB，ZIP magic 校验），幂等按 `(sha256,created_by)`；返回元数据与 `created` |
+| `GET /report-exports` / `GET /report-exports/:id` | admin,user | 列表（游标分页，admin 全部 / user 本人）与单条元数据；不返回 object_key |
+| `GET /report-exports/:id/download` | admin,user | 服务端从存储流式返回 xlsx（`attachment` + 净化文件名 + `X-Content-SHA256` + `Cache-Control: private, no-store`） |
+| `DELETE /report-exports/:id` | admin,user | 先删对象再删记录；admin 任意、user 仅本人 |
 
 ### 3.1 同步结果载荷
 
@@ -75,6 +80,7 @@ needsHuman, errorCode, sourceUpdatedAt
 | 平台账号创建、修改、启停、替换凭据 | ✓ | — |
 | 启用的平台账号列表及插件按次取凭据 | ✓ | ✓ |
 | 案件同步、案件/截图查看与下载 | ✓ | ✓ |
+| 报表导出记录上传/查看/下载/删除（user 仅本人） | ✓ | ✓ |
 
 - 系统密码使用 Argon2id 哈希；密码、登录请求体和 token 不写日志。
 - 平台凭据明文为 UTF-8 JSON `{account,password}`，使用 AES-256-GCM 加密：每次写入随机 96-bit IV，AAD 固定为 `platform_account:<id>:v1`，密文、IV、tag 分列保存。
@@ -85,7 +91,7 @@ needsHuman, errorCode, sourceUpdatedAt
 ## 5. 30 天保留与迁移
 
 - 应用内单实例定时器每日执行一次并在启动后补跑；截止线为服务器当前时间减 30 天。
-- `query_time` 早于截止线的案件及截图必须删除；先删除存储后端对象（本地磁盘或 COS/OSS），成功或对象已不存在后再删截图元数据与案件。失败留待下次重试并输出不含业务明文的计数告警。
+- `query_time` 早于截止线的案件及截图必须删除；`report_exports.created_at` 早于截止线的记录同样删除；一律先删除存储后端对象（本地磁盘或 COS/OSS），成功或对象已不存在后再删元数据。失败留待下次重试并输出不含业务明文的计数告警。
 - 过期/撤销 session 同步清理；系统用户和平台账号不按 30 天自动删除。同步接口拒绝写入早于截止线的案件，防止插件重新灌回过期数据。
 - 首次迁移只选近 30 天：以既有 IndexedDB 为当前批本地基线，新增 `extension/data/remote-client.js`、`outbox.js`、`sync-coordinator.js` 等隔离远端逻辑；每批最多 50 条 shadow-write。
 - 每条只有收到服务器 ACK 才标记远端完成；按批比对记录数、字段和截图哈希后才切换该批读取源。任一差异暂停该批并继续以本地数据为准，禁止全量一次切换。
@@ -111,6 +117,7 @@ needsHuman, errorCode, sourceUpdatedAt
 5. 同一同步事件重复提交不重复写；旧版本不覆盖新版本；50 条边界、字段映射、UNKNOWN、截图幂等和轮询游标测试通过。
 6. 私有桶不能匿名读，未登录不能上传/读取；user 管理系统用户或平台账号必须返回 403；授权截图经服务端流式查看和下载，响应不得暴露对象键。
 7. 用脱敏数据验证 30 天边界、对象先删、失败重试、过期数据拒收；迁移只覆盖近 30 天且可按批回退本地读取。
+8. 报表导出：上传幂等（同 sha256 不重复写）、越权（user 看他人/下载/删除 403）、下载流式与 SHA256 头、30 天清理均按 report-export-module 测试通过。
 
 ## 8. 范围外（不做）
 
@@ -118,4 +125,4 @@ needsHuman, errorCode, sourceUpdatedAt
 - 不做 KMS、信封加密、多主密钥轮换、短时凭据租约；不把主密钥写入代码或数据库。
 - 不做 Redis、消息队列、后台 worker 集群、SSE/WebSocket、长连接、微服务或多实例高可用。
 - 不做离线继续采集、静默本地降级、自动无限重试；outbox 只用于在线失败后的明确重试与幂等保护。
-- 不做审计系统重设计、统计报表、通知中心、截图 OCR、案件人工编辑或超过 30 天的历史迁移。
+- 不做审计系统重设计、统计报表、通知中心、截图 OCR、案件人工编辑或超过 30 天的历史迁移；报表文件一律由插件本地生成后上传，服务器不生成报表内容。

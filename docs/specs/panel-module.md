@@ -19,7 +19,7 @@
 ┌────────────────────────────────────────┐
 │ 法院立案/强执查询助手    [状态点 未登录] [−]│  ← 头部：标题 + 登录状态（脱敏账号）+ 收起
 │ ─────────────────────────────────────── │
-│ [导入模板] [开始查询] [导出报表]          │  ← 操作区（与 popup 同功能）
+│ [导入模板] [开始查询▾] [导出报表]         │  ← 操作区（与 popup 同功能；类型：立案/强执）
 │ ─────────────────────────────────────── │
 │ 批量任务进度: [████████░░ 12/50]         │  ← 进度区
 │ 待处理: 账号A(3条) 账号B(2条)  [暂停/继续] │
@@ -48,8 +48,8 @@
 | 按钮 | 行为 | 复用 |
 |---|---|---|
 | 导入模板 | 文件选择 `.xlsx` → `importXlsx` → `db.applyImport` 写入 `cases`/`enforcementCases`，toast 展示导入摘要（新增/更新/跳过） | `data/import-xlsx.js`、`data/db.js` |
-| 开始查询 | 校验登录 + 列表页就绪 → 发 `START_BATCH` 消息给当前页 content script → 展示启动结果 | `court-content.js` 现有 `startBatch` |
-| 导出报表 | `buildExportWorkbook` → Blob 下载 `立案与强执查询表-<日期>.xlsx` | `data/xlsx-io.js` |
+| 开始查询 | 校验登录 + 列表页就绪 → 按所选类型（立案/强执）发 `START_BATCH` 消息（载荷带 `kind`）给当前页 content script → 展示启动结果；强执需页面停在「执行」tab，否则提示切换 | `court-content.js` 现有 `startBatch` |
+| 导出报表 | `buildExportWorkbook` → Blob 下载 `立案与强执查询表-<日期>.xlsx`（核心流程不变）；随后经 `EXPORT_UPLOAD` 消息由 SW 上传服务器，后台可再次下载；失败不阻塞 | `data/xlsx-io.js` + report-export-module |
 
 - 按钮点击后立即更新面板内进度/摘要文本；重复点击「开始查询」在任务运行中时忽略（防并发）。
 - 导入/导出不请求平台，纯本地（同 app-module §3）。
@@ -65,6 +65,7 @@
 |---|---|---|---|
 | `PANEL_SYNC` | content → panel | `{ loggedIn, account, running, done, total, groups }` | — |
 | `PAUSE_BATCH` / `RESUME_BATCH` | panel → content | `{}` | `{ ok }` |
+| `EXPORT_UPLOAD` | panel/popup → SW | `{ fileName, sha256, blob }` | `{ ok, exportId?, code? }`；`NOT_CONFIGURED` 表示未配置服务器 |
 
 - `PANEL_SYNC` 由 content script 在状态变化时广播（或面板展开时主动拉取 `PANEL_SYNC_QUERY`）。
 - 所有消息响应失败/超时 → 面板显示「采集器未就绪，请刷新页面」，不猜测状态。
