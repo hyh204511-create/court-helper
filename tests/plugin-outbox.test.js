@@ -65,6 +65,36 @@ test("同一 clientMutationId 幂等入队，成功 drain 后标记 sent", async
   assert.equal((await getOutbox(first.id)).status, "sent");
 });
 
+test("大量终态事件不占满 drain 切片，少量到期 pending 仍会发送", async () => {
+  for (let index = 0; index < 60; index += 1) {
+    const terminal = await enqueue({
+      id: `terminal-${String(index).padStart(2, "0")}`,
+      type: "case.sync",
+      payload: { clientUid: `terminal-${index}` },
+    });
+    await markNeedsHuman(terminal.id, { reason: "CONFLICT" });
+  }
+  const pending = await enqueue({
+    id: "zz-pending-last",
+    type: "case.sync",
+    payload: { clientUid: "pending-client" },
+  });
+  const sent = [];
+
+  const summary = await drain({
+    now: () => 1000,
+    limit: 50,
+    send: async (event) => {
+      sent.push(event.id);
+      return { accepted: [{ clientUid: "pending-client" }], conflicts: [] };
+    },
+  });
+
+  assert.deepEqual(sent, [pending.id]);
+  assert.equal(summary.sent, 1);
+  assert.equal((await getOutbox(pending.id)).status, "sent");
+});
+
 test("失败使用指数退避，达到单条上限后进入 needs_human", async () => {
   let now = 1000;
   const event = await enqueue({ type: "case.sync", payload: { n: 1 } });

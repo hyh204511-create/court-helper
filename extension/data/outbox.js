@@ -194,9 +194,13 @@ export async function drain({
 } = {}) {
   if (typeof send !== "function") throw new TypeError("outbox send function required");
   const currentTime = normalizeNow(now);
-  const all = await listOutbox({ limit });
-  const due = all.filter((event) => ["pending", "uploading"].includes(event.status))
+  const all = await listOutbox();
+  const dueCandidates = all
+    .filter((event) => ["pending", "uploading"].includes(event.status))
     .filter((event) => Number(event.nextRetryAt ?? 0) <= currentTime);
+  const due = Number.isSafeInteger(limit) && limit >= 0
+    ? dueCandidates.slice(0, limit)
+    : dueCandidates;
   const summary = { sent: 0, conflict: 0, retried: 0, needsHuman: 0, skipped: all.length - due.length };
 
   for (const event of due) {
