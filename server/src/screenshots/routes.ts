@@ -13,6 +13,7 @@ import {
   MAX_SCREENSHOT_BYTES,
   publicScreenshot,
   ScreenshotService,
+  validateScreenshotContentType,
 } from './service.ts';
 import {
   SCREENSHOT_CONTENT_TYPES,
@@ -137,6 +138,7 @@ async function multipartUpload(request: FastifyRequest, caseId: string) {
   if (!SCREENSHOT_CONTENT_TYPES.includes(contentType as ScreenshotContentType)) {
     throw new ValidationError([{ field: 'file', code: 'mime_not_allowed' }]);
   }
+  const validatedContentType = validateScreenshotContentType(buffer, contentType as ScreenshotContentType);
 
   const expectedHash = sha256Value(requiredString(fields, 'sha256'));
   const actualHash = createHash('sha256').update(buffer).digest('hex');
@@ -150,7 +152,7 @@ async function multipartUpload(request: FastifyRequest, caseId: string) {
     type: enumValue(requiredString(fields, 'type'), 'type', SCREENSHOT_TYPES) as ScreenshotType,
     capturedAt: capturedAtValue(requiredString(fields, 'capturedAt')),
     sha256: actualHash,
-    contentType: contentType as ScreenshotContentType,
+    contentType: validatedContentType,
     buffer,
   };
 }

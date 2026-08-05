@@ -445,7 +445,7 @@ test('sync and screenshot upload reject data earlier than the retention cutoff',
     assert.equal(accepted.statusCode, 200);
     const caseId = accepted.json().accepted[0].id;
 
-    const buffer = Buffer.from('fixture screenshot');
+    const buffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
     const expiredUpload = multipart({
       eventId: 'event-expired-screenshot',
       type: 'success',

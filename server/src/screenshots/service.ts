@@ -35,6 +35,29 @@ export interface ScreenshotUploadResult {
   created: boolean;
 }
 
+const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+export function detectScreenshotContentType(buffer: Buffer): ScreenshotContentType | null {
+  if (buffer.subarray(0, JPEG_MAGIC.length).equals(JPEG_MAGIC)) return 'image/jpeg';
+  if (buffer.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC)) return 'image/png';
+  return null;
+}
+
+export function validateScreenshotContentType(
+  buffer: Buffer,
+  declaredContentType: ScreenshotContentType,
+): ScreenshotContentType {
+  const detectedContentType = detectScreenshotContentType(buffer);
+  if (detectedContentType === null) {
+    throw new ValidationError([{ field: 'file', code: 'magic_not_allowed' }]);
+  }
+  if (detectedContentType !== declaredContentType) {
+    throw new ValidationError([{ field: 'file', code: 'mime_mismatch' }]);
+  }
+  return detectedContentType;
+}
+
 async function storageCall<T>(operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();
@@ -90,6 +113,7 @@ export class ScreenshotService {
   }
 
   async upload(input: ScreenshotUploadInput, access: CaseAccess): Promise<ScreenshotUploadResult> {
+    const contentType = validateScreenshotContentType(input.buffer, input.contentType);
     const caseValue = await this.ensureCase(input.caseId, access);
     const cutoff = retentionCutoff(new Date(this.clock()));
     if (
@@ -106,15 +130,15 @@ export class ScreenshotService {
       if (objectStillExists) return { screenshot: current, created: false };
     }
 
-    const newObjectKey = objectKey(input.caseId, input.contentType);
-    await storageCall(() => this.storage.put(newObjectKey, input.buffer, input.contentType));
+    const newObjectKey = objectKey(input.caseId, contentType);
+    await storageCall(() => this.storage.put(newObjectKey, input.buffer, contentType));
 
     let screenshot: ScreenshotRecord | null;
     try {
       if (current) {
         const update: ScreenshotUpdate = {
           objectKey: newObjectKey,
-          contentType: input.contentType,
+          contentType,
           byteSize: input.buffer.length,
           sha256: normalizedHash,
           capturedAt: input.capturedAt,
@@ -125,7 +149,7 @@ export class ScreenshotService {
           caseId: input.caseId,
           type: input.type,
           objectKey: newObjectKey,
-          contentType: input.contentType,
+          contentType,
           byteSize: input.buffer.length,
           sha256: normalizedHash,
           capturedAt: input.capturedAt,

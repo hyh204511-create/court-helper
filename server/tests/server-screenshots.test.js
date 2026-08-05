@@ -17,6 +17,8 @@ const TEST_KEY = Buffer.alloc(32, 29).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
 const WORKER_PASSWORD = 'Worker-pass-1';
 const ACCOUNT_ID = '00000000-0000-0000-0000-000000000010';
+const JPEG_FIXTURE = Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/AP/EABQQAQAAAAAAAAAAAAAAAAAAACD/2gAIAQEAAQUCcf/EABQRAQAAAAAAAAAAAAAAAAAAACD/2gAIAQMBAT8BP//EABQRAQAAAAAAAAAAAAAAAAAAACD/2gAIAQIBAT8BP//EABQQAQAAAAAAAAAAAAAAAAAAACD/2gAIAQEAAT8hH//Z', 'base64');
+const PNG_FIXTURE = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 
 function config() {
   return loadConfig({
@@ -221,7 +223,7 @@ test('screenshot API authenticates, validates case binding, lists metadata, and 
 
     const token = await loginExtension(app);
     const caseId = await createCase(app, token);
-    const content = Buffer.from('synthetic jpeg evidence');
+    const content = JPEG_FIXTURE;
 
     const admin = await loginAdmin(app);
     const cookieUpload = uploadPayload(content);
@@ -267,7 +269,7 @@ test('screenshot API authenticates, validates case binding, lists metadata, and 
     assert.equal(contentResponse.headers['cache-control'], 'private, no-store');
     assert.match(contentResponse.headers['content-type'], /^image\/jpeg/);
     assert.match(contentResponse.headers['content-disposition'], /^inline;/);
-    assert.equal(contentResponse.body, content.toString());
+    assert.deepEqual(contentResponse.rawPayload, content);
     assert.equal(contentResponse.body.includes('screenshots/'), false);
 
     const download = await app.inject({
@@ -303,7 +305,7 @@ test('screenshot upload rejects invalid MIME/hash/size and preserves idempotency
   try {
     const token = await loginExtension(app);
     const caseId = await createCase(app, token);
-    const content = Buffer.from('synthetic png evidence');
+    const content = PNG_FIXTURE;
 
     const invalidHash = await upload(app, token, caseId, content, {
       sha256: '0'.repeat(64),
@@ -317,7 +319,7 @@ test('screenshot upload rejects invalid MIME/hash/size and preserves idempotency
     assert.equal(invalidMime.json().error.code, 'VALIDATION_ERROR');
     assert.equal(storageBackend.putCount, 0);
 
-    const missingCase = await upload(app, token, 'missing-case', content);
+    const missingCase = await upload(app, token, 'missing-case', content, {}, 'image/png');
     assert.equal(missingCase.statusCode, 404);
     assert.equal(storageBackend.putCount, 0);
 
@@ -335,7 +337,7 @@ test('screenshot upload rejects invalid MIME/hash/size and preserves idempotency
     assert.equal(storageBackend.putCount, 1);
     assert.equal(storageBackend.deleteCount, 0);
 
-    const replacementContent = Buffer.from('replacement png evidence');
+    const replacementContent = Buffer.concat([PNG_FIXTURE, Buffer.from('replacement')]);
     const replacement = await upload(app, token, caseId, replacementContent, {}, 'image/png');
     assert.equal(replacement.statusCode, 200);
     assert.equal(replacement.json().id, created.json().id);
@@ -346,6 +348,54 @@ test('screenshot upload rejects invalid MIME/hash/size and preserves idempotency
     const tooLarge = await upload(app, token, caseId, Buffer.alloc(10 * 1024 * 1024 + 1));
     assert.equal(tooLarge.statusCode, 413);
     assert.equal(tooLarge.json().error.code, 'PAYLOAD_TOO_LARGE');
+  } finally {
+    await app.close();
+  }
+});
+
+test('screenshot upload requires file magic to match the declared image MIME', async () => {
+  const { app, screenshotRepository, storageBackend } = await makeApp();
+
+  try {
+    const token = await loginExtension(app);
+    const caseId = await createCase(app, token);
+    const html = Buffer.from('<!doctype html><title>not an image</title>');
+
+    const disguisedHtml = await upload(app, token, caseId, html, {}, 'image/jpeg');
+    assert.equal(disguisedHtml.statusCode, 400);
+    assert.equal(disguisedHtml.json().error.code, 'VALIDATION_ERROR');
+    assert.equal(storageBackend.putCount, 0);
+
+    const jpeg = await upload(app, token, caseId, JPEG_FIXTURE, { type: 'reject' }, 'image/jpeg');
+    assert.equal(jpeg.statusCode, 201);
+    assert.equal(jpeg.json().contentType, 'image/jpeg');
+    assert.equal((await screenshotRepository.findById(jpeg.json().id)).contentType, 'image/jpeg');
+
+    const png = await upload(app, token, caseId, PNG_FIXTURE, { type: 'enforcement_success' }, 'image/png');
+    assert.equal(png.statusCode, 201);
+    assert.equal(png.json().contentType, 'image/png');
+    const pngRecord = await screenshotRepository.findById(png.json().id);
+    assert.equal(pngRecord.contentType, 'image/png');
+    assert.match(pngRecord.objectKey, /\.png$/);
+    const replay = await app.inject({
+      method: 'GET',
+      url: `/screenshots/${png.json().id}/content`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(replay.statusCode, 200);
+    assert.match(replay.headers['content-type'], /^image\/png/);
+
+    const mismatched = await upload(
+      app,
+      token,
+      caseId,
+      PNG_FIXTURE,
+      { type: 'success' },
+      'image/jpeg',
+    );
+    assert.equal(mismatched.statusCode, 400);
+    assert.equal(mismatched.json().error.code, 'VALIDATION_ERROR');
+    assert.equal(storageBackend.putCount, 2);
   } finally {
     await app.close();
   }
