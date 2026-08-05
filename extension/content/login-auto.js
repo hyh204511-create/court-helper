@@ -86,7 +86,9 @@ export function findExactTextView(root, text) {
   );
   const score = (element) => {
     const tag = element.tagName?.toLowerCase();
-    if (tag === "view") return 100;
+    if (!tag) return 0;
+    if (["title", "head", "script", "style", "meta", "link"].includes(tag)) return 0;
+    if (tag === "view" || tag === "uni-view" || tag.endsWith("view")) return 100;
     if (tag === "button" || tag === "a" || element.getAttribute?.("role") === "button") return 80;
     if (element.hasAttribute?.("onclick") || element.hasAttribute?.("data-clickable")) return 70;
     if (element.children?.length === 0) return 50;

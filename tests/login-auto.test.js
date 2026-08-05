@@ -125,6 +125,46 @@ test("精确文本定位只返回登录 view，不依赖 button 标签", () => {
   dom.window.close();
 });
 
+test("findExactTextView prefers uni-view login button over matching document title", () => {
+  const dom = new JSDOM(`
+    <!doctype html>
+    <html>
+      <head><title>登录</title></head>
+      <body>
+        <main>
+          <uni-view class="fd-login-btn" id="submit-view">登录</uni-view>
+        </main>
+      </body>
+    </html>
+  `);
+
+  const target = findExactTextView(dom.window.document, "登录");
+  assert.equal(target?.id, "submit-view");
+  assert.equal(target?.tagName.toLowerCase(), "uni-view");
+  assert.notEqual(target?.tagName.toLowerCase(), "title");
+  dom.window.close();
+});
+
+test("findExactTextView prefers uni-view password tab over matching document title", () => {
+  const dom = new JSDOM(`
+    <!doctype html>
+    <html>
+      <head><title>密码登录</title></head>
+      <body>
+        <main>
+          <uni-view class="fd-login-tab" id="password-tab">密码登录</uni-view>
+        </main>
+      </body>
+    </html>
+  `);
+
+  const target = findExactTextView(dom.window.document, "密码登录");
+  assert.equal(target?.id, "password-tab");
+  assert.equal(target?.tagName.toLowerCase(), "uni-view");
+  assert.notEqual(target?.tagName.toLowerCase(), "title");
+  dom.window.close();
+});
+
 function makeClock() {
   const clock = {
     current: 0,
