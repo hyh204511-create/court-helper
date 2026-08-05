@@ -25,8 +25,8 @@ RUN npm ci --omit=dev \
 
 COPY --from=build --chown=node:node /workspace/server/dist ./server/dist
 COPY --from=build --chown=node:node /workspace/server/migrations ./server/migrations
-RUN mkdir -p /var/log/court-helper \
-  && chown node:node /var/log/court-helper
+RUN mkdir -p /var/log/court-helper /var/lib/court-helper/storage \
+  && chown -R node:node /var/log/court-helper /var/lib/court-helper
 
 USER node
 

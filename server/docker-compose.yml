@@ -1,4 +1,19 @@
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-courthelper}"
+      POSTGRES_USER: "${POSTGRES_USER:-courthelper}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-courthelper}"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-courthelper} -d ${POSTGRES_DB:-courthelper}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   app:
     build:
       # Keep server/.dockerignore active while using the repository root for
@@ -7,17 +22,26 @@ services:
       dockerfile: Dockerfile
       additional_contexts:
         project: ..
+    depends_on:
+      db:
+        condition: service_healthy
     env_file:
       - .env
     environment:
       PORT: "${PORT:-3000}"
-      DATABASE_URL: "${DATABASE_URL:?Set DATABASE_URL in server/.env}"
+      # Leave DATABASE_URL empty to use the built-in PostgreSQL service.
+      # Set it to an external PostgreSQL URL when upgrading the deployment.
+      DATABASE_URL: "${DATABASE_URL:-postgres://${POSTGRES_USER:-courthelper}:${POSTGRES_PASSWORD:-courthelper}@db:5432/${POSTGRES_DB:-courthelper}}"
       CREDENTIAL_MASTER_KEY: "${CREDENTIAL_MASTER_KEY:?Set CREDENTIAL_MASTER_KEY in server/.env}"
       ADMIN_INITIAL_PASSWORD: "${ADMIN_INITIAL_PASSWORD:?Set ADMIN_INITIAL_PASSWORD in server/.env}"
       CORS_EXTENSION_ORIGINS: "${CORS_EXTENSION_ORIGINS:?Set CORS_EXTENSION_ORIGINS in server/.env}"
       CORS_ADMIN_ORIGINS: "${CORS_ADMIN_ORIGINS:-}"
-      OBJECT_STORAGE_ENDPOINT: "${OBJECT_STORAGE_ENDPOINT:?Set OBJECT_STORAGE_ENDPOINT in server/.env}"
-      OBJECT_STORAGE_BUCKET: "${OBJECT_STORAGE_BUCKET:?Set OBJECT_STORAGE_BUCKET in server/.env}"
+      # server/.env.example sets this to /var/lib/court-helper/storage.
+      # Leave it empty when switching to external COS/OSS storage.
+      LOCAL_STORAGE_DIR: "${LOCAL_STORAGE_DIR:-}"
+      # Optional external COS/OSS upgrade. Leave blank while local storage is enabled.
+      OBJECT_STORAGE_ENDPOINT: "${OBJECT_STORAGE_ENDPOINT:-}"
+      OBJECT_STORAGE_BUCKET: "${OBJECT_STORAGE_BUCKET:-}"
       OBJECT_STORAGE_ACCESS_KEY_ID: "${OBJECT_STORAGE_ACCESS_KEY_ID:-}"
       OBJECT_STORAGE_ACCESS_KEY_SECRET: "${OBJECT_STORAGE_ACCESS_KEY_SECRET:-}"
       SESSION_TTL_SECONDS: "${SESSION_TTL_SECONDS:-28800}"
@@ -37,6 +61,7 @@ services:
       # The app currently logs to stdout/stderr; this mount is a writable
       # location for a future file logger or a local log collector.
       - app-logs:/var/log/court-helper
+      - storage-data:/var/lib/court-helper/storage
     logging:
       driver: json-file
       options:
@@ -74,3 +99,5 @@ services:
 volumes:
   app-logs:
   nginx-logs:
+  pg-data:
+  storage-data:
