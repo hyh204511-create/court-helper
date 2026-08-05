@@ -6,6 +6,8 @@ import { JSDOM } from "jsdom";
 
 import { maskAccount, createCourtPanel } from "../extension/content/court-panel.js";
 
+const EXECUTION_TAB_MESSAGE = "\u8bf7\u5148\u5728\u9875\u9762\u9876\u90e8\u5207\u6362\u5230\u6267\u884c tab";
+
 function setup({ hash = "#/pagesWsla/pc/list/index" } = {}) {
   const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>", {
     url: `https://zxfw.court.gov.cn/zxfw/${hash}`,
@@ -147,4 +149,23 @@ test("采集器未就绪：setReady(false) 显示提示，不猜测状态", () =
   const host = document.getElementById("court-helper-panel-root");
   panel.setReady(false);
   assert.ok(host.shadowRoot.textContent.includes("采集器未就绪"), "未就绪提示");
+});
+test("面板收到 EXECUTION_TAB_REQUIRED 时显示固定执行 tab 文案", async () => {
+  const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>");
+  const { document } = dom.window;
+  createCourtPanel({
+    document,
+    shadowMode: "open",
+    handlers: {
+      onQuery: () => Promise.reject(new Error("EXECUTION_TAB_REQUIRED")),
+    },
+  });
+  const host = document.getElementById("court-helper-panel-root");
+  const select = host.shadowRoot.querySelector(".query-kind");
+  select.value = "qz";
+  select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  click(host.shadowRoot.querySelector(".btn-query"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(host.shadowRoot.querySelector(".notice").textContent, EXECUTION_TAB_MESSAGE);
+  dom.window.close();
 });

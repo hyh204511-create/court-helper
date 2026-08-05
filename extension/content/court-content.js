@@ -47,6 +47,17 @@ const AUTO_LOGIN_ERROR_CODES = new Set([
   "LOGIN_TIMEOUT",
   "NEEDS_HUMAN",
 ]);
+const EXECUTION_TAB_REQUIRED_MESSAGE = "请先在页面顶部切换到执行 tab";
+
+function isEnforcementCaseType(caseType = "") {
+  return String(caseType).includes("执行");
+}
+
+function queryErrorMessage(error) {
+  const code = typeof error === "string" ? error : error?.code ?? error?.message;
+  if (code === "EXECUTION_TAB_REQUIRED") return EXECUTION_TAB_REQUIRED_MESSAGE;
+  return `开始查询失败：${code || "请人工检查页面状态"}`;
+}
 
 function sanitizeAutoLoginResponse(response) {
   if (response?.ok === true) return { ok: true };
@@ -327,7 +338,7 @@ function initPanel() {
         try {
           await startBatch(kind === "qz" ? "qz" : "li");
         } catch (e) {
-          showToast(`开始查询失败：${e.message}`, 6000);
+          showToast(queryErrorMessage(e), 6000);
         }
       },
       onExport: () => handlePanelExport().catch((e) => showToast(`导出失败：${e.message}`, 6000)),
@@ -512,6 +523,12 @@ async function captureRow(target) {
 /** 批量执行入口（START_BATCH 消息） */
 async function startBatch(kind) {
   if (!ensureListReady()) throw new Error("NOT_READY");
+  if (kind === "qz") {
+    const rows = collectListRows(document);
+    if (!rows.some((row) => isEnforcementCaseType(row.caseType))) {
+      throw new Error("EXECUTION_TAB_REQUIRED");
+    }
+  }
   const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
   const all = await db.query(store, {});
   if (!all.length) throw new Error("NO_CASES");

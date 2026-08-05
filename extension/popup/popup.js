@@ -87,6 +87,15 @@ function selectedQueryKind() {
   return $("#query-kind")?.value === "qz" ? "qz" : "li";
 }
 
+const EXECUTION_TAB_REQUIRED_MESSAGE = "请先在页面顶部切换到执行 tab";
+
+function queryFailureMessage(response) {
+  const code = response?.error ?? response?.code;
+  return code === "EXECUTION_TAB_REQUIRED"
+    ? EXECUTION_TAB_REQUIRED_MESSAGE
+    : "启动失败，请人工检查页面状态";
+}
+
 function updateQueryKindHint() {
   const hint = $("#query-kind-hint");
   if (hint) hint.hidden = selectedQueryKind() !== "qz";
@@ -191,7 +200,7 @@ export async function handleQuery(kind = selectedQueryKind()) {
       const response = await startBatchSender(tab.id, queryKind);
       $("#progress-text").textContent = response?.ok
         ? "批量查询已启动，请在法院平台页面查看进度"
-        : "启动失败，请人工检查页面状态";
+        : queryFailureMessage(response);
       return response;
     } catch {
       $("#progress-text").textContent = "未检测到采集器（请刷新法院平台页面后重试）";
@@ -215,7 +224,7 @@ function bindActions() {
     input.click();
   });
   $("#btn-export")?.addEventListener("click", handleExport);
-  $("#btn-query")?.addEventListener("click", handleQuery);
+  $("#btn-query")?.addEventListener("click", () => handleQuery());
   $("#query-kind")?.addEventListener("change", updateQueryKindHint);
   $("#btn-search")?.addEventListener("click", renderResults);
   $("#search-input")?.addEventListener("keydown", (e) => e.key === "Enter" && renderResults());

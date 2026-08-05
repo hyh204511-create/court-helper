@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
+import "fake-indexeddb/auto";
+
+import * as db from "../extension/data/db.js";
 
 let importSequence = 0;
 
@@ -75,6 +78,18 @@ function cleanup(dom) {
   delete globalThis.location;
   delete globalThis.chrome;
   delete globalThis.fetch;
+}
+
+function batchListHtml(caseType = "民事案件") {
+  return `
+    <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
+    <div class="fd-case-item">
+      <div class="fd-header-status">待审核</div>
+      <div class="fd-header-ajmc">原告测试案件</div>
+      <div class="fd-header-ajlx">${caseType}</div>
+      <div class="fd-field-item"><span class="fd-field-lable">案号</span><span class="fd-field-value">case-1</span></div>
+      <div class="fd-field-item"><span class="fd-field-lable">立案日期</span><span class="fd-field-value">2026-08-06</span></div>
+    </div>`;
 }
 
 test("AUTO_LOGIN 非登录路由先拒绝，不触碰 DOM/fetch，且不回传 payload", async () => {
@@ -190,4 +205,46 @@ test("连续 AUTO_LOGIN 消息共享单飞流程，不并行提交", async () =>
   assert.equal(fetchCalls, 1);
   assert.equal(clickRequests, 1);
   cleanup(dom);
+});
+
+test("START_BATCH qz：民事 tab 无执行类行时返回 EXECUTION_TAB_REQUIRED", async () => {
+  const { dom, listener } = await loadContent({
+    hash: "#/pages/pc/case-list/index",
+    html: batchListHtml("民事案件"),
+  });
+  try {
+    const result = await dispatch(listener, { type: "START_BATCH", kind: "qz" });
+    assert.deepEqual(result.response, { ok: false, error: "EXECUTION_TAB_REQUIRED" });
+  } finally {
+    cleanup(dom);
+  }
+});
+
+test("START_BATCH qz：存在执行类行时允许正常启动批量任务", async () => {
+  await db.resetDb();
+  await db.upsert(db.STORE_ENFORCEMENT, {
+    account: "demo-account",
+    plaintiff: "原告测试",
+    defendant: "被告测试",
+    caseNumber: "case-1",
+    kind: "qz",
+    status: "UNKNOWN",
+  });
+  const { dom, listener } = await loadContent({
+    hash: "#/pages/pc/case-list/index",
+    html: batchListHtml("执行类案件"),
+  });
+  const nativeSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    return nativeSetTimeout(callback, delay >= 3000 ? 0 : delay, ...args);
+  };
+  try {
+    const result = await dispatch(listener, { type: "START_BATCH", kind: "qz" });
+    assert.equal(result.response?.ok, true);
+    assert.equal(result.response?.stats?.total, 1);
+  } finally {
+    globalThis.setTimeout = nativeSetTimeout;
+    cleanup(dom);
+    await db.resetDb();
+  }
 });

@@ -22,14 +22,14 @@ function makeChrome(response) {
     messages,
     runtime: {
       sendMessage: async (message) => {
-        messages.push(message);
+        messages.push(JSON.parse(JSON.stringify(message)));
         return response;
       },
     },
   };
 }
 
-test("导出上传助手计算 SHA-256，发送 Blob，并归一化成功回执", async () => {
+test("导出上传助手计算 SHA-256，发送 base64 消息，并归一化成功回执", async () => {
   const cryptoImpl = makeCrypto([0, 1, 15, 255]);
   const chromeApi = makeChrome({ ok: true, exportId: "export-1" });
   const buffer = Uint8Array.from([1, 2, 3]).buffer;
@@ -39,6 +39,7 @@ test("导出上传助手计算 SHA-256，发送 Blob，并归一化成功回执"
     fileName: "report.xlsx",
     chromeApi,
     cryptoImpl,
+    btoaImpl: (binary) => Buffer.from(binary, "binary").toString("base64"),
   });
 
   assert.deepEqual(result, { status: "uploaded", exportId: "export-1" });
@@ -51,13 +52,32 @@ test("导出上传助手计算 SHA-256，发送 Blob，并归一化成功回执"
     type: chromeApi.messages[0].type,
     fileName: chromeApi.messages[0].fileName,
     sha256: chromeApi.messages[0].sha256,
+    base64: chromeApi.messages[0].base64,
+    mime: chromeApi.messages[0].mime,
   }, {
     type: "EXPORT_UPLOAD",
     fileName: "report.xlsx",
     sha256: "00010fff",
+    base64: "AQID",
+    mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
-  assert.ok(chromeApi.messages[0].blob instanceof Blob);
-  assert.deepEqual(new Uint8Array(await chromeApi.messages[0].blob.arrayBuffer()), Uint8Array.from([1, 2, 3]));
+  assert.equal(Object.hasOwn(chromeApi.messages[0], "blob"), false);
+  assert.deepEqual(Uint8Array.from(Buffer.from(chromeApi.messages[0].base64, "base64")), Uint8Array.from([1, 2, 3]));
+});
+
+test("base64 缂栫爜鎸夊潡澶勭悊澶у瓧鑺傚簭鍒楄€屼笉鎶涚栈婧㈠嚭", async () => {
+  const bytes = Uint8Array.from({ length: 0x8001 }, (_, index) => index % 251);
+  const chromeApi = makeChrome({ ok: true });
+
+  await exportWorkbookToServer({
+    buffer: bytes,
+    fileName: "large-report.xlsx",
+    chromeApi,
+    cryptoImpl: makeCrypto(),
+    btoaImpl: (binary) => Buffer.from(binary, "binary").toString("base64"),
+  });
+
+  assert.deepEqual(Uint8Array.from(Buffer.from(chromeApi.messages[0].base64, "base64")), bytes);
 });
 
 test("未配置服务器回执归一化为 not_configured", async () => {

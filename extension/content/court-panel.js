@@ -13,6 +13,14 @@ export function maskAccount(account) {
   return `${s[0]}***${s[s.length - 1]}`;
 }
 
+const EXECUTION_TAB_REQUIRED_MESSAGE = "请先在页面顶部切换到执行 tab";
+
+function queryErrorMessage(error) {
+  const code = typeof error === "string" ? error : error?.code ?? error?.message;
+  if (code === "EXECUTION_TAB_REQUIRED") return EXECUTION_TAB_REQUIRED_MESSAGE;
+  return `开始查询失败：${code || "请人工检查页面状态"}`;
+}
+
 const SHELL_HTML = `
   <style>
     *{box-sizing:border-box;margin:0;padding:0}button,input,select{font:inherit}
@@ -143,6 +151,12 @@ export function createCourtPanel({ document, handlers = {}, shadowMode = "closed
   const syncConflicts = shadow.querySelector(".sync-conflicts");
   const syncConflictList = syncConflicts.querySelector("ul");
 
+  function showQueryError(error) {
+    notice.textContent = queryErrorMessage(error);
+    notice.classList.remove("hidden");
+    notice.classList.add("bad");
+  }
+
   const toggle = () => shell.classList.toggle("collapsed");
   fab.addEventListener("click", toggle);
   collapse.addEventListener("click", toggle);
@@ -151,9 +165,19 @@ export function createCourtPanel({ document, handlers = {}, shadowMode = "closed
   queryKind.addEventListener("change", () => {
     queryKindHint.classList.toggle("hidden", queryKind.value !== "qz");
   });
-  shadow.querySelector(".btn-query").addEventListener("click", () => (
-    handlers.onQuery?.(queryKind.value === "qz" ? "qz" : "li")
-  ));
+  shadow.querySelector(".btn-query").addEventListener("click", () => {
+    const kind = queryKind.value === "qz" ? "qz" : "li";
+    try {
+      const result = handlers.onQuery?.(kind);
+      Promise.resolve(result)
+        .then((response) => {
+          if (response?.ok === false) showQueryError(response.error ?? response.code);
+        })
+        .catch(showQueryError);
+    } catch (error) {
+      showQueryError(error);
+    }
+  });
   shadow.querySelector(".btn-export").addEventListener("click", () => handlers.onExport?.());
   shadow.querySelector(".btn-pause").addEventListener("click", () => handlers.onPause?.());
   shadow.querySelector(".btn-resume").addEventListener("click", () => handlers.onResume?.());
