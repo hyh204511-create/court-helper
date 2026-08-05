@@ -157,9 +157,14 @@ async function stopServer(
   if (!exited && child.exitCode === null) {
     const forceKillSucceeded = await forceKill(child.pid);
     if (forceKillSucceeded === false) {
-      throw new Error(`local server force kill failed: ${child.pid}`);
+      await waitForExitImpl(child);
+      if (child.exitCode === null) {
+        throw new Error(`local server force kill failed: ${child.pid}`);
+      }
+      exited = true;
+    } else {
+      exited = await waitForExitImpl(child);
     }
-    exited = await waitForExitImpl(child);
   }
   if (!exited) throw new Error(`本地服务进程未退出: ${child.pid}`);
   children.delete(child);
@@ -187,6 +192,88 @@ test("stopServer：普通 kill 超时后强杀进程树并确认退出", async (
   assert.deepEqual(taskkillPids, [54321]);
   assert.notEqual(child.exitCode, null);
   assert.equal(waitCalls, 2);
+});
+
+test("stopServer：强杀返回 false 但进程随后退出时不抛错", async () => {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.pid = 54321;
+  child.kill = () => {};
+  let waitCalls = 0;
+
+  await stopServer(
+    { child },
+    async (pid) => {
+      assert.equal(pid, child.pid);
+      return false;
+    },
+    async (candidate) => {
+      assert.equal(candidate, child);
+      waitCalls += 1;
+      if (waitCalls === 2) {
+        child.exitCode = 1;
+        child.emit("exit", 1, null);
+      }
+      return false;
+    },
+  );
+
+  assert.equal(waitCalls, 2);
+  assert.notEqual(child.exitCode, null);
+});
+
+test("stopServer：强杀返回 false 且进程仍存活时抛错", async () => {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.pid = 54321;
+  child.kill = () => {};
+  let waitCalls = 0;
+
+  await assert.rejects(
+    stopServer(
+      { child },
+      async (pid) => {
+        assert.equal(pid, child.pid);
+        return false;
+      },
+      async (candidate) => {
+        assert.equal(candidate, child);
+        waitCalls += 1;
+        return false;
+      },
+    ),
+    (error) => error.message === `local server force kill failed: ${child.pid}`,
+  );
+
+  assert.equal(waitCalls, 2);
+  assert.equal(child.exitCode, null);
+});
+
+test("stopServer：强杀成功但二次等待退出超时时抛错", async () => {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.pid = 54321;
+  child.kill = () => {};
+  let waitCalls = 0;
+
+  await assert.rejects(
+    stopServer(
+      { child },
+      async (pid) => {
+        assert.equal(pid, child.pid);
+        return true;
+      },
+      async (candidate) => {
+        assert.equal(candidate, child);
+        waitCalls += 1;
+        return false;
+      },
+    ),
+    (error) => error.message === `本地服务进程未退出: ${child.pid}`,
+  );
+
+  assert.equal(waitCalls, 2);
+  assert.equal(child.exitCode, null);
 });
 
 test("buildTaskkillArgs 使用 taskkill 所需的单斜杠参数", () => {
@@ -321,7 +408,7 @@ test("withServer 在 stopServer 抛错后仍释放串行队列", async () => {
         stopServer: async () => {},
       },
     ),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("server queue remained locked")), 100)),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("server queue remained locked")), 1000)),
   ]);
 
   assert.equal(firstStopCalls, 1);
