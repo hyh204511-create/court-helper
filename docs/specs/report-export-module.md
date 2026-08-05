@@ -42,11 +42,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_uidx
 | `GET /api/v1/report-exports` | admin,user | 游标分页（与 cases 一致，`limit≤200`，按 `created_at DESC`）；**admin 返回全部，user 只返回本人**；响应仅元数据（`id,fileName,byteSize,sha256,createdAt,createdBy`），无 object_key |
 | `GET /api/v1/report-exports/:id` | admin,user | 单条元数据；越权 404（不暴露存在性） |
 | `GET /api/v1/report-exports/:id/download` | admin,user | 服务端从存储流式返回；`Content-Disposition: attachment; filename*=UTF-8''<净化名>`；`Content-Type` 固定 spreadsheetml；`Cache-Control: private, no-store`；`X-Content-SHA256: <sha256>`；`Content-Length: byte_size`；越权 403 |
-| `DELETE /api/v1/report-exports/:id` | admin,user | 先删对象（成功或已不存在）再删记录；admin 任意、user 仅本人；越权 403 |
+| `DELETE /api/v1/report-exports/:id` | admin,user | 先删对象（成功或已不存在均继续删记录）再删记录；admin 任意、user 仅本人；越权 403 |
 
 - 上传校验失败 → `400 VALIDATION_ERROR`（`sha256_required` / `sha256_invalid` / `file_required` / `magic_not_allowed` / `mime_mismatch`）；超限 → `413 PAYLOAD_TOO_LARGE`。
 - 文件名净化：仅取 basename；剥离控制字符；长度 ≤ 200；保留 CJK、字母数字、`- _ . （）`；空/异常 → 服务端生成 `report-<日期>.xlsx`。服务端存储/下载均用净化名。
 - 错误模型、请求 ID、脱敏日志规则同 server-module §6（日志只记 ID/路由/状态码/耗时，不记文件名外的业务值；文件名仅含日期，允许记）。
+- **ID/UUID 校验**：路径 `:id` 与游标 `cursor.id` 必须在路由边界校验为 UUID 格式，非法值返回稳定的 `400/404`（禁止落库后由数据库 cast 报错）。
 
 ## 4. 权限矩阵
 
@@ -68,16 +69,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_uidx
 ```
 导出按钮 → buildExportWorkbook → 本地下载（既有逻辑原样）
         → 计算 sha256（crypto.subtle，hex64）
-        → chrome.runtime.sendMessage({type:"EXPORT_UPLOAD", fileName, sha256, blob})
-        → SW 用 remote client POST /report-exports
+        → 二进制转 base64（popup 内完成），chrome.runtime.sendMessage({type:"EXPORT_UPLOAD", fileName, sha256, base64, mime})
+        → SW 解码 base64 → Blob → remote client POST /report-exports
         → 回执：成功 → 提示「已上传服务器，后台可再次下载」
                  NOT_CONFIGURED → 提示「未配置服务器，仅本地保存」
                  失败 → 提示「上传失败，本地文件已保存」（不重试、不阻塞）
 ```
 
 - `EXPORT_UPLOAD` 由 **service-worker** 处理（token 只在 SW 内存，popup/content 不接触凭据）；SW 在 `initializeSyncCoordinator` 时持有 remote client 引用；未配置服务器 → `{ok:false, code:"NOT_CONFIGURED"}`。
-- blob 经 `chrome.runtime.sendMessage` 结构化克隆传递（MV3 支持 Blob）。
+- **二进制交接用 base64**：Chromium 扩展消息为 JSON 序列化（官方 messaging 文档），Blob/ArrayBuffer 不保真；popup/面板把 xlsx 字节转 base64 字符串随消息发送，SW 侧 `atob` 解码为 Uint8Array 再构造 Blob 上传。base64 膨胀约 33%，单文件受服务器 20 MiB 上限约束（超出由服务器 413 拒绝）。测试必须模拟浏览器 JSON 序列化往返（`JSON.parse(JSON.stringify(message))`）。
 - popup 与面板共用同一消息与同一回执文案；上传中按钮不重复触发（复用现有 in-flight 防抖）。
+- **SW 配置懒初始化**：`EXPORT_UPLOAD` 到达时若 SW 尚无 remote client，须重新读取 `chrome.storage.local` 同步配置并初始化（运行中新增/清除服务器配置立即生效）；相关 storage 键变化时重建 client，不得沿用过期配置。
 
 ### 6.2 popup 门禁：我的案件页放行（挂真实平台）
 
@@ -90,12 +92,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_uidx
 
 - popup 与面板操作区增加「查询类型」选择：**立案 / 强执**；`START_BATCH` 消息载荷带 `kind`（`li`/`qz`）。
 - content `startBatch(kind)` 既有实现已按 kind 选 store（`cases`/`enforcementCases`），不改调度核心。
-- **不自动切 tab**：强执批量要求用户当前停在「执行」tab（采集器按行内 caseType 识别状态，不改写动作）；面板/ popup 文案提示「请先在页面顶部切换到执行 tab」。
+- **不自动切 tab**：强执批量要求用户当前停在「执行」tab（采集器按行内 caseType 识别状态，不改写动作）。**启动门禁**：`START_BATCH(kind=qz)` 时若当前页面可见行中不存在执行类 caseType（含「执行」）的行 → 返回稳定错误 `EXECUTION_TAB_REQUIRED`，popup/面板提示「请先在页面顶部切换到执行 tab」，禁止继续执行（防止在民事 tab 下把强执记录写成错误状态）。
 
 ## 7. 后台管理（admin-ui 增量）
 
 - 新增页面 `/admin/report-exports`（admin,user 均可访问）：
-  - 表格列：文件名、大小（KB 格式化）、SHA256（前 8 位）、导出人（脱敏用户名，user 角色只见本人不显示列或显示「本人」）、导出时间、操作（下载 / 删除）。
+  - 表格列：文件名、大小（KB 格式化）、SHA256（前 8 位）、导出人（**脱敏用户名**，如 `a***3`，完整用户名不得进入表格 DOM；user 角色只见本人不显示列或显示「本人」）、导出时间、操作（下载 / 删除）。
   - 下载：鉴权后走 `GET /api/v1/report-exports/:id/download`（fetch blob 保存或新标签打开，`?` 不带签名参数）；删除需二次确认，成功后重拉列表。
   - 导航：admin 与 user 均显示「报表导出」入口（user 导航当前只有案件台账，追加一项）。
 - 页面不渲染 object_key、不缓存下载 URL；CSP/脱敏规则同 admin-ui-module §4。
@@ -111,6 +113,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_uidx
   - 保留：`created_at` 早于截止线被清理（对象与记录），晚于截止线保留。
 - **extension 测试**：
   - `remote-client.test.js` 增补：`uploadReportExport` 构造 FormData（字段与文件）、错误映射、幂等头；
+  - `EXPORT_UPLOAD` 消息测试须经 JSON 序列化往返（模拟浏览器丢 Blob 类型）；覆盖：base64 解码正确、未配置后置写入配置再上传成功（懒初始化）、popup 真实点击按钮发送所选 kind（mock 事件对象不是 `kind`）、qz 门禁 `EXECUTION_TAB_REQUIRED`；
   - service-worker：`EXPORT_UPLOAD` 未配置 → `NOT_CONFIGURED`；已配置 → 调 client 并回执（mock fetch + fake 配置）；
   - `query-gate.test.js`（或并入既有）：`isListRoute` 对两个真实路由为 true，对登录/详情路由为 false；
   - popup/panel：导出上传流程（mock chrome.runtime.sendMessage）——本地下载先行、上传成功/失败/未配置三种回执文案；强执类型选择发送 `kind:"qz"`。
