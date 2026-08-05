@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { spawn } from "node:child_process";
 import { test, after } from "node:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -9,8 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SERVER = join(ROOT, "scripts", "login-helper-server.py");
-const PORT = 8765;
-const BASE = `http://127.0.0.1:${PORT}`;
+let BASE = "";
 const TEMP_DIR = mkdtempSync(join(tmpdir(), "court-helper-login-test-"));
 const ACCOUNTS_FILE = join(TEMP_DIR, "accounts.txt");
 
@@ -46,9 +45,13 @@ writeFileSync(join(OCR_MISSING_DIR, "ddddocr.py"), "raise ImportError('optional 
 
 const children = new Set();
 let serverQueue = Promise.resolve();
+const STOP_TIMEOUT_MS = 2000;
 
 function startServer(accountsPath, env = {}) {
-  const child = spawn("python", [SERVER, "--accounts", accountsPath], {
+  const port = 20000 + Math.floor(Math.random() * 40001);
+  const base = `http://127.0.0.1:${port}`;
+  BASE = base;
+  const child = spawn("python", [SERVER, "--accounts", accountsPath, "--port", String(port)], {
     cwd: ROOT,
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
@@ -59,7 +62,7 @@ function startServer(accountsPath, env = {}) {
   child.stdout.on("data", (chunk) => { output += chunk; });
   child.stderr.on("data", (chunk) => { output += chunk; });
   children.add(child);
-  return { child, getOutput: () => output };
+  return { child, base, getOutput: () => output };
 }
 
 async function waitHealthy(server) {
@@ -67,7 +70,7 @@ async function waitHealthy(server) {
   while (Date.now() < deadline) {
     if (server.child.exitCode !== null) return false;
     try {
-      const response = await fetch(`${BASE}/health`);
+      const response = await fetch(`${server.base}/health`);
       if (response.ok) return true;
     } catch {
       // Python process is still starting.
@@ -77,15 +80,57 @@ async function waitHealthy(server) {
   return false;
 }
 
-async function stopServer(server) {
-  if (!server || server.child.exitCode !== null) return;
-  server.child.kill();
-  await Promise.race([
-    once(server.child, "exit"),
-    new Promise((resolve) => setTimeout(resolve, 2000)),
-  ]);
-  children.delete(server.child);
+function forceKillProcessTree(pid) {
+  return new Promise((resolve) => {
+    const killer = spawn("taskkill", ["//PID", String(pid), "//T", "//F"], { stdio: "ignore" });
+    killer.once("error", resolve);
+    killer.once("exit", resolve);
+  });
 }
+
+async function waitForExit(child, timeoutMs = STOP_TIMEOUT_MS) {
+  if (child.exitCode !== null) return true;
+  const exited = await Promise.race([
+    once(child, "exit").then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
+  return exited || child.exitCode !== null;
+}
+
+async function stopServer(server, forceKill = forceKillProcessTree) {
+  const child = server?.child;
+  if (!child) return;
+  if (child.exitCode !== null) {
+    children.delete(child);
+    return;
+  }
+
+  child.kill();
+  let exited = await waitForExit(child);
+  if (!exited && child.exitCode === null) {
+    await forceKill(child.pid);
+    exited = await waitForExit(child);
+  }
+  if (!exited) throw new Error(`本地服务进程未退出: ${child.pid}`);
+  children.delete(child);
+}
+
+test("stopServer：普通 kill 超时后强杀进程树并确认退出", async () => {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.pid = 54321;
+  child.kill = () => {};
+  const taskkillPids = [];
+
+  await stopServer({ child }, async (pid) => {
+    taskkillPids.push(pid);
+    child.exitCode = 1;
+    child.emit("exit", 1, null);
+  });
+
+  assert.deepEqual(taskkillPids, [54321]);
+  assert.notEqual(child.exitCode, null);
+});
 
 async function withServer(accountsPath, callback, env = {}) {
   const previous = serverQueue;

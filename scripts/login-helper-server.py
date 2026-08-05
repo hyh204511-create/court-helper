@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""court-helper 的本地账号服务（仅监听 127.0.0.1:8765）。"""
+"""court-helper 的本地账号服务（仅监听 127.0.0.1，默认端口 8765）。"""
 
 import argparse
 import base64
@@ -9,7 +9,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 HOST = "127.0.0.1"
-PORT = 8765
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ACCOUNTS = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "accounts.txt"))
 MAX_BODY_BYTES = 1024 * 1024
@@ -162,11 +161,12 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
 def main():
     parser = argparse.ArgumentParser(description="court-helper 本地账号服务")
     parser.add_argument("--accounts", default=DEFAULT_ACCOUNTS, help="账号文件路径")
+    parser.add_argument("--port", type=int, default=8765, help="监听端口")
     args = parser.parse_args()
 
     LoginHelperHandler.accounts_path = os.path.abspath(args.accounts)
-    server = ReusableThreadingHTTPServer((HOST, PORT), LoginHelperHandler)
-    print(f"[login-helper] listening on {HOST}:{PORT}", flush=True)
+    server = ReusableThreadingHTTPServer((HOST, args.port), LoginHelperHandler)
+    print(f"[login-helper] listening on {HOST}:{args.port}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
