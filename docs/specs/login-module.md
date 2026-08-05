@@ -1,7 +1,8 @@
 # 规格：login-module（登录状态、账号识别与自动登录）
 
-> 版本：0.2 ｜ 状态：实现中 ｜ 依据：计划 §Phase 2、需求确认（2026-08-04 用户拍板「升级规则：全面自动登录」）
+> 版本：0.3 ｜ 状态：实现中 ｜ 依据：计划 §Phase 2、需求确认（2026-08-04 用户拍板「升级规则：全面自动登录」）、Phase 9 服务器上线（2026-08-05 用户拍板「自动登录凭据从服务器取」）
 > v0.2 变更：登录全人工 → 登录自动化（可选）；新增自动登录范围、本地服务、验证码识别流程。
+> v0.3 变更：**自动登录凭据来源改为服务器**（`GET /platform-accounts` 列表 + `POST /platform-accounts/:id/credential` 取明文）；验证码 OCR 仍走本地 8765 服务（ddddocr）；本地 `accounts.txt` 降级为可选回退。
 
 ## 1. 目标
 
@@ -18,7 +19,7 @@
 | 登录成功检测 | hash 离开 login 且 出现用户区标志元素 → 判定已登录，通知 popup 解锁查询功能 |
 | 当前账号识别 | 从页面用户区读取当前登录账号文本（脱敏处理），与模板「账号」列（C 列）匹配 |
 | 会话失效检测 | 平台接口返回 401/会话过期，或页面被跳回 login 路由 → 批量任务暂停，popup 提示 |
-| 自动登录 | 登录页路由 + 密码登录方式下：填账号/密码 → 读验证码图（dataURL）→ 本地服务 OCR → 填验证码 → 点「登录」→ 等待结果 |
+| 自动登录 | 登录页路由 + 密码登录方式下：填账号/密码 → 读验证码图（dataURL）→ 本地服务 OCR → 填验证码 → 点「登录」→ 等待结果；**凭据来自服务器平台账号**（`GET /platform-accounts` → 选择 → `POST /platform-accounts/:id/credential` 取明文，仅 extension 会话可调） |
 | 验证码识别 | 本地服务 `POST /ocr` 调 ddddocr（可选依赖）；失败/识别失败 → 刷新验证码重试 1 次 → 仍败标记待人工 |
 | 多账号管理 | `accounts.txt`（gitignore）每行 `账号 密码`（首个空白分割，密码可含空格；`#` 注释行跳过）；popup 账号下拉切换登录；平台为单会话，不做并行登录 |
 | 一键抓取 | 登录成功后平台默认跳 `#/pagesWsla/pc/list/index`（已确认）→ popup「一键抓取」= 对当前账号发起 START_BATCH（立案） |
@@ -49,21 +50,27 @@
 
 > 选择器均为 2026-08-03 真实会话 recon 确认；自动登录链路（填表/点按钮）待真实登录页复核（验收闸门）。
 
-## 5. 自动登录流程（v0.2 新增）
+## 5. 自动登录流程（v0.2 新增，v0.3 凭据源改服务器）
 
 ```text
-popup「一键登录」（账号从 accounts.txt 选择）
+popup「一键登录」→ 读取服务器配置（地址/账号，chrome.storage.local 仅存非凭据配置）
+→ extension 通道登录服务器（clientType=extension，取 bearer token，token 仅内存不落 storage）
+→ GET /platform-accounts（admin,user 均可见启用项；只返回 id,label,enabled）
+→ popup 账号下拉 = 平台账号 label 列表
+→ 选中账号 → POST /platform-accounts/:id/credential（extension 会话）→ 取明文 {account,password}（仅内存）
 → content AUTO_LOGIN 消息（仅登录页路由执行）
 → 确保「密码登录」方式（必要时点 passwordTab）
 → 填账号/密码
-→ 验证码：读 captchaImage.src（dataURL）→ base64 → POST http://127.0.0.1:8765/ocr
+→ 验证码：读 captchaImage.src（dataURL）→ base64 → POST http://127.0.0.1:8765/ocr（本地 OCR 不变）
 → 填验证码 → 点「登录」
 → 等待结果（≤8s）：hash 离开 login 或用户区出现 → 成功
 → 停留 login 路由 → 失败 → 点击验证码图刷新 → 重试 1 次 → 仍败 → 报「登录失败，待人工处理」
 ```
 
+- 服务器不可达（登录/列表/取凭据失败）→ popup 提示服务器连接信息，不进入自动登录。
+- 凭据明文只在内存流转：服务器响应 → popup → AUTO_LOGIN 消息 → content 填表，任何环节不写 storage。
 - 验证码图刷新：点击 `captchaImage`（页面行为，src 更新后重新读取），不 fetch 平台 API。
-- 本地服务不可达（/health 失败）→ popup 提示启动 `python scripts/login-helper-server.py`，不进入自动登录。
+- 本地服务（8765）仅用于 `/ocr` 验证码识别；`/accounts` 作为无服务器时的可选回退（默认关闭）。
 - 重试全程遵守节流（间隔 3–8s）；失败标记待人工，禁止循环重试。
 
 ## 6. 本地服务契约（`scripts/login-helper-server.py`）
