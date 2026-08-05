@@ -6,7 +6,8 @@
   "permissions": [
     "storage",
     "scripting",
-    "activeTab"
+    "activeTab",
+    "debugger"
   ],
   "host_permissions": [
     "https://zxfw.court.gov.cn/*",

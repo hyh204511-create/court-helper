@@ -8,6 +8,8 @@ const PASSWORD_FORM_TIMEOUT_MS = 2000;
 const CAPTCHA_REFRESH_TIMEOUT_MS = 3000;
 const RETRY_MIN_MS = 3000;
 const RETRY_MAX_MS = 8000;
+export const CLICK_REQUEST = "CLICK_REQUEST";
+export const CLICK_SESSION_END = "CLICK_SESSION_END";
 const SAFE_ERROR_CODES = new Set([
   "SERVICE_UNAVAILABLE",
   "FORM_NOT_READY",
@@ -94,6 +96,70 @@ export function findExactTextView(root, text) {
 
 function readImageSource(image) {
   return image?.getAttribute?.("src") ?? image?.src ?? "";
+}
+
+export function getElementCenterPoint(element) {
+  if (!element || typeof element.getBoundingClientRect !== "function") {
+    return { ok: false, error: "FORM_NOT_READY" };
+  }
+  let rect;
+  try {
+    rect = element.getBoundingClientRect();
+  } catch {
+    return { ok: false, error: "FORM_NOT_READY" };
+  }
+  const left = Number(rect?.left);
+  const top = Number(rect?.top);
+  const width = Number(rect?.width ?? Number(rect?.right) - left);
+  const height = Number(rect?.height ?? Number(rect?.bottom) - top);
+  if (!Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(width) || !Number.isFinite(height)) {
+    return { ok: false, error: "FORM_NOT_READY" };
+  }
+  if (width <= 0 || height <= 0) return { ok: false, error: "FORM_NOT_READY" };
+  return {
+    ok: true,
+    x: Math.round(left + width / 2),
+    y: Math.round(top + height / 2),
+  };
+}
+
+function sendRuntimeMessage(sendMessage, message) {
+  if (typeof sendMessage !== "function") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    try {
+      const result = sendMessage(message, finish);
+      if (result && typeof result.then === "function") {
+        result.then(finish, () => finish(null));
+      } else if (sendMessage.length < 2 && result !== undefined) {
+        finish(result);
+      }
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+export async function requestTrustedClick(element, dependencies = {}) {
+  const point = getElementCenterPoint(element);
+  if (!point.ok) return point;
+  const response = await sendRuntimeMessage(
+    dependencies.sendMessage,
+    { type: CLICK_REQUEST, x: point.x, y: point.y },
+  );
+  dependencies.clickSessionStarted = true;
+  return response?.ok === true ? { ok: true } : { ok: false, error: "NEEDS_HUMAN" };
+}
+
+async function releaseTrustedClickSession(dependencies) {
+  if (!dependencies?.clickSessionStarted) return;
+  await sendRuntimeMessage(dependencies.sendMessage, { type: CLICK_SESSION_END });
+  dependencies.clickSessionStarted = false;
 }
 
 function findValidCaptchaImage(root) {
@@ -201,11 +267,8 @@ async function submitAttempt({ root, location, account, password, serviceUrl, de
   }
   const submitButton = findExactTextView(root, "登录");
   if (!submitButton) return { ok: false, error: "FORM_NOT_READY" };
-  try {
-    submitButton.click();
-  } catch {
-    return { ok: false, error: "FORM_NOT_READY" };
-  }
+  const click = await requestTrustedClick(submitButton, dependencies);
+  if (!click.ok) return click;
 
   const success = await waitUntil(
     () => !isLoginRoute(location?.hash ?? "") || !!readUserArea(root),
@@ -217,11 +280,8 @@ async function submitAttempt({ root, location, account, password, serviceUrl, de
 async function refreshCaptcha(root, dependencies, timeoutMs) {
   const current = findValidCaptchaImage(root);
   if (!current) return false;
-  try {
-    current.image.click();
-  } catch {
-    return false;
-  }
+  const click = await requestTrustedClick(current.image, dependencies);
+  if (!click.ok) return false;
   return waitUntil(
     () => {
       const source = readImageSource(current.image);
@@ -258,32 +318,38 @@ async function runAutoLogin(options) {
     now,
     sleep,
     fetchImpl: settings.fetchImpl ?? settings.fetch ?? globalThis.fetch?.bind(globalThis),
+    sendMessage: settings.sendMessage ?? globalThis.chrome?.runtime?.sendMessage?.bind(globalThis.chrome.runtime),
+    clickSessionStarted: false,
     timeoutMs: settings.loginTimeoutMs ?? settings.timeoutMs ?? LOGIN_SUCCESS_TIMEOUT_MS,
     intervalMs: settings.pollIntervalMs ?? 100,
   };
 
-  const passwordReady = await ensurePasswordMode(
-    root,
-    dependencies,
-    settings.passwordFormTimeoutMs ?? PASSWORD_FORM_TIMEOUT_MS,
-  );
-  if (!passwordReady) return { ok: false, error: "FORM_NOT_READY" };
+  try {
+    const passwordReady = await ensurePasswordMode(
+      root,
+      dependencies,
+      settings.passwordFormTimeoutMs ?? PASSWORD_FORM_TIMEOUT_MS,
+    );
+    if (!passwordReady) return { ok: false, error: "FORM_NOT_READY" };
 
-  const first = await submitAttempt({ root, location, account, password, serviceUrl, dependencies });
-  if (first.ok) return first;
-  if (first.error !== "LOGIN_TIMEOUT") return first;
+    const first = await submitAttempt({ root, location, account, password, serviceUrl, dependencies });
+    if (first.ok) return first;
+    if (first.error !== "LOGIN_TIMEOUT") return first;
 
-  const refreshed = await refreshCaptcha(
-    root,
-    dependencies,
-    settings.captchaRefreshTimeoutMs ?? CAPTCHA_REFRESH_TIMEOUT_MS,
-  );
-  if (!refreshed) return { ok: false, error: "NEEDS_HUMAN" };
+    const refreshed = await refreshCaptcha(
+      root,
+      dependencies,
+      settings.captchaRefreshTimeoutMs ?? CAPTCHA_REFRESH_TIMEOUT_MS,
+    );
+    if (!refreshed) return { ok: false, error: "NEEDS_HUMAN" };
 
-  const randomValue = Math.min(1, Math.max(0, Number(random()) || 0));
-  await sleep(RETRY_MIN_MS + Math.round((RETRY_MAX_MS - RETRY_MIN_MS) * randomValue));
-  const second = await submitAttempt({ root, location, account, password, serviceUrl, dependencies });
-  return second.ok ? second : { ok: false, error: "NEEDS_HUMAN" };
+    const randomValue = Math.min(1, Math.max(0, Number(random()) || 0));
+    await sleep(RETRY_MIN_MS + Math.round((RETRY_MAX_MS - RETRY_MIN_MS) * randomValue));
+    const second = await submitAttempt({ root, location, account, password, serviceUrl, dependencies });
+    return second.ok ? second : { ok: false, error: "NEEDS_HUMAN" };
+  } finally {
+    await releaseTrustedClickSession(dependencies);
+  }
 }
 
 /** 执行一次有界自动登录；并发调用共享同一个进行中的 Promise。 */

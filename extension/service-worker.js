@@ -2,6 +2,7 @@ import { handleMessage, sanitizeLoginState } from "./shared/message-router.js";
 import { sanitizeSyncState } from "./shared/message-router.js";
 import { createRemoteClient } from "./data/remote-client.js";
 import { createSyncCoordinator } from "./data/sync-coordinator.js";
+import { createDebuggerDriver } from "./sw/debugger-driver.js";
 
 const SYNC_STATUS_REQUEST = "SYNC_STATUS_REQUEST";
 const SYNC_CONFIG_KEYS = Object.freeze([
@@ -15,6 +16,7 @@ const SYNC_CONFIG_KEYS = Object.freeze([
 ]);
 
 let syncCoordinator = null;
+const debuggerDriver = createDebuggerDriver();
 
 function stringValue(...values) {
   return values.find((value) => typeof value === "string" && value.trim() !== "")?.trim() ?? "";
@@ -137,7 +139,10 @@ function handleSyncRetry(sendResponse) {
 }
 
 if (globalThis.chrome?.runtime?.onMessage?.addListener) {
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (debuggerDriver.canHandle(message)) {
+      return debuggerDriver.handleMessage(message, sender, sendResponse);
+    }
     // AUTO_LOGIN 只在 content script 处理，service worker 不接收、不转发、不持久化。
     if (message?.type === "AUTO_LOGIN") return false;
     if (message?.type === "LOGIN_STATE") {

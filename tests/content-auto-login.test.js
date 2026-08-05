@@ -25,6 +25,23 @@ function makeChrome() {
   };
 }
 
+function setRect(element, rect) {
+  element.getBoundingClientRect = () => ({
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height,
+    right: rect.left + rect.width,
+    bottom: rect.top + rect.height,
+  });
+}
+
+function prepareLoginClickTargets(document) {
+  setRect(document.querySelector("#submit"), { left: 10, top: 20, width: 100, height: 40 });
+  const image = document.querySelector("img");
+  if (image) setRect(image, { left: 200, top: 60, width: 100, height: 40 });
+}
+
 async function loadContent({ hash, html = "<main></main>" }) {
   const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, {
     url: `https://zxfw.court.gov.cn/zxfw/${hash}`,
@@ -97,9 +114,15 @@ test("AUTO_LOGIN 登录路由异步响应成功，并只执行页面表单操作
     fetchCalls += 1;
     return { ok: true, json: async () => ({ ok: true, text: "A7x2" }) };
   };
-  dom.window.document.querySelector("#submit").addEventListener("click", () => {
-    dom.window.location.hash = "#/pagesWsla/pc/list/index";
-  });
+  prepareLoginClickTargets(dom.window.document);
+  const clickRequests = [];
+  chrome.runtime.sendMessage = async (message) => {
+    if (message?.type === "CLICK_REQUEST") {
+      clickRequests.push(message);
+      dom.window.location.hash = "#/pagesWsla/pc/list/index";
+    }
+    return { ok: true };
+  };
 
   const result = await dispatch(listener, {
     type: "AUTO_LOGIN",
@@ -110,6 +133,7 @@ test("AUTO_LOGIN 登录路由异步响应成功，并只执行页面表单操作
   assert.equal(result.returnValue, true);
   assert.deepEqual(result.response, { ok: true });
   assert.equal(fetchCalls, 1);
+  assert.deepEqual(clickRequests, [{ type: "CLICK_REQUEST", x: 60, y: 40 }]);
   assert.equal(chrome.listeners.length, 1);
   cleanup(dom);
 });
@@ -140,17 +164,21 @@ test("连续 AUTO_LOGIN 消息共享单飞流程，不并行提交", async () =>
   });
   let releaseFetch;
   let fetchCalls = 0;
-  let submitCalls = 0;
+  let clickRequests = 0;
   const fetchReady = new Promise((resolve) => { releaseFetch = resolve; });
   globalThis.fetch = async () => {
     fetchCalls += 1;
     await fetchReady;
     return { ok: true, json: async () => ({ ok: true, text: "A7x2" }) };
   };
-  dom.window.document.querySelector("#submit").addEventListener("click", () => {
-    submitCalls += 1;
-    dom.window.location.hash = "#/pagesWsla/pc/list/index";
-  });
+  prepareLoginClickTargets(dom.window.document);
+  chrome.runtime.sendMessage = async (message) => {
+    if (message?.type === "CLICK_REQUEST") {
+      clickRequests += 1;
+      dom.window.location.hash = "#/pagesWsla/pc/list/index";
+    }
+    return { ok: true };
+  };
 
   const payload = { type: "AUTO_LOGIN", account: "demo-account", password: "demo-password", serviceUrl: "http://127.0.0.1:8765" };
   const first = dispatch(listener, payload);
@@ -160,6 +188,6 @@ test("连续 AUTO_LOGIN 消息共享单飞流程，不并行提交", async () =>
   assert.deepEqual(firstResult.response, { ok: true });
   assert.deepEqual(secondResult.response, { ok: true });
   assert.equal(fetchCalls, 1);
-  assert.equal(submitCalls, 1);
+  assert.equal(clickRequests, 1);
   cleanup(dom);
 });
