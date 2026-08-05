@@ -97,7 +97,7 @@ function adminHeaders(admin) {
   };
 }
 
-test('platform accounts hide credentials, enforce role visibility, and decrypt only for extension sessions', async () => {
+test('platform accounts hide credentials, enforce role visibility, and decrypt only for admin sessions', async () => {
   const { app, platformAccountRepository } = await makeApp();
 
   try {
@@ -135,17 +135,16 @@ test('platform accounts hide credentials, enforce role visibility, and decrypt o
       url: `/platform-accounts/${created.json().id}/credential`,
       headers: { cookie: admin.cookie },
     });
-    assert.equal(cookieCredential.statusCode, 403);
-    assert.equal(cookieCredential.json().error.code, 'FORBIDDEN');
+    assert.equal(cookieCredential.statusCode, 200);
+    assert.deepEqual(cookieCredential.json(), { account: 'court-user', password: 'court-pass' });
 
     const credential = await app.inject({
       method: 'POST',
       url: `/platform-accounts/${created.json().id}/credential`,
       headers: { authorization: `Bearer ${workerToken}` },
     });
-    assert.equal(credential.statusCode, 200);
-    assert.deepEqual(credential.json(), { account: 'court-user', password: 'court-pass' });
-    assert.equal(credential.headers['cache-control'], 'no-store');
+    assert.equal(credential.statusCode, 403);
+    assert.equal(credential.json().error.code, 'FORBIDDEN');
 
     const replacement = await app.inject({
       method: 'PATCH',
@@ -154,13 +153,15 @@ test('platform accounts hide credentials, enforce role visibility, and decrypt o
       payload: { account: 'court-user-2', password: 'court-pass-2' },
     });
     assert.equal(replacement.statusCode, 200);
+    const adminToken = await loginExtension(app, 'admin', ADMIN_PASSWORD);
     const replacementCredential = await app.inject({
       method: 'POST',
       url: `/platform-accounts/${created.json().id}/credential`,
-      headers: { authorization: `Bearer ${workerToken}` },
+      headers: { authorization: `Bearer ${adminToken}` },
     });
     assert.equal(replacementCredential.statusCode, 200);
     assert.deepEqual(replacementCredential.json(), { account: 'court-user-2', password: 'court-pass-2' });
+    assert.equal(replacementCredential.headers['cache-control'], 'no-store');
 
     const replaced = await platformAccountRepository.findById(created.json().id);
     assert.notDeepEqual(replaced.secretIv, stored.secretIv);
@@ -233,7 +234,7 @@ test('credential authentication failures and authenticated decryption failures n
       headers: adminHeaders(admin),
       payload: { label: 'tamper-test', account: 'secret-account', password: 'secret-password' },
     });
-    const workerToken = await loginExtension(app);
+    const adminToken = await loginExtension(app, 'admin', ADMIN_PASSWORD);
 
     const stored = await platformAccountRepository.findById(created.json().id);
     stored.secretTag[0] ^= 0xff;
@@ -242,7 +243,7 @@ test('credential authentication failures and authenticated decryption failures n
     const response = await app.inject({
       method: 'POST',
       url: `/platform-accounts/${created.json().id}/credential`,
-      headers: { authorization: `Bearer ${workerToken}` },
+      headers: { authorization: `Bearer ${adminToken}` },
     });
     assert.equal(response.statusCode, 503);
     assert.equal(response.json().error.code, 'CREDENTIAL_UNAVAILABLE');

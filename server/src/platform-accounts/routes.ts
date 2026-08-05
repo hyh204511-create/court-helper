@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 
 import type { ServerConfig } from '../config.ts';
-import { ConflictError, ForbiddenError, ValidationError } from '../errors.ts';
+import { ConflictError, ValidationError } from '../errors.ts';
 import {
   assertCookieWrite,
   authenticateRequest,
@@ -53,13 +53,6 @@ function isUniqueViolation(error: unknown): boolean {
   return (error as { code?: string })?.code === '23505';
 }
 
-async function requireExtensionSession(request: FastifyRequest, service: AuthService): Promise<void> {
-  await authenticateRequest(request, service);
-  if (request.auth?.session.clientType !== 'extension') {
-    throw new ForbiddenError('Extension session required');
-  }
-}
-
 function route(prefix: string, path: string): string {
   return `${prefix}${path}`;
 }
@@ -71,7 +64,6 @@ export function registerPlatformAccountRoutes(
   const { authService, config, prefix, service } = options;
   const protectedPreHandler = async (request: FastifyRequest) => authenticateRequest(request, authService);
   const adminPreHandler = async (request: FastifyRequest) => requireAdmin(request, authService);
-  const extensionPreHandler = async (request: FastifyRequest) => requireExtensionSession(request, authService);
 
   app.get(route(prefix, '/platform-accounts'), { preHandler: protectedPreHandler }, async (request) => {
     const accounts = await service.list((request.auth as NonNullable<typeof request.auth>).user.role);
@@ -134,7 +126,7 @@ export function registerPlatformAccountRoutes(
     return publicPlatformAccount(deleted);
   });
 
-  app.post(route(prefix, '/platform-accounts/:id/credential'), { preHandler: extensionPreHandler }, async (request, reply) => {
+  app.post(route(prefix, '/platform-accounts/:id/credential'), { preHandler: adminPreHandler }, async (request, reply) => {
     const credential = await service.credential((request.params as { id: string }).id);
     reply.header('Cache-Control', 'no-store');
     return credential;
