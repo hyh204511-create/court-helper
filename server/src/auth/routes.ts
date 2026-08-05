@@ -5,6 +5,7 @@ import {
   AuthenticationRequiredError,
   ConflictError,
   ForbiddenError,
+  TooManyRequestsError,
   ValidationError,
 } from '../errors.ts';
 import {
@@ -147,7 +148,15 @@ export function registerAuthRoutes(app: FastifyInstance, options: RegisterAuthOp
     const password = requiredString(body, 'password');
     const clientType = enumValue(body, 'clientType', ['admin_ui', 'extension'] as const);
     assertLoginOrigin(request, config, clientType);
-    const result = await service.login(username, password, clientType);
+    let result;
+    try {
+      result = await service.login(username, password, clientType, request.ip);
+    } catch (error) {
+      if (error instanceof TooManyRequestsError) {
+        reply.header('retry-after', String(Math.ceil(error.retryAfterSeconds)));
+      }
+      throw error;
+    }
 
     if (clientType === 'admin_ui') {
       reply.setCookie(SESSION_COOKIE_NAME, result.token, {

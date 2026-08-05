@@ -52,6 +52,15 @@ export class ConflictError extends AppError {
   }
 }
 
+export class TooManyRequestsError extends AppError {
+  public readonly retryAfterSeconds: number;
+
+  constructor(retryAfterSeconds: number) {
+    super('Too many login attempts', 'RATE_LIMITED', 429, true);
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 export class DependencyUnavailableError extends AppError {
   constructor(message = 'Dependency unavailable') {
     super(message, 'DEPENDENCY_UNAVAILABLE', 503, true);

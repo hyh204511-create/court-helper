@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildApp, loadConfig } from '../src/app.ts';
-import { hashPassword } from '../src/auth/password.ts';
+import { DUMMY_PASSWORD_HASH, hashPassword } from '../src/auth/password.ts';
 import { MemoryAuthRepository } from '../src/auth/memory-repository.ts';
+import { AuthService } from '../src/auth/service.ts';
 
 const TEST_KEY = Buffer.alloc(32, 9).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
@@ -74,14 +75,15 @@ async function loginAdmin(app) {
   };
 }
 
-async function loginWorker(app, password = 'Worker-pass-1') {
-  const response = await app.inject({
+async function loginWorker(app, password = 'Worker-pass-1', remoteAddress) {
+  const request = {
     method: 'POST',
     url: '/auth/login',
     headers: { origin: 'chrome-extension://test-extension' },
     payload: { username: 'worker', password, clientType: 'extension' },
-  });
-  return response;
+    ...(remoteAddress ? { remoteAddress } : {}),
+  };
+  return app.inject(request);
 }
 
 test('startup seeds one Argon2id admin and never overwrites it', async () => {
@@ -176,6 +178,102 @@ test('wrong credentials are 401 and disabled accounts are rejected without secre
   } finally {
     await app.close();
   }
+});
+
+test('login throttles a username and rejects the correct password during the window', async () => {
+  const repository = new MemoryAuthRepository();
+  await addUser(repository);
+  const { app } = await makeApp(repository);
+
+  try {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const failed = await loginWorker(app, 'wrong-password');
+      assert.equal(failed.statusCode, 401);
+    }
+
+    const blocked = await loginWorker(app);
+    assert.equal(blocked.statusCode, 429);
+    assert.equal(blocked.json().error.code, 'RATE_LIMITED');
+    assert.match(blocked.headers['retry-after'], /^\d+$/);
+  } finally {
+    await app.close();
+  }
+});
+
+test('login throttles an IP across usernames but allows a different IP', async () => {
+  const repository = new MemoryAuthRepository();
+  const passwordHash = await hashPassword('Worker-pass-1');
+  for (let index = 0; index < 6; index += 1) {
+    await repository.createUser({
+      username: `worker-${index}`,
+      passwordHash,
+      role: 'user',
+      enabled: true,
+    });
+  }
+  const { app } = await makeApp(repository);
+
+  try {
+    for (let index = 0; index < 5; index += 1) {
+      const failed = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        remoteAddress: '198.51.100.10',
+        headers: { origin: 'chrome-extension://test-extension' },
+        payload: {
+          username: `worker-${index}`,
+          password: 'wrong-password',
+          clientType: 'extension',
+        },
+      });
+      assert.equal(failed.statusCode, 401);
+    }
+
+    const blocked = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      remoteAddress: '198.51.100.10',
+      headers: { origin: 'chrome-extension://test-extension' },
+      payload: { username: 'worker-5', password: 'Worker-pass-1', clientType: 'extension' },
+    });
+    assert.equal(blocked.statusCode, 429);
+
+    const allowed = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      remoteAddress: '198.51.100.11',
+      headers: { origin: 'chrome-extension://test-extension' },
+      payload: { username: 'worker-5', password: 'Worker-pass-1', clientType: 'extension' },
+    });
+    assert.equal(allowed.statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test('unknown login performs the dummy password verification path', async () => {
+  const repository = new MemoryAuthRepository();
+  const known = await addUser(repository);
+  const calls = [];
+  const service = new AuthService(repository, loadConfig(configEnv()), {
+    verifyPassword: async (passwordHash, password) => {
+      calls.push({ passwordHash, password });
+      return false;
+    },
+  });
+
+  await assert.rejects(
+    service.login('missing', 'attempted-password', 'extension', '198.51.100.20'),
+    (error) => error.code === 'AUTH_REQUIRED',
+  );
+  assert.deepEqual(calls, [{ passwordHash: DUMMY_PASSWORD_HASH, password: 'attempted-password' }]);
+
+  calls.length = 0;
+  await assert.rejects(
+    service.login('worker', 'attempted-password', 'extension', '198.51.100.21'),
+    (error) => error.code === 'AUTH_REQUIRED',
+  );
+  assert.deepEqual(calls, [{ passwordHash: known.passwordHash, password: 'attempted-password' }]);
 });
 
 test('auth/me authenticates both channels and never falls back from invalid bearer to cookie', async () => {

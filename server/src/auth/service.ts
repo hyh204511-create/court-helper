@@ -1,6 +1,11 @@
 import type { ServerConfig } from '../config.ts';
-import { AuthenticationRequiredError, ConflictError, NotFoundError } from '../errors.ts';
-import { hashPassword, verifyPassword } from './password.ts';
+import {
+  AuthenticationRequiredError,
+  ConflictError,
+  NotFoundError,
+  TooManyRequestsError,
+} from '../errors.ts';
+import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from './password.ts';
 import { hashToken, newCsrfToken, newOpaqueToken, newSessionId } from './token.ts';
 import type {
   AuthRepository,
@@ -13,10 +18,62 @@ import type {
 
 export type AuthMechanism = 'cookie' | 'bearer';
 
+export const LOGIN_ATTEMPT_LIMIT = 5;
+export const LOGIN_ATTEMPT_WINDOW_MS = 60 * 1000;
+
+type PasswordVerifier = (passwordHash: string, password: string) => Promise<boolean>;
+
+interface LoginAttemptBucket {
+  count: number;
+  resetAt: number;
+}
+
+class LoginAttemptLimiter {
+  private readonly byIp = new Map<string, LoginAttemptBucket>();
+  private readonly byUsername = new Map<string, LoginAttemptBucket>();
+
+  private bucket(map: Map<string, LoginAttemptBucket>, key: string, now: number): LoginAttemptBucket {
+    const current = map.get(key);
+    if (current && current.resetAt > now) return current;
+    const created = { count: 0, resetAt: now + LOGIN_ATTEMPT_WINDOW_MS };
+    map.set(key, created);
+    return created;
+  }
+
+  private pruneExpired(now: number): void {
+    for (const [key, bucket] of this.byIp) {
+      if (bucket.resetAt <= now) this.byIp.delete(key);
+    }
+    for (const [key, bucket] of this.byUsername) {
+      if (bucket.resetAt <= now) this.byUsername.delete(key);
+    }
+  }
+
+  consume(ip: string, username: string, now: number): number | null {
+    this.pruneExpired(now);
+    const ipBucket = this.bucket(this.byIp, ip, now);
+    const usernameBucket = this.bucket(this.byUsername, username, now);
+    if (ipBucket.count >= LOGIN_ATTEMPT_LIMIT || usernameBucket.count >= LOGIN_ATTEMPT_LIMIT) {
+      return Math.max(
+        1,
+        Math.ceil((Math.max(ipBucket.resetAt, usernameBucket.resetAt) - now) / 1000),
+      );
+    }
+    ipBucket.count += 1;
+    usernameBucket.count += 1;
+    return null;
+  }
+}
+
 export interface AuthContext {
   user: UserRecord;
   session: SessionRecord;
   mechanism: AuthMechanism;
+}
+
+export interface AuthServiceOptions {
+  verifyPassword?: PasswordVerifier;
+  now?: () => number;
 }
 
 export function normalizeUsername(username: string): string {
@@ -41,10 +98,15 @@ export class AuthService {
   private readonly csrfTokens = new Map<string, string>();
   public readonly repository: AuthRepository;
   private readonly config: ServerConfig;
+  private readonly verifyPassword: PasswordVerifier;
+  private readonly now: () => number;
+  private readonly loginAttemptLimiter = new LoginAttemptLimiter();
 
-  constructor(repository: AuthRepository, config: ServerConfig) {
+  constructor(repository: AuthRepository, config: ServerConfig, options: AuthServiceOptions = {}) {
     this.repository = repository;
     this.config = config;
+    this.verifyPassword = options.verifyPassword ?? verifyPassword;
+    this.now = options.now ?? (() => Date.now());
   }
 
   async seedInitialAdmin(): Promise<UserRecord> {
@@ -58,15 +120,22 @@ export class AuthService {
     });
   }
 
-  async login(username: string, password: string, clientType: ClientType) {
-    const user = await this.repository.findUserByUsername(normalizeUsername(username));
+  async login(username: string, password: string, clientType: ClientType, ip = 'unknown') {
+    const normalizedUsername = normalizeUsername(username);
+    const retryAfterSeconds = this.loginAttemptLimiter.consume(ip, normalizedUsername, this.now());
+    if (retryAfterSeconds !== null) {
+      throw new TooManyRequestsError(retryAfterSeconds);
+    }
+
+    const user = await this.repository.findUserByUsername(normalizedUsername);
     if (!user || user.deletedAt !== null) {
+      await this.verifyPassword(DUMMY_PASSWORD_HASH, password);
       throw new AuthenticationRequiredError('Invalid credentials');
     }
     if (!user.enabled) {
       throw new ConflictError('Account disabled', 'ACCOUNT_DISABLED');
     }
-    if (!(await verifyPassword(user.passwordHash, password))) {
+    if (!(await this.verifyPassword(user.passwordHash, password))) {
       throw new AuthenticationRequiredError('Invalid credentials');
     }
 
@@ -76,7 +145,7 @@ export class AuthService {
       userId: user.id,
       tokenHash: hashToken(token),
       clientType,
-      expiresAt: new Date(Date.now() + this.config.auth.sessionTtlSeconds * 1000),
+      expiresAt: new Date(this.now() + this.config.auth.sessionTtlSeconds * 1000),
     });
     return {
       user,
