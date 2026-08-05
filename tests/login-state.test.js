@@ -170,6 +170,96 @@ test("service worker 登录态持久化只写 state/maskedAccount/updatedAt，�
   });
 });
 
+test("service worker registers remote-login alarm wakeups", async () => {
+  await withGlobals(async () => {
+    const nativeSetInterval = globalThis.setInterval;
+    const nativeClearInterval = globalThis.clearInterval;
+    const runtimeListeners = { startup: [], installed: [], message: [] };
+    const alarmListeners = [];
+    const alarmCreates = [];
+    const pollFetches = [];
+    const remoteConfig = {
+      serverUrl: "",
+      serverUsername: "",
+      remoteLoginEnabled: false,
+      token: "",
+      expiresAt: 0,
+    };
+    let intervalId = 0;
+    const intervals = new Map();
+    try {
+      globalThis.setInterval = (callback, delay) => {
+        intervalId += 1;
+        intervals.set(intervalId, { callback, delay });
+        return intervalId;
+      };
+      globalThis.clearInterval = (id) => {
+        intervals.delete(id);
+      };
+      globalThis.self = {
+        addEventListener() {},
+        skipWaiting() {},
+        clients: { claim() {} },
+      };
+      globalThis.fetch = async (url) => {
+        pollFetches.push(String(url));
+        return {
+          ok: true,
+          status: 200,
+          async json() { return { command: null }; },
+          async text() { return '{"command":null}'; },
+        };
+      };
+      globalThis.chrome = {
+        runtime: {
+          onStartup: { addListener(listener) { runtimeListeners.startup.push(listener); } },
+          onInstalled: { addListener(listener) { runtimeListeners.installed.push(listener); } },
+          onMessage: { addListener(listener) { runtimeListeners.message.push(listener); } },
+          sendMessage() {},
+        },
+        storage: {
+          local: {
+            get: async () => ({ ...remoteConfig }),
+          },
+          onChanged: { addListener() {} },
+        },
+        alarms: {
+          create(name, alarmInfo) {
+            alarmCreates.push({ name, alarmInfo });
+          },
+          clear() {},
+          onAlarm: { addListener(listener) { alarmListeners.push(listener); } },
+        },
+        tabs: { query: async () => [] },
+      };
+      await import(`../extension/service-worker.js?alarm-test=${importSequence++}`);
+      assert.equal(runtimeListeners.startup.length, 1);
+      assert.equal(runtimeListeners.installed.length, 1);
+      assert.equal(alarmListeners.length, 1);
+
+      runtimeListeners.startup[0]();
+      runtimeListeners.installed[0]();
+      remoteConfig.serverUrl = "https://sync.example.test";
+      remoteConfig.serverUsername = "admin";
+      remoteConfig.remoteLoginEnabled = true;
+      remoteConfig.token = "extension-token";
+      remoteConfig.expiresAt = Date.now() + 60_000;
+      await alarmListeners[0]({ name: "remote-login-poll" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.ok(alarmCreates.some((entry) => (
+        entry.name === "remote-login-poll" && entry.alarmInfo.periodInMinutes === 1
+      )));
+      assert.ok(pollFetches.some((url) => url.endsWith("/api/v1/login-commands?status=pending")));
+      assert.equal(intervals.size, 0);
+    } finally {
+      globalThis.setInterval = nativeSetInterval;
+      globalThis.clearInterval = nativeClearInterval;
+      cleanupGlobals(null, ["self", "chrome", "fetch"]);
+    }
+  });
+});
+
 test("service worker 同步初始化：未配置不启动，配置后启动并建立轮询", async () => {
   await withGlobals(async () => {
     await resetDb();

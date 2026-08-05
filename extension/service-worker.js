@@ -6,6 +6,7 @@ import { createDebuggerDriver } from "./sw/debugger-driver.js";
 import {
   DISABLE_REMOTE_LOGIN,
   ENABLE_REMOTE_LOGIN,
+  REMOTE_LOGIN_ALARM_NAME,
   REMOTE_LOGIN_STATUS_REQUEST,
   createLoginCommandPoller,
 } from "./sw/login-command-poll.js";
@@ -119,15 +120,28 @@ function wakeLoginCommandPoller({ immediate = true } = {}) {
   return loginCommandPoller.start({ immediate }).catch(() => null);
 }
 
+function createLoginCommandAlarm() {
+  loginCommandPoller.ensureAlarm?.();
+}
+
 if (globalThis.chrome?.runtime?.onStartup?.addListener) {
   chrome.runtime.onStartup.addListener(() => {
+    createLoginCommandAlarm();
     wakeLoginCommandPoller({ immediate: true });
   });
 }
 
 if (globalThis.chrome?.runtime?.onInstalled?.addListener) {
   chrome.runtime.onInstalled.addListener(() => {
+    createLoginCommandAlarm();
     wakeLoginCommandPoller({ immediate: true });
+  });
+}
+
+if (globalThis.chrome?.alarms?.onAlarm?.addListener) {
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm?.name !== REMOTE_LOGIN_ALARM_NAME) return;
+    loginCommandPoller.pollOnce().catch(() => {});
   });
 }
 

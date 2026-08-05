@@ -9,6 +9,8 @@ const CONFIG_KEYS = Object.freeze(["serverUrl", "serverUsername", "remoteLoginEn
 const TOKEN_KEYS = Object.freeze(["token", "expiresAt"]);
 const TOKEN_TTL_MS = 8 * 60 * 60 * 1000;
 const POLL_INTERVAL_MS = 3000;
+export const REMOTE_LOGIN_ALARM_NAME = "remote-login-poll";
+export const REMOTE_LOGIN_ALARM_PERIOD_MINUTES = 1;
 const LOGIN_SERVICE_URL = "http://127.0.0.1:8765";
 const COURT_URL_PATTERN = "https://zxfw.court.gov.cn/*";
 const SAFE_CONTENT_CODES = new Set([
@@ -106,6 +108,24 @@ export function createLoginCommandPoller({
   let lastStatus = "stopped";
   let lastReason = null;
 
+  function ensureAlarm() {
+    try {
+      chromeApi?.alarms?.create?.(REMOTE_LOGIN_ALARM_NAME, {
+        periodInMinutes: REMOTE_LOGIN_ALARM_PERIOD_MINUTES,
+      });
+    } catch {
+      // Alarm support is best-effort; the 3s interval still runs while the SW is alive.
+    }
+  }
+
+  function clearAlarm() {
+    try {
+      chromeApi?.alarms?.clear?.(REMOTE_LOGIN_ALARM_NAME);
+    } catch {
+      // Clearing failure should not block token removal or interval cleanup.
+    }
+  }
+
   function clearTimer() {
     if (intervalId == null) return;
     scheduler.clearInterval?.(intervalId);
@@ -114,23 +134,35 @@ export function createLoginCommandPoller({
 
   function setPaused(reason) {
     clearTimer();
+    clearAlarm();
     lastReason = reason;
     lastStatus = reason === "TOKEN_EXPIRED" || reason === "TOKEN_INVALID" ? "token-expired" : "stopped";
   }
 
+  async function clearStoredToken() {
+    if (!chromeApi?.storage?.local) return;
+    if (typeof chromeApi.storage.local.remove === "function") {
+      await chromeApi.storage.local.remove(TOKEN_KEYS);
+    } else {
+      await chromeApi.storage.local.set({ token: undefined, expiresAt: undefined });
+    }
+  }
+
+  async function pauseForInvalidToken() {
+    setPaused("TOKEN_INVALID");
+    await clearStoredToken();
+  }
+
   async function stop({ clearToken = false, disable = false } = {}) {
     clearTimer();
+    clearAlarm();
     lastStatus = "stopped";
     lastReason = null;
     if (!chromeApi?.storage?.local) return { ok: true };
     const writes = {};
     if (disable) writes.remoteLoginEnabled = false;
     if (Object.keys(writes).length) await chromeApi.storage.local.set(writes);
-    if (clearToken && typeof chromeApi.storage.local.remove === "function") {
-      await chromeApi.storage.local.remove(TOKEN_KEYS);
-    } else if (clearToken) {
-      await chromeApi.storage.local.set({ token: undefined, expiresAt: undefined });
-    }
+    if (clearToken) await clearStoredToken();
     return { ok: true };
   }
 
@@ -223,7 +255,7 @@ export function createLoginCommandPoller({
       try {
         body = await clientResult.client.request("/login-commands?status=pending");
       } catch (error) {
-        if (isAuthFailure(error)) setPaused("TOKEN_INVALID");
+        if (isAuthFailure(error)) await pauseForInvalidToken();
         return { ok: false, reason: isAuthFailure(error) ? "TOKEN_INVALID" : "REMOTE_ERROR" };
       }
       const command = commandFromBody(body);
@@ -245,6 +277,7 @@ export function createLoginCommandPoller({
         pollOnce().catch(() => {});
       }, intervalMs);
     }
+    ensureAlarm();
     lastStatus = "running";
     lastReason = null;
     if (immediate) return pollOnce();
@@ -323,6 +356,8 @@ export function createLoginCommandPoller({
     enable,
     pollOnce,
     getStatus,
+    ensureAlarm,
+    clearAlarm,
     isRunning: () => intervalId != null,
     isInFlight: () => inFlight,
   };

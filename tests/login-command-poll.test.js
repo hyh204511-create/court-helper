@@ -52,6 +52,8 @@ function makeChrome({
     messages: [],
     storageSet: [],
     storageRemove: [],
+    alarmsCreate: [],
+    alarmsClear: [],
   };
   return {
     calls,
@@ -87,6 +89,15 @@ function makeChrome({
         if (message?.type === "PING") return pingResponse;
         if (message?.type === "AUTO_LOGIN") return autoLoginResponse;
         return undefined;
+      },
+    },
+    alarms: {
+      create(name, alarmInfo) {
+        calls.alarmsCreate.push({ name, alarmInfo });
+      },
+      clear(name) {
+        calls.alarmsClear.push(name);
+        return Promise.resolve(true);
       },
     },
   };
@@ -234,12 +245,43 @@ test("disable clears token and stops interval", async () => {
   const { poller, chromeApi, scheduler } = createPollerForTest();
   await poller.start({ immediate: false });
   assert.equal(scheduler.intervals.size, 1);
+  assert.deepEqual(chromeApi.calls.alarmsCreate, [
+    { name: "remote-login-poll", alarmInfo: { periodInMinutes: 1 } },
+  ]);
   const result = await poller.disable();
   assert.deepEqual(result, { ok: true });
   assert.equal(chromeApi.data.remoteLoginEnabled, false);
   assert.equal(chromeApi.data.token, undefined);
   assert.equal(chromeApi.data.expiresAt, undefined);
   assert.equal(scheduler.intervals.size, 0);
+  assert.deepEqual(chromeApi.calls.alarmsClear, ["remote-login-poll"]);
+});
+
+test("auth failure clears stored token, stops interval, and clears fallback alarm", async () => {
+  const chromeApi = makeChrome();
+  const fetchImpl = async (url) => {
+    if (url === `${BASE_URL}/api/v1/login-commands?status=pending`) {
+      return jsonResponse({ error: { code: "AUTH_REQUIRED" } }, false, 401);
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  fetchImpl.calls = [];
+  const scheduler = makeScheduler();
+  const poller = createLoginCommandPoller({
+    chromeApi,
+    fetchImpl,
+    scheduler,
+    now: () => 10_000,
+  });
+  await poller.start({ immediate: false });
+  assert.equal(scheduler.intervals.size, 1);
+  const result = await poller.pollOnce();
+  assert.deepEqual(result, { ok: false, reason: "TOKEN_INVALID" });
+  assert.equal(chromeApi.data.token, undefined);
+  assert.equal(chromeApi.data.expiresAt, undefined);
+  assert.equal(scheduler.intervals.size, 0);
+  assert.deepEqual(chromeApi.calls.storageRemove, [["token", "expiresAt"]]);
+  assert.deepEqual(chromeApi.calls.alarmsClear, ["remote-login-poll"]);
 });
 
 test("enable logs in with server password, stores only token TTL, and starts polling", async () => {
@@ -259,6 +301,7 @@ test("enable logs in with server password, stores only token TTL, and starts pol
   assert.equal(chromeApi.data.token, TOKEN);
   assert.equal(chromeApi.data.expiresAt, FUTURE);
   assert.equal(scheduler.intervals.size, 1);
+  assert.ok(chromeApi.calls.alarmsCreate.some((entry) => entry.name === "remote-login-poll"));
   assert.deepEqual(parseBody(fetchImpl.calls[0]), {
     username: "worker",
     password: "server-pass",
