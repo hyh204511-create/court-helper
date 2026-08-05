@@ -1,0 +1,14 @@
+node_modules
+dist
+**/node_modules
+**/dist
+tests
+**/tests
+coverage
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.log
+deploy/certs

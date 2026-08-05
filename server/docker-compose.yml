@@ -1,0 +1,76 @@
+services:
+  app:
+    build:
+      # Keep server/.dockerignore active while using the repository root for
+      # package.json, package-lock.json, source, and migrations.
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        project: ..
+    env_file:
+      - .env
+    environment:
+      PORT: "${PORT:-3000}"
+      DATABASE_URL: "${DATABASE_URL:?Set DATABASE_URL in server/.env}"
+      CREDENTIAL_MASTER_KEY: "${CREDENTIAL_MASTER_KEY:?Set CREDENTIAL_MASTER_KEY in server/.env}"
+      ADMIN_INITIAL_PASSWORD: "${ADMIN_INITIAL_PASSWORD:?Set ADMIN_INITIAL_PASSWORD in server/.env}"
+      CORS_EXTENSION_ORIGINS: "${CORS_EXTENSION_ORIGINS:?Set CORS_EXTENSION_ORIGINS in server/.env}"
+      CORS_ADMIN_ORIGINS: "${CORS_ADMIN_ORIGINS:-}"
+      OBJECT_STORAGE_ENDPOINT: "${OBJECT_STORAGE_ENDPOINT:?Set OBJECT_STORAGE_ENDPOINT in server/.env}"
+      OBJECT_STORAGE_BUCKET: "${OBJECT_STORAGE_BUCKET:?Set OBJECT_STORAGE_BUCKET in server/.env}"
+      OBJECT_STORAGE_ACCESS_KEY_ID: "${OBJECT_STORAGE_ACCESS_KEY_ID:-}"
+      OBJECT_STORAGE_ACCESS_KEY_SECRET: "${OBJECT_STORAGE_ACCESS_KEY_SECRET:-}"
+      SESSION_TTL_SECONDS: "${SESSION_TTL_SECONDS:-28800}"
+    command: ["npm", "run", "server:start"]
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    # main.ts listens on 127.0.0.1 inside this namespace. These host ports are
+    # therefore published here for the optional nginx service below, which
+    # shares this network namespace.
+    ports:
+      - "80:80"
+      - "443:443"
+    expose:
+      - "3000"
+    volumes:
+      # The app currently logs to stdout/stderr; this mount is a writable
+      # location for a future file logger or a local log collector.
+      - app-logs:/var/log/court-helper
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+
+  nginx:
+    # Enable with: docker compose --profile tls up -d
+    profiles: ["tls"]
+    image: nginx:1.27-alpine
+    depends_on:
+      app:
+        condition: service_healthy
+    # This is required because the application currently binds to
+    # 127.0.0.1 rather than 0.0.0.0. The app service owns the 80/443 port
+    # publishing above; nginx listens on those ports in the shared namespace.
+    network_mode: service:app
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./deploy/nginx.conf.example:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+      - nginx-logs:/var/log/nginx
+
+volumes:
+  app-logs:
+  nginx-logs:
