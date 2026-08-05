@@ -1,9 +1,10 @@
 # 规格：login-module（登录状态、账号识别与自动登录）
 
-> 版本：0.4 ｜ 状态：实现中 ｜ 依据：计划 §Phase 2、需求确认（2026-08-04 用户拍板「升级规则：全面自动登录」）、Phase 9 服务器上线（2026-08-05 用户拍板「自动登录凭据从服务器取」）
+> 版本：0.5 ｜ 状态：实现中 ｜ 依据：计划 §Phase 2、需求确认（2026-08-04 用户拍板「升级规则：全面自动登录」）、Phase 9 服务器上线（2026-08-05 用户拍板「自动登录凭据从服务器取」）、真实会话验收（2026-08-05 实测）
 > v0.2 变更：登录全人工 → 登录自动化（可选）；新增自动登录范围、本地服务、验证码识别流程。
 > v0.3 变更：**自动登录凭据来源改为服务器**（`GET /platform-accounts` 列表 + `POST /platform-accounts/:id/credential` 取明文）；验证码 OCR 仍走本地 8765 服务（ddddocr）；本地 `accounts.txt` 降级为可选回退。
 > v0.4 变更：**本地服务支持 `--port` 参数**（默认 8765，测试用独立随机端口避免与既有实例冲突）；补充测试环境隔离说明（8765 残留实例历史坑）。
+> v0.5 变更：**真实输入驱动**——2026-08-05 真实会话实测确认：平台（uni-app H5）**只响应 `isTrusted=true` 的真实用户事件**，JS 合成 `click()`（isTrusted=false）被静默忽略 → 自动登录「点登录按钮」「点击验证码刷新」均不触发（表单可填、提交不执行）。修复：扩展经 **`chrome.debugger` API** 向平台页注入**真实输入事件**（`Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`），由 service worker 统一驱动；debugger 不可用时回退「待人工」。
 
 ## 1. 目标
 
@@ -20,7 +21,7 @@
 | 登录成功检测 | hash 离开 login 且 出现用户区标志元素 → 判定已登录，通知 popup 解锁查询功能 |
 | 当前账号识别 | 从页面用户区读取当前登录账号文本（脱敏处理），与模板「账号」列（C 列）匹配 |
 | 会话失效检测 | 平台接口返回 401/会话过期，或页面被跳回 login 路由 → 批量任务暂停，popup 提示 |
-| 自动登录 | 登录页路由 + 密码登录方式下：填账号/密码 → 读验证码图（dataURL）→ 本地服务 OCR → 填验证码 → 点「登录」→ 等待结果；**凭据来自服务器平台账号**（`GET /platform-accounts` → 选择 → `POST /platform-accounts/:id/credential` 取明文，仅 extension 会话可调） |
+| 自动登录 | 登录页路由 + 密码登录方式下：填账号/密码 → 读验证码图（dataURL）→ 本地服务 OCR → 填验证码 → **真实点击「登录」（chrome.debugger 注入 isTrusted 事件）**→ 等待结果；**凭据来自服务器平台账号**（`GET /platform-accounts` → 选择 → `POST /platform-accounts/:id/credential` 取明文，仅 extension 会话可调） |
 | 验证码识别 | 本地服务 `POST /ocr` 调 ddddocr（可选依赖）；失败/识别失败 → 刷新验证码重试 1 次 → 仍败标记待人工 |
 | 多账号管理 | `accounts.txt`（gitignore）每行 `账号 密码`（首个空白分割，密码可含空格；`#` 注释行跳过）；popup 账号下拉切换登录；平台为单会话，不做并行登录 |
 | 一键抓取 | 登录成功后平台默认跳 `#/pagesWsla/pc/list/index`（已确认）→ popup「一键抓取」= 对当前账号发起 START_BATCH（立案） |
@@ -63,10 +64,24 @@ popup「一键登录」→ 读取服务器配置（地址/账号，chrome.storag
 → 确保「密码登录」方式（必要时点 passwordTab）
 → 填账号/密码
 → 验证码：读 captchaImage.src（dataURL）→ base64 → POST http://127.0.0.1:8765/ocr（本地 OCR 不变）
-→ 填验证码 → 点「登录」
+→ 填验证码 → **真实点击「登录」**（见 §5.1 debugger 驱动）
 → 等待结果（≤8s）：hash 离开 login 或用户区出现 → 成功
-→ 停留 login 路由 → 失败 → 点击验证码图刷新 → 重试 1 次 → 仍败 → 报「登录失败，待人工处理」
+→ 停留 login 路由 → 失败 → **真实点击验证码图刷新**（见 §5.1）→ 重试 1 次 → 仍败 → 报「登录失败，待人工处理」
 ```
+
+### 5.1 真实输入驱动（v0.5 新增，chrome.debugger）
+
+- **背景（真实会话实测 2026-08-05）**：平台 uni-app H5 只响应 `isTrusted=true` 的真实用户事件；`Element.click()` 合成事件（isTrusted=false）被平台静默忽略——表单可填（v-model 响应 input 事件）但「登录」「刷新验证码」点击均不触发。
+- **机制**：content script 无法产生 trusted 事件 → 由 **service worker 经 `chrome.debugger`** 向平台页注入真实输入：
+  1. content 计算目标元素中心坐标（`getBoundingClientRect`，CSS 像素），随 `CLICK_REQUEST {tabId, x, y}` 消息发给 SW；
+  2. SW 若未 attach 该 tab 则 `chrome.debugger.attach({tabId}, "1.3")`（attach 一次，自动登录结束 detach）；
+  3. `chrome.debugger.sendCommand({tabId}, "Input.dispatchMouseEvent", {type: "mousePressed", x, y, button: "left", clickCount: 1})` + `mouseReleased`（真实事件，isTrusted=true）；
+  4. 回执 `{ok}` → content 继续流程。
+- **适用范围**：仅「登录按钮」「验证码刷新」两处必须真实点击；填表仍用 content 内 input 事件（已实测有效）。
+- **键盘替代**：密码框 `Input.dispatchKeyEvent`（Enter）可作登录按钮点击的补充尝试，但**不替代**按钮真实点击（uni-app 对 Enter 提交无保证）。
+- **权限**：manifest 新增 `"debugger"` 权限；`chrome.debugger` 仅用于法院平台 tab，自动登录结束即 detach（不留驻）。
+- **失败回退**：`attach` 失败 / sendCommand 报错 / 无 tab → 返回「待人工」（提示用户手动操作），**不做**合成点击兜底（对平台无效且掩盖问题）。
+- **坐标注意**：页面有缩放（devicePixelRatio≠1）时 getBoundingClientRect 已是 CSS 像素，CDP Input 坐标同用 CSS 像素，无需换算（已实测一致）。
 
 - 服务器不可达（登录/列表/取凭据失败）→ popup 提示服务器连接信息，不进入自动登录。
 - 凭据明文只在内存流转：服务器响应 → popup → AUTO_LOGIN 消息 → content 填表，任何环节不写 storage。
@@ -92,6 +107,7 @@ content script（平台页，document_start 注入）
   → service worker 汇总 → chrome.storage.local 更新
   → popup 查询显示「未登录 / 已登录(账号xxx)」
 popup「一键登录」→ AUTO_LOGIN {account, password, serviceUrl} → content 执行自动登录
+content 需真实点击（登录按钮/验证码刷新）→ CLICK_REQUEST {tabId, x, y} → SW 经 chrome.debugger 注入 → 回执
 popup「一键抓取」→ START_BATCH（列表页）→ 批量执行器（app-module）
 批量任务执行器（app-module）在收到会话失效事件时暂停队列。
 ```
@@ -104,7 +120,9 @@ popup「一键抓取」→ START_BATCH（列表页）→ 批量执行器（app-m
   - `tests/login-auto.test.js`（jsdom mock 登录页：2×text input + 1×password input + img[dataURL] + 「登录」view）：
     - `fillLoginForm` 按类型/次序填充正确；
     - `fetchCaptchaBase64` 从 dataURL img 提取 base64；
-    - `doAutoLogin` 全流程（mock fetch /ocr）：成功路径、失败重试 1 次路径、服务不可达路径。
+    - `doAutoLogin` 全流程（mock fetch /ocr + mock CLICK_REQUEST）：成功路径、失败重试 1 次路径、服务不可达路径。
+  - **v0.5 新增** `tests/debugger-driver.test.js`（mock chrome.debugger）：attach/detach 生命周期（登录结束必 detach）、mousePressed+mouseReleased 双命令顺序、坐标透传、attach 失败 → 回执「待人工」、非法院 tab 拒绝 attach。
+  - content 端坐标计算单测：`getBoundingClientRect` 中心点取整、元素不可见/无 rect → 报「待人工」。
   - `tests/login-helper-server.test.js`（node 子进程 spawn python + 临时 fixture）：/health、/accounts 解析、/ocr 无 ddddocr → DDDDOCR_MISSING。
 - 真实联调（验收闸门）：用户真实登录页复核自动登录链路与选择器，结果只写脱敏摘要。
 - 测试环境隔离（历史坑 2026-08-05）：`withServer` 必须用独立随机端口起子进程（`--port <n>`），**不得依赖 8765 空闲**——本机曾存在未杀干净的残留服务实例（`SO_REUSEADDR` 允许多进程同端口监听），测试请求被旧实例抢答导致间歇性失败（`/accounts` 空数组、`/ocr` 错误码漂移为 OCR_FAILED）；跑测试前若怀疑残留，先 `netstat -ano | grep 8765` 清理。`stopServer` 需强杀兜底（kill 后确认退出，超时 taskkill /F）。
@@ -114,6 +132,7 @@ popup「一键抓取」→ START_BATCH（列表页）→ 批量执行器（app-m
 1. 未登录时 popup 显示引导提示，查询/批量按钮禁用。
 2. 手动登录后 popup 自动解锁并显示脱敏账号（如 `3503****52X`）。
 3. 会话失效时批量任务暂停、popup 提示。
-4. 自动登录：服务在线 + accounts.txt 有账号 → 一键登录成功（真实会话复核）；失败重试 1 次后明确提示待人工。
+4. 自动登录：服务在线 + 服务器平台账号有凭据 → 一键登录成功（真实会话复核）；失败重试 1 次后明确提示待人工。
 5. 登录成功后一键抓取可在列表页启动批量查询。
 6. 全程无凭据写入 chrome.storage、日志或 git；accounts.txt 在 .gitignore。
+7. （v0.5）真实会话：自动登录的「点登录」「刷新验证码」由 chrome.debugger 注入真实事件（isTrusted=true）触发；扩展结束自动登录后 debugger 已 detach（扩展管理页无「正在调试」残留提示）。
