@@ -33,6 +33,15 @@ export class MemoryLoginCommandRepository implements LoginCommandRepository {
 
   async create(input: NewLoginCommand): Promise<LoginCommandRecord> {
     const now = new Date();
+    const duplicate = [...this.commands.values()].find((candidate) => (
+      candidate.platformAccountId === input.platformAccountId
+      && ['pending', 'executing'].includes(candidate.status)
+    ));
+    if (duplicate) {
+      const error = new Error('duplicate active login command') as Error & { code: string };
+      error.code = '23505';
+      throw error;
+    }
     const command: LoginCommandRecord = {
       id: input.id ?? randomUUID(),
       platformAccountId: input.platformAccountId,
@@ -111,16 +120,14 @@ export class MemoryLoginCommandRepository implements LoginCommandRepository {
     return count;
   }
 
-  async rollbackExpiredLeases(before: Date, pendingExpiresAt: Date): Promise<number> {
+  async rollbackExpiredLeases(before: Date, now: Date): Promise<number> {
     let count = 0;
     const beforeTime = before.getTime();
-    const updatedAt = new Date(pendingExpiresAt.getTime() - 5 * 60 * 1000);
     for (const command of this.commands.values()) {
       if (command.status === 'executing' && command.updatedAt.getTime() < beforeTime) {
         command.status = 'pending';
         command.claimedBy = null;
-        command.updatedAt = updatedAt;
-        command.expiresAt = new Date(pendingExpiresAt);
+        command.updatedAt = new Date(now);
         count += 1;
       }
     }

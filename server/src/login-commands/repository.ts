@@ -151,17 +151,15 @@ export class PgLoginCommandRepository implements LoginCommandRepository {
     return Number(result.rowCount ?? 0);
   }
 
-  async rollbackExpiredLeases(before: Date, pendingExpiresAt: Date): Promise<number> {
-    const updatedAt = new Date(pendingExpiresAt.getTime() - 5 * 60 * 1000);
+  async rollbackExpiredLeases(before: Date, now: Date): Promise<number> {
     const result = await this.database.query(`
       UPDATE login_commands
       SET status = 'pending',
           claimed_by = NULL,
-          updated_at = $3,
-          expires_at = $2
+          updated_at = $2
       WHERE status = 'executing'
         AND updated_at < $1
-    `, [before, pendingExpiresAt, updatedAt]);
+    `, [before, now]);
     return Number(result.rowCount ?? 0);
   }
 

@@ -45,6 +45,6 @@ export interface LoginCommandRepository {
   claimNext(claimedBy: string, now: Date, leaseExpiresAt: Date): Promise<LoginCommandRecord | null>;
   complete(id: string, claimedBy: string, completion: Required<LoginCommandCompletion>): Promise<LoginCommandRecord | null>;
   expireStale(now: Date): Promise<number>;
-  rollbackExpiredLeases(before: Date, pendingExpiresAt: Date): Promise<number>;
+  rollbackExpiredLeases(before: Date, now: Date): Promise<number>;
   listAdmin(limit: number): Promise<LoginCommandListItem[]>;
 }

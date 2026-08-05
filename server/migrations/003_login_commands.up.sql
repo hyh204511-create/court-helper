@@ -13,3 +13,7 @@ CREATE TABLE IF NOT EXISTS login_commands (
 
 CREATE INDEX IF NOT EXISTS login_commands_status_idx
   ON login_commands (status, created_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS login_commands_active_account_uidx
+  ON login_commands (platform_account_id)
+  WHERE status IN ('pending','executing');

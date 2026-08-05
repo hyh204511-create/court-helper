@@ -156,6 +156,9 @@ test('login command service creates, deduplicates, claims atomically, expires, r
   const success = await service.complete(first.id, 'device-a', { ok: true });
   assert.equal(success.status, 'success');
   assert.equal(success.resultCode, null);
+  const retriedSuccess = await service.complete(first.id, 'device-a', { ok: true });
+  assert.equal(retriedSuccess.status, 'success');
+  assert.equal(retriedSuccess.id, first.id);
 
   const failed = await service.create(ACCOUNT_ID, ADMIN_ID);
   const claimedFailed = await service.claimNext('device-a');
@@ -168,19 +171,45 @@ test('login command service creates, deduplicates, claims atomically, expires, r
   assert.equal(completedFailed.status, 'failed');
   assert.equal(completedFailed.resultCode, 'FORM_NOT_READY');
   assert.equal(completedFailed.resultMessage.length, 200);
+  const retriedFailed = await service.complete(failed.id, 'device-a', {
+    ok: false,
+    code: 'NO_TAB',
+    message: 'second write',
+  });
+  assert.equal(retriedFailed.status, 'failed');
+  assert.equal(retriedFailed.resultCode, 'FORM_NOT_READY');
 
   const leased = await service.create(ACCOUNT_ID, ADMIN_ID);
   const leasedClaim = await service.claimNext('device-a');
   assert.equal(leasedClaim.id, leased.id);
+  assert.equal(leasedClaim.expiresAt.toISOString(), '2026-08-05T10:01:00.000Z');
   now = new Date('2026-08-05T10:01:01.000Z');
-  const reclaimed = await service.claimNext('device-b');
-  assert.equal(reclaimed.id, leased.id);
-  await service.complete(reclaimed.id, 'device-b', { ok: true });
+  assert.equal(await service.claimNext('device-b'), null);
+  assert.equal((await service.get(leased.id)).status, 'expired');
 
   const expiring = await service.create(randomUUID(), ADMIN_ID);
   now = new Date('2026-08-05T10:06:10.000Z');
   assert.equal(await service.claimNext('device-c'), null);
   assert.equal((await service.get(expiring.id)).status, 'expired');
+});
+
+test('memory repository simulates concurrent duplicate create with one pending command and one 409', async () => {
+  // The in-memory repository is the available concurrency harness for this service-level race.
+  const repository = new MemoryLoginCommandRepository(new MemoryPlatformAccountRepository([accountRecord()]));
+  const service = new LoginCommandService(repository, {
+    now: () => new Date('2026-08-05T10:00:00.000Z'),
+  });
+
+  const results = await Promise.allSettled([
+    service.create(ACCOUNT_ID, ADMIN_ID),
+    service.create(ACCOUNT_ID, ADMIN_ID),
+  ]);
+  const fulfilled = results.filter((result) => result.status === 'fulfilled');
+  const rejected = results.filter((result) => result.status === 'rejected');
+  assert.equal(fulfilled.length, 1);
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].reason.code, 'DUPLICATE_PENDING');
+  assert.equal(rejected[0].reason.statusCode, 409);
 });
 
 test('login command routes enforce admin and extension permissions, CSRF, duplicate conflicts, and claimed_by ownership', async () => {
@@ -258,6 +287,15 @@ test('login command routes enforce admin and extension permissions, CSRF, duplic
     assert.equal(result.statusCode, 200);
     assert.equal(result.json().status, 'success');
 
+    const retriedResult = await app.inject({
+      method: 'POST',
+      url: `/api/v1/login-commands/${created.json().id}/result`,
+      headers: { authorization: `Bearer ${extensionToken}` },
+      payload: { ok: true },
+    });
+    assert.equal(retriedResult.statusCode, 200);
+    assert.equal(retriedResult.json().status, 'success');
+
     const list = await app.inject({
       method: 'GET',
       url: '/api/v1/login-commands?limit=100',
@@ -316,6 +354,57 @@ test('postgres login command repository persists the queue and lists account lab
     assert.equal(list[0].accountLabel, 'pg-primary');
     assert.equal(list[0].status, 'failed');
     assert.equal(list[0].resultCode, 'NO_TAB');
+  } finally {
+    await pool.end();
+  }
+});
+
+test('postgres login command repository enforces duplicate creates and single claimant through pg adapter', async () => {
+  const db = newDb({ autoCreateForeignKeyIndices: true });
+  const pg = db.adapters.createPg();
+  const pool = new pg.Pool();
+
+  try {
+    await runMigrations(pool);
+    await pool.query(`
+      INSERT INTO users (id, username, password_hash, role)
+      VALUES ($1, 'admin', 'hash', 'admin')
+    `, [ADMIN_ID]);
+    await pool.query(`
+      INSERT INTO platform_accounts
+        (id, label, secret_ciphertext, secret_iv, secret_tag, created_by)
+      VALUES ($1, 'pg-primary', $2, $3, $4, $5)
+    `, [
+      ACCOUNT_ID,
+      Buffer.from('cipher'),
+      Buffer.alloc(12, 1),
+      Buffer.alloc(16, 2),
+      ADMIN_ID,
+    ]);
+
+    const repository = new PgLoginCommandRepository(pool);
+    const service = new LoginCommandService(repository, {
+      now: () => new Date('2026-08-05T10:00:00.000Z'),
+    });
+    const createResults = await Promise.allSettled([
+      service.create(ACCOUNT_ID, ADMIN_ID),
+      service.create(ACCOUNT_ID, ADMIN_ID),
+    ]);
+    assert.equal(createResults.filter((result) => result.status === 'fulfilled').length, 1);
+    const duplicate = createResults.find((result) => result.status === 'rejected');
+    assert.equal(duplicate.reason.code, 'DUPLICATE_PENDING');
+
+    const rows = await pool.query('SELECT id FROM login_commands WHERE platform_account_id = $1', [ACCOUNT_ID]);
+    assert.equal(rows.rows.length, 1);
+
+    const claimNow = new Date('2026-08-05T10:00:01.000Z');
+    const claimResults = await Promise.all([
+      repository.claimNext('device-a', claimNow, new Date(claimNow.getTime() + 60 * 1000)),
+      repository.claimNext('device-b', claimNow, new Date(claimNow.getTime() + 60 * 1000)),
+    ]);
+    const claims = claimResults.filter(Boolean);
+    assert.equal(claims.length, 1);
+    assert.equal(await repository.claimNext('device-c', claimNow, new Date(claimNow.getTime() + 60 * 1000)), null);
   } finally {
     await pool.end();
   }
@@ -380,6 +469,27 @@ test('003 login command migration has reversible table, constraints, and indexes
         'bad-status',
         '00000000-0000-0000-0000-000000000001',
         now()
+      )
+    `));
+
+    await pool.query(`
+      INSERT INTO login_commands (id, platform_account_id, status, created_by, expires_at)
+      VALUES (
+        '00000000-0000-0000-0000-000000000301',
+        '00000000-0000-0000-0000-000000000010',
+        'pending',
+        '00000000-0000-0000-0000-000000000001',
+        now() + interval '5 minutes'
+      )
+    `);
+    await assert.rejects(pool.query(`
+      INSERT INTO login_commands (id, platform_account_id, status, created_by, expires_at)
+      VALUES (
+        '00000000-0000-0000-0000-000000000302',
+        '00000000-0000-0000-0000-000000000010',
+        'executing',
+        '00000000-0000-0000-0000-000000000001',
+        now() + interval '1 minute'
       )
     `));
 

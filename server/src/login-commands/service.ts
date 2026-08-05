@@ -69,6 +69,14 @@ function normalizeCompletion(input: LoginCommandCompletion): Required<LoginComma
   return { ok: false, code, message };
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return (error as { code?: string })?.code === '23505';
+}
+
+function isTerminalStatus(status: LoginCommandRecord['status']): boolean {
+  return status === 'success' || status === 'failed';
+}
+
 export class LoginCommandService {
   public readonly repository: LoginCommandRepository;
   private readonly now: () => Date;
@@ -87,30 +95,37 @@ export class LoginCommandService {
   async create(platformAccountId: string, createdBy: string): Promise<LoginCommandRecord> {
     assertUuid(platformAccountId, 'platformAccountId');
     const now = this.now();
-    await this.repository.expireStale(now);
     await this.repository.rollbackExpiredLeases(
       new Date(now.getTime() - LEASE_TTL_MS),
-      new Date(now.getTime() + PENDING_TTL_MS),
+      now,
     );
+    await this.repository.expireStale(now);
     const duplicate = await this.repository.findActiveForAccount(platformAccountId, now);
     if (duplicate) {
       throw new ConflictError('Login command already pending', 'DUPLICATE_PENDING');
     }
-    return this.repository.create({
-      platformAccountId,
-      createdBy,
-      expiresAt: new Date(now.getTime() + PENDING_TTL_MS),
-    });
+    try {
+      return await this.repository.create({
+        platformAccountId,
+        createdBy,
+        expiresAt: new Date(now.getTime() + PENDING_TTL_MS),
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictError('Login command already pending', 'DUPLICATE_PENDING');
+      }
+      throw error;
+    }
   }
 
   async claimNext(claimedBy: string): Promise<LoginCommandRecord | null> {
     if (claimedBy.trim() === '') throw new ValidationError([{ field: 'claimedBy', code: 'required' }]);
     const now = this.now();
-    await this.repository.expireStale(now);
     await this.repository.rollbackExpiredLeases(
       new Date(now.getTime() - LEASE_TTL_MS),
-      new Date(now.getTime() + PENDING_TTL_MS),
+      now,
     );
+    await this.repository.expireStale(now);
     return this.repository.claimNext(claimedBy, now, new Date(now.getTime() + LEASE_TTL_MS));
   }
 
@@ -125,6 +140,7 @@ export class LoginCommandService {
     if (completed) return completed;
     const current = await this.repository.get(id);
     if (!current) throw new NotFoundError('Login command not found');
+    if (current.claimedBy === claimedBy && isTerminalStatus(current.status)) return current;
     throw new ForbiddenError('Login command claimed by another session');
   }
 
