@@ -107,6 +107,22 @@ export function handleLoginState(state, account = null, options = {}) {
 }
 
 /** 按账号聚合待处理分组（进度区展示，账号脱敏在面板内做） */
+function sendSyncMessage(message) {
+  const sender = globalThis.chrome?.runtime?.sendMessage;
+  if (typeof sender !== "function") return Promise.resolve(undefined);
+  try {
+    return Promise.resolve(sender(message)).catch(() => undefined);
+  } catch {
+    return Promise.resolve(undefined);
+  }
+}
+
+function requestSyncStatus() {
+  sendSyncMessage({ type: "SYNC_STATUS_REQUEST" }).then((response) => {
+    if (response?.type === "SYNC_STATUS") _panel?.setSyncStatus(response.payload);
+  });
+}
+
 function groupByAccount(records) {
   const map = new Map();
   for (const r of records) {
@@ -280,6 +296,9 @@ function initPanel() {
   _panel = createCourtPanel({
     document,
     handlers: {
+      onSyncRetry: () => {
+        sendSyncMessage({ type: "SYNC_RETRY" });
+      },
       onImport: () => {
         const input = document.createElement("input");
         input.type = "file";
@@ -309,6 +328,7 @@ function initPanel() {
     },
   });
   _panel.setReady(true);
+  requestSyncStatus();
   refreshPanelLogin();
   observePanelLogin();
   // 平台是 SPA：hash 变化时刷新登录状态
@@ -516,6 +536,10 @@ async function startBatch(kind) {
 
 // —— 消息监听 ——
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === "SYNC_STATUS") {
+    _panel?.setSyncStatus(msg.payload);
+    return false;
+  }
   if (msg?.type === "AUTO_LOGIN") {
     // 路由门禁必须先于凭据读取和任何表单 DOM 操作。
     if (!isLoginRoute(location.hash)) {

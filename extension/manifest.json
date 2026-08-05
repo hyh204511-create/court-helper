@@ -10,7 +10,8 @@
   ],
   "host_permissions": [
     "https://zxfw.court.gov.cn/*",
-    "http://127.0.0.1:8765/*"
+    "http://127.0.0.1:8765/*",
+    "http://127.0.0.1:3000/*"
   ],
   "background": {
     "service_worker": "service-worker.js",

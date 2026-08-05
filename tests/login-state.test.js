@@ -1,8 +1,11 @@
+import "fake-indexeddb/auto";
+
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 
 import { createLoginStateMessage, maskAccount } from "../extension/content/login-detector.js";
+import { resetDb } from "../extension/data/db.js";
 
 let importSequence = 0;
 let globalsQueue = Promise.resolve();
@@ -22,6 +25,24 @@ async function withGlobals(callback) {
 function cleanupGlobals(dom, names) {
   dom?.window.close();
   for (const name of names) delete globalThis[name];
+}
+
+function makeScheduler() {
+  let nextId = 1;
+  const timers = new Map();
+  return {
+    setTimeout(callback, delay) {
+      const id = nextId++;
+      timers.set(id, { callback, delay });
+      return id;
+    },
+    clearTimeout(id) {
+      timers.delete(id);
+    },
+    pending() {
+      return [...timers.values()];
+    },
+  };
 }
 
 test("maskAccount 保留可辨识片段但不返回完整账号", () => {
@@ -146,5 +167,90 @@ test("service worker 登录态持久化只写 state/maskedAccount/updatedAt，�
     assert.equal(storageWrites.length, 1);
     assert.ok(selfListeners.some(({ type }) => type === "install"));
     cleanupGlobals(null, ["self", "chrome"]);
+  });
+});
+
+test("service worker 同步初始化：未配置不启动，配置后启动并建立轮询", async () => {
+  await withGlobals(async () => {
+    await resetDb();
+    const nativeSetTimeout = globalThis.setTimeout;
+    const nativeClearTimeout = globalThis.clearTimeout;
+    try {
+      const selfListeners = [];
+      let fetchCalls = 0;
+      globalThis.self = {
+        addEventListener(type, listener) {
+          selfListeners.push({ type, listener });
+        },
+        skipWaiting() {},
+        clients: { claim() {} },
+      };
+      globalThis.fetch = async () => {
+        fetchCalls += 1;
+        throw new Error("should not fetch without sync config");
+      };
+      globalThis.chrome = {
+        runtime: {
+          onMessage: { addListener() {} },
+          sendMessage() {},
+        },
+        storage: { local: { get: async () => ({}) } },
+      };
+      const unconfigured = await import(`../extension/service-worker.js?sync-init-test=${importSequence++}`);
+      await unconfigured.syncInitialization;
+      assert.equal(unconfigured.getSyncCoordinator(), null);
+      assert.equal(fetchCalls, 0);
+
+      await resetDb();
+      const scheduler = makeScheduler();
+      const states = [];
+      fetchCalls = 0;
+      globalThis.setTimeout = scheduler.setTimeout;
+      globalThis.clearTimeout = scheduler.clearTimeout;
+      globalThis.fetch = async (url) => {
+        fetchCalls += 1;
+        const body = url.endsWith("/health")
+          ? { ok: true }
+          : url.includes("/platform-accounts")
+            ? { platformAccounts: [] }
+            : { cases: [], nextCursor: 0 };
+        return {
+          ok: true,
+          status: 200,
+          async json() { return body; },
+          async text() { return JSON.stringify(body); },
+        };
+      };
+      globalThis.chrome = {
+        runtime: {
+          onMessage: { addListener() {} },
+          sendMessage(message) {
+            states.push(message);
+            return Promise.resolve();
+          },
+        },
+        storage: {
+          local: {
+            get: async () => ({
+              syncServerUrl: "http://127.0.0.1:3000",
+              syncDeviceToken: "opaque-device-token",
+            }),
+          },
+        },
+      };
+      const configured = await import(`../extension/service-worker.js?sync-init-test=${importSequence++}`);
+      await configured.syncInitialization;
+      assert.ok(configured.getSyncCoordinator());
+      assert.ok(fetchCalls >= 3, "configured coordinator should run health/accounts/changes");
+      assert.ok(states.some((message) => message.type === "SYNC_STATUS" && message.payload.status === "online"));
+      assert.ok(scheduler.pending().some((timer) => timer.delay === 4000), "configured coordinator should poll");
+      configured.getSyncCoordinator().stop();
+      assert.deepEqual(scheduler.pending(), []);
+      assert.ok(selfListeners.some(({ type }) => type === "install"));
+    } finally {
+      globalThis.setTimeout = nativeSetTimeout;
+      globalThis.clearTimeout = nativeClearTimeout;
+      cleanupGlobals(null, ["self", "chrome", "fetch"]);
+    }
   });
 });
