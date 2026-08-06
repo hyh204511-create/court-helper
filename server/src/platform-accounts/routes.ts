@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import type { ServerConfig } from '../config.ts';
 import { ConflictError, ForbiddenError, ValidationError } from '../errors.ts';
@@ -64,7 +64,18 @@ export function registerPlatformAccountRoutes(
   const { authService, config, prefix, service } = options;
   const protectedPreHandler = async (request: FastifyRequest) => authenticateRequest(request, authService);
   const adminPreHandler = async (request: FastifyRequest) => requireAdmin(request, authService);
-  const credentialViewPreHandler = async (request: FastifyRequest) => authenticateRequest(request, authService);
+  const credentialViewPreHandler = async (request: FastifyRequest, reply: FastifyReply) => {
+    reply.header('Cache-Control', 'private, no-store');
+    await authenticateRequest(request, authService);
+    const context = request.auth;
+    if (!context || context.mechanism !== 'cookie' || context.session.clientType !== 'admin_ui') {
+      throw new ForbiddenError();
+    }
+    const origin = request.headers.origin;
+    if (typeof origin === 'string' && !config.cors.adminOrigins.includes(origin)) {
+      throw new ForbiddenError('Origin not allowed');
+    }
+  };
   const extensionCredentialPreHandler = async (request: FastifyRequest) => {
     await authenticateRequest(request, authService);
     const context = request.auth;
@@ -136,7 +147,6 @@ export function registerPlatformAccountRoutes(
 
   if (prefix === '/api/v1') {
     app.get(route(prefix, '/platform-accounts/:id/credential-view'), { preHandler: credentialViewPreHandler }, async (request, reply) => {
-      reply.header('Cache-Control', 'private, no-store');
       return service.credential((request.params as { id: string }).id);
     });
   }

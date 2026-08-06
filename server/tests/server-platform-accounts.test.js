@@ -175,7 +175,7 @@ test('platform accounts hide credentials, enforce role visibility, and re-encryp
   }
 });
 
-test('credential view is available to every authenticated business session except user-management routes', async () => {
+test('credential view accepts only same-origin admin_ui cookies for both roles and is never cacheable', async () => {
   const { app } = await makeApp();
 
   try {
@@ -192,7 +192,7 @@ test('credential view is available to every authenticated business session excep
     const adminView = await app.inject({
       method: 'GET',
       url: `/api/v1/platform-accounts/${created.json().id}/credential-view`,
-      headers: { cookie: admin.cookie },
+      headers: { cookie: admin.cookie, origin: 'https://admin.example.test' },
     });
     assert.equal(adminView.statusCode, 200);
     assert.deepEqual(adminView.json(), { account: 'view-account', password: 'view-password' });
@@ -201,7 +201,7 @@ test('credential view is available to every authenticated business session excep
     const userView = await app.inject({
       method: 'GET',
       url: `/api/v1/platform-accounts/${created.json().id}/credential-view`,
-      headers: { cookie: backOfficeUser.cookie },
+      headers: { cookie: backOfficeUser.cookie, origin: 'https://admin.example.test' },
     });
     assert.equal(userView.statusCode, 200);
     assert.deepEqual(userView.json(), { account: 'view-account', password: 'view-password' });
@@ -229,8 +229,12 @@ test('credential view is available to every authenticated business session excep
         url: `/api/v1/platform-accounts/${created.json().id}/credential-view`,
         headers: { authorization },
       });
-      assert.equal(response.statusCode, 200);
-      assert.deepEqual(response.json(), { account: 'view-account', password: 'view-password' });
+      assertCredentialError(response, {
+        statusCode: 403,
+        code: 'FORBIDDEN',
+        cacheControl: 'private, no-store',
+        credential: { account: 'view-account', password: 'view-password' },
+      });
     }
 
     const extensionCookie = await app.inject({
@@ -238,8 +242,35 @@ test('credential view is available to every authenticated business session excep
       url: `/api/v1/platform-accounts/${created.json().id}/credential-view`,
       headers: { cookie: `court_helper_session=${extensionUserToken}` },
     });
-    assert.equal(extensionCookie.statusCode, 200);
-    assert.deepEqual(extensionCookie.json(), { account: 'view-account', password: 'view-password' });
+    assertCredentialError(extensionCookie, {
+      statusCode: 403,
+      code: 'FORBIDDEN',
+      cacheControl: 'private, no-store',
+      credential: { account: 'view-account', password: 'view-password' },
+    });
+
+    const anonymous = await app.inject({
+      method: 'GET',
+      url: `/api/v1/platform-accounts/${created.json().id}/credential-view`,
+    });
+    assertCredentialError(anonymous, {
+      statusCode: 401,
+      code: 'AUTH_REQUIRED',
+      cacheControl: 'private, no-store',
+      credential: { account: 'view-account', password: 'view-password' },
+    });
+
+    const crossOrigin = await app.inject({
+      method: 'GET',
+      url: `/api/v1/platform-accounts/${created.json().id}/credential-view`,
+      headers: { cookie: admin.cookie, origin: 'https://cross-origin.example.test' },
+    });
+    assertCredentialError(crossOrigin, {
+      statusCode: 403,
+      code: 'FORBIDDEN',
+      cacheControl: 'private, no-store',
+      credential: { account: 'view-account', password: 'view-password' },
+    });
   } finally {
     await app.close();
   }
