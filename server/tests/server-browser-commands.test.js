@@ -611,34 +611,46 @@ test('browser command routes require authentication and register both REST prefi
   }
 });
 
-test('administrator-paired extension can create, list, and cancel unified business commands', async () => {
+test('paired extension bearer cannot create, list, inspect, or cancel back-office commands', async () => {
   const { app } = await makeApp();
   try {
     const token = await pairAdministratorExtension(app);
-    const created = await app.inject({
+    const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
+    const created = await createCommand(app, admin, '/api/v1', {
+      type: 'EXPORT_REPORT',
+      platformAccountId: null,
+    });
+    assert.equal(created.statusCode, 201);
+
+    const deniedCreate = await app.inject({
       method: 'POST',
       url: '/api/v1/browser-commands',
       headers: { authorization: `Bearer ${token}` },
       payload: { type: 'EXPORT_REPORT', platformAccountId: null },
     });
-    assert.equal(created.statusCode, 201);
+    assert.equal(deniedCreate.statusCode, 403);
 
-    const listed = await app.inject({
+    const deniedList = await app.inject({
       method: 'GET',
       url: '/api/v1/browser-commands',
       headers: { authorization: `Bearer ${token}` },
     });
-    assert.equal(listed.statusCode, 200);
-    assert.equal(listed.json().commands[0].id, created.json().command.id);
+    assert.equal(deniedList.statusCode, 403);
 
-    const cancelled = await app.inject({
+    const deniedDetail = await app.inject({
+      method: 'GET',
+      url: `/api/v1/browser-commands/${created.json().command.id}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(deniedDetail.statusCode, 403);
+
+    const deniedCancel = await app.inject({
       method: 'POST',
       url: `/api/v1/browser-commands/${created.json().command.id}/cancel`,
       headers: { authorization: `Bearer ${token}` },
       payload: {},
     });
-    assert.equal(cancelled.statusCode, 200);
-    assert.equal(cancelled.json().command.status, 'cancelled');
+    assert.equal(deniedCancel.statusCode, 403);
   } finally {
     await app.close();
   }

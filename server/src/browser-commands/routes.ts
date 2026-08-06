@@ -124,16 +124,25 @@ function contextOf(request: FastifyRequest): AuthContext {
   return context;
 }
 
-async function requireBackOffice(
+async function requireBackOfficeSession(
+  request: FastifyRequest,
+  authService: AuthService,
+): Promise<AuthContext> {
+  await authenticateRequest(request, authService);
+  const context = contextOf(request);
+  if (context.mechanism !== 'cookie' || context.session.clientType !== 'admin_ui') {
+    throw new ForbiddenError();
+  }
+  return context;
+}
+
+async function requireBackOfficeWrite(
   request: FastifyRequest,
   authService: AuthService,
   config: ServerConfig,
 ): Promise<AuthContext> {
-  await authenticateRequest(request, authService);
-  const context = contextOf(request);
-  if (context.session.clientType === 'admin_ui') {
-    assertCookieWrite(request, authService, config);
-  }
+  const context = await requireBackOfficeSession(request, authService);
+  assertCookieWrite(request, authService, config);
   return context;
 }
 
@@ -181,13 +190,12 @@ export function registerBrowserCommandRoutes(
 ): void {
   const { authService, config, prefix, service } = options;
   const readPreHandler = async (request: FastifyRequest) => {
-    await authenticateRequest(request, authService);
-    contextOf(request);
+    await requireBackOfficeSession(request, authService);
   };
   const extensionPreHandler = async (request: FastifyRequest) => requireExtension(request, authService);
 
   app.post(route(prefix, '/browser-commands'), async (request, reply) => {
-    const context = await requireBackOffice(request, authService, config);
+    const context = await requireBackOfficeWrite(request, authService, config);
     const command = await service.create(createInput(bodyOf(request), context.user.id));
     reply.code(201);
     return { command: publicBrowserCommand(command) };
@@ -246,7 +254,7 @@ export function registerBrowserCommandRoutes(
   });
 
   app.post(route(prefix, '/browser-commands/:id/cancel'), async (request) => {
-    const context = await requireBackOffice(request, authService, config);
+    const context = await requireBackOfficeWrite(request, authService, config);
     const body = bodyOf(request);
     assertKnownFields(body, new Set());
     const command = await service.cancel(commandId(request), context.user.id);
