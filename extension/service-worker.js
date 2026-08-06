@@ -10,6 +10,10 @@ import {
   REMOTE_LOGIN_STATUS_REQUEST,
   createLoginCommandPoller,
 } from "./sw/login-command-poll.js";
+import {
+  BROWSER_COMMAND_ALARM_NAME,
+  createBrowserCommandPoller,
+} from "./sw/browser-command-poll.js";
 
 const SYNC_STATUS_REQUEST = "SYNC_STATUS_REQUEST";
 const SYNC_CONFIG_KEYS = Object.freeze([
@@ -29,6 +33,7 @@ let syncGeneration = 0;
 export let syncInitialization = Promise.resolve(null);
 const debuggerDriver = createDebuggerDriver();
 const loginCommandPoller = createLoginCommandPoller();
+const browserCommandPoller = createBrowserCommandPoller();
 
 function stringValue(...values) {
   return values.find((value) => typeof value === "string" && value.trim() !== "")?.trim() ?? "";
@@ -184,10 +189,16 @@ function createLoginCommandAlarm() {
   loginCommandPoller.ensureAlarm?.();
 }
 
+function wakeBrowserCommandPoller({ immediate = true } = {}) {
+  return browserCommandPoller.start({ immediate }).catch(() => null);
+}
+
 if (globalThis.chrome?.runtime?.onStartup?.addListener) {
   chrome.runtime.onStartup.addListener(() => {
     createLoginCommandAlarm();
     wakeLoginCommandPoller({ immediate: true });
+    browserCommandPoller.ensureAlarm();
+    wakeBrowserCommandPoller({ immediate: true });
   });
 }
 
@@ -195,13 +206,15 @@ if (globalThis.chrome?.runtime?.onInstalled?.addListener) {
   chrome.runtime.onInstalled.addListener(() => {
     createLoginCommandAlarm();
     wakeLoginCommandPoller({ immediate: true });
+    browserCommandPoller.ensureAlarm();
+    wakeBrowserCommandPoller({ immediate: true });
   });
 }
 
 if (globalThis.chrome?.alarms?.onAlarm?.addListener) {
   chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm?.name !== REMOTE_LOGIN_ALARM_NAME) return;
-    loginCommandPoller.pollOnce().catch(() => {});
+    if (alarm?.name === REMOTE_LOGIN_ALARM_NAME) loginCommandPoller.pollOnce().catch(() => {});
+    if (alarm?.name === BROWSER_COMMAND_ALARM_NAME) browserCommandPoller.pollOnce().catch(() => {});
   });
 }
 
@@ -213,8 +226,10 @@ if (globalThis.chrome?.storage?.onChanged?.addListener) {
     }
     if (changes.remoteLoginEnabled?.newValue === false) {
       loginCommandPoller.stop({ clearToken: true }).catch(() => {});
+      browserCommandPoller.stop();
     } else if (changes.remoteLoginEnabled?.newValue === true) {
       wakeLoginCommandPoller({ immediate: true });
+      wakeBrowserCommandPoller({ immediate: true });
     }
   });
 }
@@ -315,6 +330,7 @@ if (globalThis.chrome?.runtime?.onMessage?.addListener) {
     }
     if (message?.type !== ENABLE_REMOTE_LOGIN && message?.type !== DISABLE_REMOTE_LOGIN) {
       wakeLoginCommandPoller({ immediate: true });
+      wakeBrowserCommandPoller({ immediate: true });
     }
     // AUTO_LOGIN 只在 content script 处理，service worker 不接收、不转发、不持久化。
     if (message?.type === "AUTO_LOGIN") return false;

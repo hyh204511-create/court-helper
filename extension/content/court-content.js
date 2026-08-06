@@ -567,6 +567,39 @@ async function startBatch(kind) {
   return { ok: true, stats };
 }
 
+async function executeBrowserCommand(message) {
+  if (message.commandType === "LOGIN") {
+    if (!isLoginRoute(location.hash)) return { ok: false, error: "NOT_LOGIN_ROUTE" };
+    if (typeof message.account !== "string" || !message.account || typeof message.password !== "string" || !message.password) {
+      return { ok: false, error: "FORM_NOT_READY" };
+    }
+    return doAutoLogin({
+      account: message.account,
+      password: message.password,
+      serviceUrl: message.serviceUrl,
+      root: document,
+      location,
+    }).then(sanitizeAutoLoginResponse).catch(() => ({ ok: false, error: "NEEDS_HUMAN" }));
+  }
+  if (message.commandType === "QUERY_LI" || message.commandType === "QUERY_QZ") {
+    const kind = message.commandType === "QUERY_QZ" ? "qz" : "li";
+    const rows = Array.isArray(message.rows) ? message.rows.filter((row) => row?.kind === kind).slice(0, 50) : [];
+    if (!rows.length) return { ok: false, error: "NO_CASES" };
+    const records = rows.map((row) => {
+      const clean = { ...row };
+      delete clean.password;
+      delete clean.kind;
+      return clean;
+    });
+    await db.applyImport(kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES, records);
+    return startBatch(kind);
+  }
+  if (message.commandType === "EXPORT_REPORT") {
+    return handlePanelExport();
+  }
+  return { ok: false, error: "UNSUPPORTED_COMMAND" };
+}
+
 // —— 消息监听 ——
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "SYNC_STATUS") {
@@ -599,6 +632,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .then((resp) => sendResponse(resp))
       .catch((e) => sendResponse({ ok: false, error: e.message ?? String(e) }));
     return true; // 异步响应
+  }
+  if (msg?.type === "BROWSER_COMMAND_EXECUTE") {
+    executeBrowserCommand(msg)
+      .then((response) => sendResponse(response))
+      .catch((error) => sendResponse({ ok: false, error: error?.message ?? "NEEDS_HUMAN" }));
+    return true;
   }
   if (msg?.type === "PING") {
     sendResponse({
