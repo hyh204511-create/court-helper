@@ -248,8 +248,14 @@ test('extension pending feed and execution-data lease authorization are claimant
   const { claimToken } = claim.json();
   const executionData = await app.inject({
     method: 'GET',
-    url: `/api/v1/import-batches/${IMPORT_BATCH_ID}/extension-data?commandId=${commandId}&deviceId=device-bound-test&claimToken=${encodeURIComponent(claimToken)}`,
-    headers: { authorization: `Bearer ${extensionToken}`, origin: 'chrome-extension://test-extension' },
+    url: `/api/v1/import-batches/${IMPORT_BATCH_ID}/extension-data`,
+    headers: {
+      authorization: `Bearer ${extensionToken}`,
+      origin: 'chrome-extension://test-extension',
+      'x-browser-command-id': commandId,
+      'x-browser-command-device': 'device-bound-test',
+      'x-browser-command-claim': claimToken,
+    },
   });
   assert.equal(executionData.statusCode, 200);
   assert.match(executionData.headers['cache-control'], /no-store/);
@@ -258,8 +264,14 @@ test('extension pending feed and execution-data lease authorization are claimant
 
   const stranger = await app.inject({
     method: 'GET',
-    url: `/api/v1/import-batches/${IMPORT_BATCH_ID}/extension-data?commandId=${commandId}&deviceId=other-device&claimToken=${encodeURIComponent(claimToken)}`,
-    headers: { authorization: `Bearer ${extensionToken}`, origin: 'chrome-extension://test-extension' },
+    url: `/api/v1/import-batches/${IMPORT_BATCH_ID}/extension-data`,
+    headers: {
+      authorization: `Bearer ${extensionToken}`,
+      origin: 'chrome-extension://test-extension',
+      'x-browser-command-id': commandId,
+      'x-browser-command-device': 'other-device',
+      'x-browser-command-claim': claimToken,
+    },
   });
   assert.equal(stranger.statusCode, 403);
   const { BrowserCommandService } = await browserModule();

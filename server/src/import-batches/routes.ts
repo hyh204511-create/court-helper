@@ -38,9 +38,6 @@ interface MultipartFileData {
 interface QueryParams {
   cursor?: unknown;
   limit?: unknown;
-  commandId?: unknown;
-  deviceId?: unknown;
-  claimToken?: unknown;
 }
 
 function route(prefix: string, path: string): string {
@@ -191,11 +188,10 @@ export function registerImportBatchRoutes(
   if (browserCommandService) {
     app.get(route(prefix, '/import-batches/:id/extension-data'), { preHandler: extensionPreHandler }, async (request, reply) => {
       const id = importBatchId(request);
-      const query = queryOf(request);
       const headers = request.headers as Record<string, unknown>;
-      const commandId = typeof headers['x-browser-command-id'] === 'string' ? headers['x-browser-command-id'] : query.commandId;
-      const deviceId = typeof headers['x-browser-command-device'] === 'string' ? headers['x-browser-command-device'] : query.deviceId;
-      const claimToken = typeof headers['x-browser-command-claim'] === 'string' ? headers['x-browser-command-claim'] : query.claimToken;
+      const commandId = headers['x-browser-command-id'];
+      const deviceId = headers['x-browser-command-device'];
+      const claimToken = headers['x-browser-command-claim'];
       if (typeof commandId !== 'string' || typeof deviceId !== 'string' || typeof claimToken !== 'string') {
         throw new ValidationError([{ field: 'claim', code: 'required' }]);
       }
