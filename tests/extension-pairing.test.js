@@ -11,6 +11,8 @@ const DEVICE_ID = '6b520a09-87bc-4adb-bacd-4b4f7c5ab4d1';
 const REPAIRED_DEVICE_ID = '7c520a09-87bc-4adb-bacd-4b4f7c5ab4d2';
 const EXCHANGE_SECRET = 'F5u7-dSlxHTwnl_JMiCNomrTHnrqWy3dyzyIVI7-WaM';
 const PAIRING_ID = '00000000-0000-4000-8000-000000000001';
+const REPLACEMENT_PAIRING_ID = '00000000-0000-4000-8000-000000000002';
+const LOOPBACK_SERVER_URL = 'http://127.0.0.1:3000';
 
 function response(body, status = 200) {
   return {
@@ -54,6 +56,99 @@ function scheduler() {
     clearInterval(id) { intervals.delete(id); },
   };
 }
+
+test('a new installation saves the loopback server URL and creates exactly one pairing on explicit request', async () => {
+  const chromeApi = makeChrome({
+    serverUrl: '',
+    token: 'old-device-token',
+    expiresAt: Date.now() + 60_000,
+    remoteLoginEnabled: true,
+    browserCommandDeviceId: DEVICE_ID,
+    extensionDeviceId: DEVICE_ID,
+    extensionPairingId: PAIRING_ID,
+    extensionPairingSecret: EXCHANGE_SECRET,
+    extensionPairingBlockedCode: 'DEVICE_REVOKED',
+  });
+  const calls = [];
+  const pairer = createExtensionPairer({
+    chromeApi,
+    scheduler: scheduler(),
+    randomUuid: () => REPAIRED_DEVICE_ID,
+    randomSecret: () => EXCHANGE_SECRET,
+    fetchImpl: async (url, init = {}) => {
+      calls.push({ url: String(url), init });
+      return response({ pairing: { id: PAIRING_ID, verificationCode: '123456', status: 'pending', expiresAt: '2026-08-07T00:05:00.000Z' } }, 201);
+    },
+  });
+
+  const result = await pairer.requestPairing({ serverUrl: `${LOOPBACK_SERVER_URL}/` });
+
+  assert.equal(result.status, 'awaiting_approval');
+  assert.equal(chromeApi.data.serverUrl, LOOPBACK_SERVER_URL);
+  assert.equal(chromeApi.data.token, undefined);
+  assert.equal(chromeApi.data.expiresAt, undefined);
+  assert.equal(chromeApi.data.browserCommandDeviceId, undefined);
+  assert.equal(chromeApi.data.extensionDeviceId, REPAIRED_DEVICE_ID);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${LOOPBACK_SERVER_URL}/api/v1/auth/extension-pairings`);
+  assert.deepEqual(JSON.parse(calls[0].init.body), {
+    deviceId: REPAIRED_DEVICE_ID,
+    label: 'Edge extension',
+    exchangeSecret: EXCHANGE_SECRET,
+  });
+  assert.equal(calls[0].init.body.includes('old-device-token'), false);
+});
+
+test('switching the server discards an old in-flight exchange before it can restore a token', async () => {
+  const chromeApi = makeChrome({
+    serverUrl: BASE_URL,
+    extensionDeviceId: DEVICE_ID,
+    extensionPairingId: PAIRING_ID,
+    extensionPairingSecret: EXCHANGE_SECRET,
+    extensionPairingVerificationCode: '123456',
+  });
+  const calls = [];
+  let resolveOldExchange;
+  const pairer = createExtensionPairer({
+    chromeApi,
+    scheduler: scheduler(),
+    randomUuid: () => REPAIRED_DEVICE_ID,
+    randomSecret: () => EXCHANGE_SECRET,
+    fetchImpl: async (url, init = {}) => {
+      calls.push({ url: String(url), init });
+      if (String(url).endsWith(`/auth/extension-pairings/${PAIRING_ID}/exchange`)) {
+        return new Promise((resolve) => { resolveOldExchange = resolve; });
+      }
+      if (String(url).endsWith('/auth/extension-pairings')) {
+        return response({ pairing: {
+          id: REPLACEMENT_PAIRING_ID,
+          verificationCode: '654321',
+          status: 'pending',
+          expiresAt: '2026-08-07T00:05:00.000Z',
+        } }, 201);
+      }
+      throw new Error(`unexpected request ${url}`);
+    },
+  });
+
+  const oldPoll = pairer.pollOnce();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(typeof resolveOldExchange, 'function');
+
+  const reconfigured = pairer.requestPairing({ serverUrl: LOOPBACK_SERVER_URL });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  resolveOldExchange(response({ token: 'old-device-token', expiresAt: '2026-09-06T00:00:00.000Z' }));
+
+  await oldPoll;
+  const result = await reconfigured;
+  assert.equal(result.status, 'awaiting_approval');
+  assert.equal(chromeApi.data.serverUrl, LOOPBACK_SERVER_URL);
+  assert.equal(chromeApi.data.token, undefined);
+  assert.equal(chromeApi.data.browserCommandDeviceId, undefined);
+  assert.equal(chromeApi.data.extensionDeviceId, REPAIRED_DEVICE_ID);
+  assert.equal(chromeApi.data.extensionPairingId, REPLACEMENT_PAIRING_ID);
+  assert.equal(calls.filter(({ url }) => url.endsWith('/auth/extension-pairings')).length, 1);
+});
 
 test('extension creates a one-time pairing without a server password and exchanges it once after approval', async () => {
   const chromeApi = makeChrome();

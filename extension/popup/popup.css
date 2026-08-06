@@ -76,14 +76,17 @@ section { padding: 10px 12px; }
   border-bottom: 1px solid #e5e7eb;
 }
 .remote-login-row { grid-column: 1 / -1; display: flex; justify-content: space-between; color: #667085; }
+.remote-login-controls .hint { grid-column: 1 / -1; color: #667085; line-height: 1.45; }
 .remote-login-controls label { color: #667085; }
 .remote-login-controls input { min-width: 0; padding: 6px 8px; border: 1px solid #d0d5dd; border-radius: 6px; background: #fff; }
+.remote-login-controls input[aria-invalid="true"] { border-color: #b42318; }
 .remote-login-controls button { padding: 6px 12px; border: 1px solid #d0d5dd; border-radius: 6px; background: #fff; cursor: pointer; }
 .remote-login-controls button.primary { border-color: #1a56db; background: #1a56db; color: #fff; }
 .remote-login-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
 .remote-login-state[data-state="running"] { color: #1a7f37; }
 .remote-login-state[data-state="token-expired"],
-.remote-login-state[data-state="not-configured"] { color: #b42318; }
+.remote-login-state[data-state="not-configured"],
+.remote-login-state[data-state="invalid_server_url"] { color: #b42318; }
 
 .search { display: flex; gap: 6px; }
 .search input { flex: 1; padding: 6px 8px; border: 1px solid #d0d5dd; border-radius: 6px; }

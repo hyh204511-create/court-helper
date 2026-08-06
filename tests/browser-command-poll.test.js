@@ -119,6 +119,37 @@ test("browser command polling depends on a valid device token, not the legacy re
   assert.equal(scheduler.intervals.size, 1);
 });
 
+test("an old in-flight command auth failure cannot clear the token of a newly paired server", async () => {
+  const chromeApi = chromeMock(async () => ({ ok: true }));
+  const stored = await chromeApi.storage.local.get();
+  let resolveOldRequest;
+  const poller = createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl: async (url) => {
+      assert.equal(String(url), "https://court-helper.test/api/v1/browser-commands/next");
+      return new Promise((resolve) => { resolveOldRequest = resolve; });
+    },
+  });
+
+  const oldPoll = poller.pollOnce();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(typeof resolveOldRequest, "function");
+
+  poller.stop();
+  Object.assign(stored, {
+    serverUrl: "http://127.0.0.1:3000",
+    token: "new-device-token",
+    expiresAt: Date.now() + 60_000,
+    browserCommandDeviceId: "new-device-id",
+  });
+  resolveOldRequest(response({ error: { code: "AUTH_REQUIRED" } }, 401));
+
+  assert.deepEqual(await oldPoll, { ok: false, reason: "CONFIG_CHANGED" });
+  assert.equal(stored.token, "new-device-token");
+  assert.equal(stored.expiresAt > Date.now(), true);
+  assert.equal(stored.browserCommandDeviceId, "new-device-id");
+});
+
 test("revoked device authorization clears its local token and stops unified polling", async () => {
   const chromeApi = chromeMock(async () => ({ ok: true }));
   const scheduler = {

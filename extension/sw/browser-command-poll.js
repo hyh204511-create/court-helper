@@ -51,6 +51,16 @@ export function createBrowserCommandPoller({
 } = {}) {
   let intervalId = null;
   let inFlight = false;
+  let configurationGeneration = 0;
+  let activeRequestController = null;
+
+  function isCurrentGeneration(generation) {
+    return generation === configurationGeneration;
+  }
+
+  function configurationChanged() {
+    return { ok: false, reason: "CONFIG_CHANGED" };
+  }
 
   async function config() {
     if (!chromeApi?.storage?.local?.get) return null;
@@ -66,25 +76,29 @@ export function createBrowserCommandPoller({
     return { client: createRemoteClient({ baseUrl: serverUrl, token, fetchImpl }), deviceId };
   }
 
-  async function writeResult(client, commandId, claimToken, deviceId, response) {
+  async function writeResult(client, commandId, claimToken, deviceId, response, signal) {
     return client.request(`/browser-commands/${path(commandId)}/result`, {
       method: "POST",
       body: { deviceId, claimToken, ...resultFor(response), progress: response?.progress ?? null },
+      signal,
     });
   }
 
-  async function execute(client, command, claimToken, deviceId) {
+  async function execute(client, command, claimToken, deviceId, { generation, signal } = {}) {
+    if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
     const tabs = await chromeApi.tabs.query({ url: COURT_URL_PATTERN });
+    if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
     const tab = courtTab(tabs, command.type);
     if (!tab) return { ok: false, error: "NO_COURT_TAB" };
     let message = { type: "BROWSER_COMMAND_EXECUTE", commandType: command.type };
     if (command.type === "LOGIN") {
       let credential;
       try {
-        credential = await client.request(`/platform-accounts/${path(command.platformAccountId)}/credential`, { method: "POST" });
+        credential = await client.request(`/platform-accounts/${path(command.platformAccountId)}/credential`, { method: "POST", signal });
       } catch {
         return { ok: false, error: "CREDENTIAL_FETCH_FAILED" };
       }
+      if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
       message = { ...message, account: credential?.account, password: credential?.password, serviceUrl: "http://127.0.0.1:8765" };
     } else if (command.type === "QUERY_LI" || command.type === "QUERY_QZ") {
       let data;
@@ -95,13 +109,16 @@ export function createBrowserCommandPoller({
             "x-browser-command-device": deviceId,
             "x-browser-command-claim": claimToken,
           },
+          signal,
         });
       } catch (error) {
         return { ok: false, error: error?.code === "IMPORT_BATCH_EXPIRED" ? "NEEDS_HUMAN" : "BATCH_DATA_UNAVAILABLE" };
       }
+      if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
       message = { ...message, rows: data?.rows ?? [] };
     }
     try {
+      if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
       return await chromeApi.tabs.sendMessage(tab.id, message);
     } catch {
       return { ok: false, error: "CONTENT_UNAVAILABLE" };
@@ -111,22 +128,32 @@ export function createBrowserCommandPoller({
   async function pollOnce() {
     if (inFlight) return { ok: false, skipped: "IN_FLIGHT" };
     inFlight = true;
+    const generation = configurationGeneration;
+    const controller = new AbortController();
+    activeRequestController = controller;
     try {
       const runtime = await config();
+      if (!isCurrentGeneration(generation)) return configurationChanged();
       if (!runtime?.client) return { ok: false, reason: "NOT_CONFIGURED" };
-      const next = await runtime.client.request("/browser-commands/next");
+      const next = await runtime.client.request("/browser-commands/next", { signal: controller.signal });
+      if (!isCurrentGeneration(generation)) return configurationChanged();
       if (!next?.command) return { ok: true, command: null };
       const claim = await runtime.client.request(`/browser-commands/${path(next.command.id)}/claim`, {
         method: "POST",
         body: { deviceId: runtime.deviceId },
+        signal: controller.signal,
       });
+      if (!isCurrentGeneration(generation)) return configurationChanged();
       if (!claim?.claimToken) return { ok: false, reason: "CLAIM_TOKEN_UNAVAILABLE" };
-      const response = await execute(runtime.client, claim.command, claim.claimToken, runtime.deviceId);
-      await writeResult(runtime.client, claim.command.id, claim.claimToken, runtime.deviceId, response);
+      const response = await execute(runtime.client, claim.command, claim.claimToken, runtime.deviceId, { generation, signal: controller.signal });
+      if (!isCurrentGeneration(generation)) return configurationChanged();
+      await writeResult(runtime.client, claim.command.id, claim.claimToken, runtime.deviceId, response, controller.signal);
+      if (!isCurrentGeneration(generation)) return configurationChanged();
       return { ...response, commandId: claim.command.id };
     } catch (error) {
+      if (!isCurrentGeneration(generation)) return configurationChanged();
       if (error?.status === 401 || error?.code === "AUTH_REQUIRED") {
-        stop();
+        stop({ invalidate: false });
         if (typeof chromeApi?.storage?.local?.remove === "function") {
           await chromeApi.storage.local.remove(AUTHORIZATION_KEYS);
         } else {
@@ -136,6 +163,7 @@ export function createBrowserCommandPoller({
       }
       return { ok: false, reason: error?.code ?? "REMOTE_ERROR" };
     } finally {
+      if (activeRequestController === controller) activeRequestController = null;
       inFlight = false;
     }
   }
@@ -145,14 +173,21 @@ export function createBrowserCommandPoller({
   }
 
   async function start({ immediate = true } = {}) {
+    const generation = configurationGeneration;
     const runtime = await config();
+    if (!isCurrentGeneration(generation)) return configurationChanged();
     if (!runtime?.client) return { ok: false, reason: "NOT_CONFIGURED" };
     if (intervalId == null) intervalId = scheduler.setInterval?.(() => { pollOnce().catch(() => {}); }, intervalMs);
     ensureAlarm();
     return immediate ? pollOnce() : { ok: true };
   }
 
-  function stop() {
+  function stop({ invalidate = true } = {}) {
+    if (invalidate) {
+      configurationGeneration += 1;
+      activeRequestController?.abort("configuration changed");
+      activeRequestController = null;
+    }
     if (intervalId != null) scheduler.clearInterval?.(intervalId);
     intervalId = null;
     chromeApi?.alarms?.clear?.(BROWSER_COMMAND_ALARM_NAME);

@@ -41,7 +41,9 @@
       <span>后台扩展授权</span>
       <span id="remote-login-status" class="remote-login-state" data-state="checking">正在检查...</span>
     </div>
-    <p class="hint">在后台“浏览器控制”页批准扩展显示的六码后，扩展会自动开始执行任务。</p>
+    <label for="extension-server-url">服务器地址</label>
+    <input id="extension-server-url" type="url" inputmode="url" autocomplete="url" spellcheck="false" aria-label="后台服务器地址">
+    <p class="hint">填写本机后台地址后请求授权；在后台“浏览器控制”页批准扩展显示的六码后，扩展会自动开始执行任务。</p>
     <button id="btn-enable-remote-login" class="primary">请求后台授权</button>
     <button id="btn-disable-remote-login">停用</button>
   </section>

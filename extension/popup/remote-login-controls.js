@@ -1,6 +1,8 @@
 import {
+  DEFAULT_EXTENSION_SERVER_URL,
   EXTENSION_PAIRING_REQUEST,
   EXTENSION_PAIRING_STATUS_REQUEST,
+  normalizeExtensionServerUrl,
 } from "../sw/extension-pairing.js";
 import { DISABLE_REMOTE_LOGIN } from "../sw/login-command-poll.js";
 
@@ -12,6 +14,7 @@ export const UI_TEXT = Object.freeze({
   unavailable: "后台授权服务不可达，请检查服务器配置",
   requesting: "正在请求后台授权...",
   requestFailed: "授权请求失败，请检查服务器配置后重试",
+  invalidServerUrl: "请输入本机后台地址 http://127.0.0.1:3000",
 });
 
 function getElement(document, selector) {
@@ -21,12 +24,14 @@ function getElement(document, selector) {
 function statusText(status) {
   if (status === "authorized") return UI_TEXT.authorized;
   if (status === "unavailable" || status === "not_configured") return UI_TEXT.unavailable;
+  if (status === "invalid_server_url") return UI_TEXT.invalidServerUrl;
   return UI_TEXT.stopped;
 }
 
 function safeStatus(response = {}) {
   if (response?.status === "awaiting_approval") return "awaiting_approval";
   if (response?.status === "authorized") return "authorized";
+  if (response?.code === "INVALID_SERVER_URL") return "invalid_server_url";
   if (response?.status === "unavailable" || response?.status === "not_configured") return response.status;
   return "stopped";
 }
@@ -48,6 +53,7 @@ export function createRemoteLoginControls({
   const enableButton = getElement(document, "#btn-enable-remote-login");
   const disableButton = getElement(document, "#btn-disable-remote-login");
   const statusElement = getElement(document, "#remote-login-status");
+  const serverUrlInput = getElement(document, "#extension-server-url");
   let destroyed = false;
   let busy = false;
 
@@ -68,6 +74,34 @@ export function createRemoteLoginControls({
     if (disableButton) disableButton.disabled = busy;
   }
 
+  async function hydrateServerUrl() {
+    if (!serverUrlInput) return;
+    serverUrlInput.value = DEFAULT_EXTENSION_SERVER_URL;
+    const storage = chromeApi?.storage?.local;
+    if (typeof storage?.get !== "function") return;
+    try {
+      const stored = await storage.get(["serverUrl"]);
+      const serverUrl = normalizeExtensionServerUrl(stored?.serverUrl);
+      if (serverUrl) serverUrlInput.value = serverUrl;
+    } catch {
+      // The default remains usable; storage failure is surfaced if the request itself cannot proceed.
+    }
+  }
+
+  function readServerUrl() {
+    const serverUrl = normalizeExtensionServerUrl(serverUrlInput?.value);
+    if (serverUrl) {
+      if (serverUrlInput) {
+        serverUrlInput.value = serverUrl;
+        serverUrlInput.removeAttribute("aria-invalid");
+      }
+      return serverUrl;
+    }
+    serverUrlInput?.setAttribute("aria-invalid", "true");
+    setStatus("invalid_server_url");
+    return null;
+  }
+
   async function refreshStatus() {
     if (destroyed) return { ok: false };
     const response = await sendRuntimeMessage(chromeApi, { type: EXTENSION_PAIRING_STATUS_REQUEST });
@@ -77,13 +111,15 @@ export function createRemoteLoginControls({
 
   async function enable() {
     if (destroyed || busy) return { ok: false };
+    const serverUrl = readServerUrl();
+    if (!serverUrl) return { ok: false, status: "invalid_server_url", code: "INVALID_SERVER_URL" };
     setBusy(true);
     if (statusElement) {
       statusElement.textContent = UI_TEXT.requesting;
       statusElement.dataset.state = "checking";
     }
     try {
-      const response = await sendRuntimeMessage(chromeApi, { type: EXTENSION_PAIRING_REQUEST });
+      const response = await sendRuntimeMessage(chromeApi, { type: EXTENSION_PAIRING_REQUEST, serverUrl });
       if (response?.ok === true) {
         setStatus(safeStatus(response), response);
       } else {
@@ -120,6 +156,7 @@ export function createRemoteLoginControls({
 
   async function init() {
     bind();
+    await hydrateServerUrl();
     if (statusElement) {
       statusElement.textContent = UI_TEXT.checking;
       statusElement.dataset.state = "checking";

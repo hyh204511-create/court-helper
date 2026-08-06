@@ -191,15 +191,15 @@ function wakeBrowserCommandPoller({ immediate = true } = {}) {
   return browserCommandPoller.start({ immediate }).catch(() => null);
 }
 
-function wakeExtensionPairer({ immediate = true } = {}) {
-  return extensionPairer.start({ immediate }).catch(() => null);
+function resumeExtensionPairer() {
+  return extensionPairer.resume().catch(() => null);
 }
 
 if (globalThis.chrome?.runtime?.onStartup?.addListener) {
   chrome.runtime.onStartup.addListener(() => {
     browserCommandPoller.ensureAlarm();
     wakeBrowserCommandPoller({ immediate: true });
-    wakeExtensionPairer({ immediate: true });
+    resumeExtensionPairer();
   });
 }
 
@@ -207,7 +207,7 @@ if (globalThis.chrome?.runtime?.onInstalled?.addListener) {
   chrome.runtime.onInstalled.addListener(() => {
     browserCommandPoller.ensureAlarm();
     wakeBrowserCommandPoller({ immediate: true });
-    wakeExtensionPairer({ immediate: true });
+    resumeExtensionPairer();
   });
 }
 
@@ -229,8 +229,8 @@ if (globalThis.chrome?.storage?.onChanged?.addListener) {
     } else if (changes.remoteLoginEnabled?.newValue === true) {
       wakeBrowserCommandPoller({ immediate: true });
     }
-    if (Object.hasOwn(changes ?? {}, "serverUrl") || Object.hasOwn(changes ?? {}, "token") || Object.hasOwn(changes ?? {}, "expiresAt")) {
-      wakeExtensionPairer({ immediate: true });
+    if (Object.hasOwn(changes ?? {}, "token") || Object.hasOwn(changes ?? {}, "expiresAt")) {
+      resumeExtensionPairer();
     }
   });
 }
@@ -326,11 +326,13 @@ function handleRemoteLoginMessage(message, sendResponse) {
 
 function handleExtensionPairingMessage(message, sendResponse) {
   if (message?.type === EXTENSION_PAIRING_STATUS_REQUEST) {
-    sendResponse({ ok: true, ...extensionPairer.getStatus() });
-    return false;
+    extensionPairer.resume()
+      .then((response) => sendResponse({ ok: true, ...response }))
+      .catch(() => sendResponse({ ok: false, status: "unavailable", code: "PAIRING_UNAVAILABLE" }));
+    return true;
   }
   if (message?.type === EXTENSION_PAIRING_REQUEST) {
-    extensionPairer.requestPairing()
+    extensionPairer.requestPairing({ serverUrl: message?.serverUrl })
       .then((response) => sendResponse({ ok: true, ...response }))
       .catch(() => sendResponse({ ok: false, status: "unavailable", code: "PAIRING_UNAVAILABLE" }));
     return true;

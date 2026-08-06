@@ -82,6 +82,26 @@ function invoke(listener, message) {
   } };
 }
 
+test("popup 配对状态请求会从持久化的设备授权状态恢复", async () => {
+  const loaded = await loadWorker({
+    storageData: {
+      serverUrl: "http://127.0.0.1:3000",
+      token: "opaque-device-token",
+      expiresAt: Date.now() + 60_000,
+      extensionDeviceId: "6b520a09-87bc-4adb-bacd-4b4f7c5ab4d1",
+    },
+  });
+  try {
+    const request = invoke(loaded.runtimeListener, { type: "EXTENSION_PAIRING_STATUS_REQUEST" });
+    assert.equal(request.returned, true);
+    const status = await request.readResponse();
+    assert.equal(status.ok, true);
+    assert.equal(status.status, "authorized");
+  } finally {
+    loaded.cleanup();
+  }
+});
+
 test("EXPORT_UPLOAD 未配置服务器时返回 NOT_CONFIGURED", async () => {
   const loaded = await loadWorker();
   try {

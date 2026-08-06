@@ -149,4 +149,7 @@ popup「一键抓取」→ START_BATCH（列表页）→ 批量执行器（app-m
 - 管理员成功登录后台后，OCR helper 的按需启动保持不变；扩展服务器身份改为管理员显式批准的一次性设备配对，不再由 popup 提交服务器用户名或密码。
 - 扩展生成 `deviceId` 与高熵 `exchangeSecret`，从配置的 extension Origin 发起 pending pairing；管理员仅在 `/admin/browser-control` 对核对码批准。兑换后的 30 天 opaque Bearer session 绑定设备，仅保存在 `chrome.storage.local`，并可由后台撤销。
 - 管理员创建的 extension session 可执行业务操作，但不能管理用户：`/users*` 必须要求 `admin_ui` Cookie、管理员角色、受信 Origin 与 CSRF。extension Origin 不构成认证，也不得换取 Cookie。
+- popup 在最终移除前必须提供“后台服务器地址”配置，不提供服务器用户名、密码或 token 输入。当前本机验收只接受 `http://127.0.0.1:3000`；点击“请求后台授权”时由 SW 原子保存规范化地址并创建一次配对。空地址、凭据、query、fragment 或非根路径均不得发起请求。
+- 地址变更必须清除旧设备 token、待兑换 pairing 和设备标识，再按新地址重新经管理员批准；保存地址本身不得自动新建 pairing，避免与用户点击请求产生并发重复。
+- 地址切换必须使旧地址的在途创建/兑换响应失效，禁止旧 token 或 pairing 在新地址配置后回写；popup 查询授权状态时必须从持久化设备状态恢复，不能依赖 MV3 Service Worker 尚未休眠。
 - popup 在真实端到端验收前只保留授权状态和降级提示；不得再展示或传递服务器密码。最终删除 popup 仍以后端统一命令的真实验收门槛为准。

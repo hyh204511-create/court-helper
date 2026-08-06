@@ -311,6 +311,7 @@ test("legacy password-based remote login is disabled and requires administrator 
 test("popup authorization section never accepts a server password and requests backend pairing", async () => {
   const dom = new JSDOM(`
     <!doctype html><html><body>
+      <input id="extension-server-url" type="url">
       <button id="btn-enable-remote-login"></button>
       <button id="btn-disable-remote-login"></button>
       <span id="remote-login-status"></span>
@@ -342,10 +343,95 @@ test("popup authorization section never accepts a server password and requests b
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(messages, [
     { type: EXTENSION_PAIRING_STATUS_REQUEST },
-    { type: EXTENSION_PAIRING_REQUEST },
+    { type: EXTENSION_PAIRING_REQUEST, serverUrl: "http://127.0.0.1:3000" },
     { type: "DISABLE_REMOTE_LOGIN" },
   ]);
   assert.match(dom.window.document.querySelector("#remote-login-status").textContent, /已停用/);
+  controls.destroy();
+  dom.window.close();
+});
+
+test('popup stores the loopback server URL before requesting backend pairing', async () => {
+  const dom = new JSDOM(`
+    <!doctype html><html><body>
+      <input id="extension-server-url" type="url">
+      <button id="btn-enable-remote-login"></button>
+      <button id="btn-disable-remote-login"></button>
+      <span id="remote-login-status"></span>
+    </body></html>
+  `);
+  const messages = [];
+  const writes = [];
+  const { createRemoteLoginControls } = await import(`../extension/popup/remote-login-controls.js?server-url-test=${Date.now()}`);
+  const controls = createRemoteLoginControls({
+    document: dom.window.document,
+    chromeApi: {
+      runtime: {
+        sendMessage: async (message) => {
+          messages.push(message);
+          if (message.type === EXTENSION_PAIRING_STATUS_REQUEST) return { ok: true, status: 'not_configured' };
+          return { ok: true, status: 'awaiting_approval', verificationCode: '123456' };
+        },
+      },
+      storage: {
+        local: {
+          get: async () => ({ serverUrl: '' }),
+          set: async (value) => { writes.push(value); },
+        },
+      },
+    },
+  });
+
+  await controls.init();
+  const input = dom.window.document.querySelector('#extension-server-url');
+  assert.equal(input.value, 'http://127.0.0.1:3000');
+  input.value = 'http://127.0.0.1:3000/';
+  dom.window.document.querySelector('#btn-enable-remote-login').click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(writes, []);
+  assert.deepEqual(messages, [
+    { type: EXTENSION_PAIRING_STATUS_REQUEST },
+    { type: EXTENSION_PAIRING_REQUEST, serverUrl: 'http://127.0.0.1:3000' },
+  ]);
+  assert.match(dom.window.document.querySelector('#remote-login-status').textContent, /核对码/);
+
+  controls.destroy();
+  dom.window.close();
+});
+
+test('popup rejects an unsupported backend URL without creating a pairing request', async () => {
+  const dom = new JSDOM(`
+    <!doctype html><html><body>
+      <input id="extension-server-url" type="url">
+      <button id="btn-enable-remote-login"></button>
+      <button id="btn-disable-remote-login"></button>
+      <span id="remote-login-status"></span>
+    </body></html>
+  `);
+  const messages = [];
+  const { createRemoteLoginControls } = await import(`../extension/popup/remote-login-controls.js?invalid-server-url-test=${Date.now()}`);
+  const controls = createRemoteLoginControls({
+    document: dom.window.document,
+    chromeApi: {
+      runtime: {
+        sendMessage: async (message) => {
+          messages.push(message);
+          return { ok: true, status: 'not_configured' };
+        },
+      },
+      storage: { local: { get: async () => ({ serverUrl: '' }) } },
+    },
+  });
+
+  await controls.init();
+  dom.window.document.querySelector('#extension-server-url').value = 'http://localhost:3000/admin/browser-control';
+  dom.window.document.querySelector('#btn-enable-remote-login').click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(messages, [{ type: EXTENSION_PAIRING_STATUS_REQUEST }]);
+  assert.match(dom.window.document.querySelector('#remote-login-status').textContent, /127\.0\.0\.1:3000/);
+
   controls.destroy();
   dom.window.close();
 });
