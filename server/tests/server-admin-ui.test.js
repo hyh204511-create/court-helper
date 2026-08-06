@@ -226,9 +226,8 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
     assert.match(browserControl.body, /id="current-backoffice-user"/);
     assert.match(browserControl.body, /id="import-batch-form"/);
     assert.match(browserControl.body, /id="browser-command-rows"/);
-    assert.match(browserControl.body, /浏览器连接/);
-    assert.match(browserControl.body, /法院标签页/);
-    assert.match(browserControl.body, /未确认/);
+    assert.doesNotMatch(browserControl.body, /id="browser-connection-status"|id="court-tab-status"|id="court-login-status"/);
+    assert.doesNotMatch(browserControl.body, /扩展运行状态/);
     const browserControlScript = await app.inject({ method: 'GET', url: '/admin/assets/admin.js' });
     assert.match(browserControlScript.body, /\/browser-commands/);
     assert.match(browserControlScript.body, /\/import-batches/);

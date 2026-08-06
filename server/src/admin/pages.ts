@@ -209,7 +209,6 @@ function reportExportsPage(role: AdminRole): string {
 function browserControlPage(role: AdminRole): string {
   return layout('browser-control', role, '浏览器控制', `
     <header class="page-head"><div><p class="eyebrow">Browser / Commands</p><h2>浏览器控制</h2><p>登录、导入、查询和导出的唯一业务入口。任务由扩展在已打开的法院标签页执行。</p></div><p class="subtle">当前后台用户：<strong id="current-backoffice-user">加载中…</strong></p></header>
-    <section class="panel" aria-labelledby="browser-runtime-title"><div class="panel-head"><div><h3 id="browser-runtime-title">扩展运行状态</h3><p>仅按扩展最近回写推断；没有可靠回执时保持“未确认”。</p></div></div><div class="panel-body detail-grid"><dl class="detail-item"><dt>浏览器连接</dt><dd id="browser-connection-status">未确认</dd></dl><dl class="detail-item"><dt>法院标签页</dt><dd id="court-tab-status">未确认</dd></dl><dl class="detail-item"><dt>登录状态 / 当前账号</dt><dd id="court-login-status">未确认</dd></dl></div></section>
     <section class="panel" aria-labelledby="platform-login-title">
       <div class="panel-head"><div><h3 id="platform-login-title">平台账号与自动登录</h3><p>选择启用账号后创建统一 LOGIN 命令；完整凭据只在本页按需查看，不进入任务负载。</p></div></div>
       <div class="panel-body">
