@@ -124,7 +124,7 @@ function usersPage(): string {
 function platformAccountsPage(): string {
   return layout('platform-accounts', 'admin', '平台账号', `
     <header class="page-head">
-      <div><p class="eyebrow">Sources / Credentials</p><h2>平台账号</h2><p>维护插件使用的平台账号标签与启停状态。明文凭据不提供读回。</p></div>
+      <div><p class="eyebrow">Sources / Credentials</p><h2>平台账号</h2><p>维护扩展使用的平台账号标签与启停状态；登录和按需查看凭据统一在浏览器控制台完成。</p></div>
     </header>
     <section class="panel" aria-labelledby="platform-form-title">
       <div class="panel-head"><div><h3 id="platform-form-title">新增平台账号</h3><p>编辑时只替换凭据，不会回显已有内容；已有记录仅显示“已设置”，新建表单显示“未设置”。</p></div><span class="subtle">凭据：<strong id="credential-state">未设置</strong></span></div>
@@ -143,11 +143,7 @@ function platformAccountsPage(): string {
     </section>
     <section class="panel" aria-labelledby="platform-list-title">
       <div class="panel-head"><div><h3 id="platform-list-title">账号列表</h3><p>列表和普通响应只返回标签、状态与更新时间。</p></div></div>
-      <div class="panel-body table-wrap"><table class="data-table"><thead><tr><th>标签</th><th>状态</th><th>更新时间</th><th>登录状态</th><th>操作</th></tr></thead><tbody id="platform-rows"></tbody></table></div>
-    </section>
-    <section class="panel" aria-labelledby="login-command-list-title">
-      <div class="panel-head"><div><h3 id="login-command-list-title">登录指令</h3><p>最近 100 条远程登录指令，仅显示账号标签、状态、结果与时间。</p></div></div>
-      <div class="panel-body table-wrap"><table class="data-table"><thead><tr><th>账号</th><th>状态</th><th>结果</th><th>创建时间</th><th>更新时间</th></tr></thead><tbody id="login-command-rows"></tbody></table></div>
+      <div class="panel-body table-wrap"><table class="data-table"><thead><tr><th>标签</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="platform-rows"></tbody></table></div>
     </section>`);
 }
 
@@ -212,8 +208,19 @@ function reportExportsPage(role: AdminRole): string {
 
 function browserControlPage(role: AdminRole): string {
   return layout('browser-control', role, '浏览器控制', `
-    <header class="page-head"><div><p class="eyebrow">Browser / Commands</p><h2>浏览器控制</h2><p>从后台创建浏览器任务，由扩展在已打开的法院标签页执行。页面隐藏时自动暂停轮询。</p></div></header>
+    <header class="page-head"><div><p class="eyebrow">Browser / Commands</p><h2>浏览器控制</h2><p>登录、导入、查询和导出的唯一业务入口。任务由扩展在已打开的法院标签页执行。</p></div><p class="subtle">当前后台用户：<strong id="current-backoffice-user">加载中…</strong></p></header>
     <section class="panel" aria-labelledby="browser-runtime-title"><div class="panel-head"><div><h3 id="browser-runtime-title">扩展运行状态</h3><p>仅按扩展最近回写推断；没有可靠回执时保持“未确认”。</p></div></div><div class="panel-body detail-grid"><dl class="detail-item"><dt>浏览器连接</dt><dd id="browser-connection-status">未确认</dd></dl><dl class="detail-item"><dt>法院标签页</dt><dd id="court-tab-status">未确认</dd></dl><dl class="detail-item"><dt>登录状态 / 当前账号</dt><dd id="court-login-status">未确认</dd></dl></div></section>
+    <section class="panel" aria-labelledby="platform-login-title">
+      <div class="panel-head"><div><h3 id="platform-login-title">平台账号与自动登录</h3><p>选择启用账号后创建统一 LOGIN 命令；完整凭据只在本页按需查看，不进入任务负载。</p></div></div>
+      <div class="panel-body">
+        <form id="platform-login-form">
+          <div class="field-grid"><div class="field"><label for="platform-login-account">平台账号</label><select id="platform-login-account" required><option value="">加载中…</option></select></div></div>
+          <div class="form-actions"><button class="primary" type="submit">一键登录</button><button class="secondary" id="platform-credential-show" type="button">查看账号与密码</button><button class="secondary" id="platform-credential-hide" type="button">关闭凭据</button></div>
+        </form>
+        <div id="platform-credential-view" class="detail-grid" hidden><dl class="detail-item"><dt>平台账号</dt><dd id="platform-credential-account"></dd></dl><dl class="detail-item"><dt>平台密码</dt><dd id="platform-credential-password"></dd></dl></div>
+        <p class="message" data-platform-login-message aria-live="polite"></p>
+      </div>
+    </section>
     <section class="panel" aria-labelledby="extension-authorization-title">
       <div class="panel-head"><div><h3 id="extension-authorization-title">扩展设备授权</h3><p>扩展会自行发起一次性配对请求。请核对扩展显示的六码后批准；设备只能执行业务操作，不能管理系统用户。</p></div></div>
       <div class="panel-body">
@@ -225,11 +232,11 @@ function browserControlPage(role: AdminRole): string {
       </div>
     </section>
     <section class="panel" aria-labelledby="browser-command-title">
-      <div class="panel-head"><div><h3 id="browser-command-title">创建浏览器任务</h3><p>任务参数仅包含非敏感引用；登录凭据不会进入命令负载。</p></div></div>
+      <div class="panel-head"><div><h3 id="browser-command-title">通用任务</h3><p>仅创建立案查询、强执查询或导出；登录请使用上方独立入口。</p></div></div>
       <div class="panel-body">
         <form id="browser-command-form">
           <div class="field-grid">
-            <div class="field"><label for="browser-command-type">任务类型</label><select id="browser-command-type"><option value="LOGIN">远程登录</option><option value="QUERY_LI">开始立案查询</option><option value="QUERY_QZ">开始强执查询</option><option value="EXPORT_REPORT">导出报表</option></select></div>
+            <div class="field"><label for="browser-command-type">任务类型</label><select id="browser-command-type"><option value="QUERY_LI">开始立案查询</option><option value="QUERY_QZ">开始强执查询</option><option value="EXPORT_REPORT">导出报表</option></select></div>
             <div class="field"><label for="browser-command-account">平台账号</label><select id="browser-command-account"><option value="">加载中…</option></select></div>
             <div class="field"><label for="browser-command-batch">导入批次（查询必选）</label><select id="browser-command-batch"><option value="">不选择</option></select></div>
           </div>
@@ -243,7 +250,7 @@ function browserControlPage(role: AdminRole): string {
     </section>
     <section class="panel" aria-labelledby="browser-command-list-title">
       <div class="panel-head"><div><h3 id="browser-command-list-title">任务列表</h3><p>状态、进度与错误码来自扩展回写；未知状态显示为待人工处理。</p></div></div>
-      <div class="panel-body"><div class="case-status"><span data-browser-command-status class="message muted" aria-live="polite">准备读取</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>类型</th><th>状态</th><th>进度</th><th>结果</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="browser-command-rows"></tbody></table></div></div>
+      <div class="panel-body"><div class="case-status"><span data-browser-command-status class="message muted" aria-live="polite">准备读取</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>类型</th><th>状态</th><th>进度</th><th>结果</th><th>创建者</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="browser-command-rows"></tbody></table></div></div>
     </section>`);
 }
 

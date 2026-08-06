@@ -188,6 +188,14 @@ test('admin login shell and static assets are same-origin, CSP protected, and RE
 test('admin and user page reachability is role-isolated, while unauthenticated pages redirect', async () => {
   const { app } = await makeApp();
   try {
+    const root = await app.inject({ method: 'GET', url: '/' });
+    assert.equal(root.statusCode, 302);
+    assert.equal(root.headers.location, '/admin/browser-control');
+
+    const adminRoot = await app.inject({ method: 'GET', url: '/admin' });
+    assert.equal(adminRoot.statusCode, 302);
+    assert.equal(adminRoot.headers.location, '/admin/browser-control');
+
     const anonymous = await app.inject({ method: 'GET', url: '/admin/cases' });
     assert.equal(anonymous.statusCode, 302);
     assert.equal(anonymous.headers.location, '/admin/login');
@@ -213,6 +221,9 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
     assert.equal(browserControl.statusCode, 200);
     assert.match(browserControl.body, /data-page="browser-control"/);
     assert.match(browserControl.body, /id="browser-command-form"/);
+    assert.match(browserControl.body, /id="platform-login-form"/);
+    assert.match(browserControl.body, /id="platform-credential-show"/);
+    assert.match(browserControl.body, /id="current-backoffice-user"/);
     assert.match(browserControl.body, /id="import-batch-form"/);
     assert.match(browserControl.body, /id="browser-command-rows"/);
     assert.match(browserControl.body, /浏览器连接/);
@@ -222,6 +233,7 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
     assert.match(browserControlScript.body, /\/browser-commands/);
     assert.match(browserControlScript.body, /\/import-batches/);
     assert.match(browserControlScript.body, /visibilitychange/);
+    assert.match(browserControlScript.body, /window\.location\.assign\('\/admin\/browser-control'\)/);
 
     const workerCases = await app.inject({
       method: 'GET',
@@ -241,6 +253,15 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
     assert.equal(workerBrowserControl.statusCode, 200);
     assert.match(workerBrowserControl.body, /data-page="browser-control"/);
 
+    const platformAccounts = await app.inject({
+      method: 'GET',
+      url: '/admin/platform-accounts',
+      headers: { cookie: admin.cookie },
+    });
+    assert.equal(platformAccounts.statusCode, 200);
+    assert.doesNotMatch(platformAccounts.body, /远程登录|登录指令/);
+    assert.doesNotMatch(browserControlScript.body, /data-action=["']remote-login|loadLoginCommands/);
+
     for (const route of ['/admin/users', '/admin/platform-accounts']) {
       const denied = await app.inject({ method: 'GET', url: route, headers: { cookie: worker.cookie } });
       assert.equal(denied.statusCode, 403);
@@ -254,6 +275,124 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
       headers: { cookie: worker.cookie },
     });
     assert.equal(directApi.statusCode, 403);
+  } finally {
+    await app.close();
+  }
+});
+
+test('browser control renders full session and creator names, separates LOGIN, and reveals credentials on demand', async () => {
+  const { app } = await makeApp();
+  try {
+    const admin = await login(app, 'admin', ADMIN_PASSWORD);
+    const worker = await login(app, 'worker', WORKER_PASSWORD);
+    const script = await app.inject({ method: 'GET', url: '/admin/assets/admin.js' });
+
+    const sessions = [
+      { cookie: admin.cookie, id: ADMIN_ID, username: 'admin-console-full', role: 'admin', creatorId: WORKER_ID, creatorName: 'worker-creator-full' },
+      { cookie: worker.cookie, id: WORKER_ID, username: 'worker-console-full', role: 'user', creatorId: WORKER_ID, creatorName: 'worker-console-full' },
+    ];
+
+    for (const session of sessions) {
+      const page = await app.inject({
+        method: 'GET',
+        url: '/admin/browser-control',
+        headers: { cookie: session.cookie },
+      });
+      const dom = new JSDOM(page.body, {
+        runScripts: 'outside-only',
+        url: 'https://admin.example.test/admin/browser-control',
+      });
+      try {
+      const requests = [];
+      let commands = [{
+        id: '00000000-0000-0000-0000-000000000301',
+        type: 'QUERY_LI',
+        status: 'succeeded',
+        platformAccountId: ACCOUNT_ID,
+        clientBatchId: null,
+        requestedBy: session.creatorId,
+        resultCode: 'SUCCESS',
+        resultSummary: '',
+        progress: 100,
+        createdAt: NOW.toISOString(),
+      }];
+      const jsonResponse = (body, status = 200) => ({
+        ok: status >= 200 && status < 300,
+        status,
+        headers: { get() { return null; } },
+        async json() { return body; },
+      });
+      dom.window.Headers = Headers;
+      dom.window.fetch = async (input, options = {}) => {
+        const requestUrl = new URL(String(input), dom.window.location.href);
+        const method = String(options.method || 'GET').toUpperCase();
+        requests.push({ method, path: requestUrl.pathname + requestUrl.search, body: options.body });
+        if (requestUrl.pathname === '/api/v1/auth/me') {
+          return jsonResponse({ id: session.id, username: session.username, role: session.role, csrfToken: 'ui-csrf' });
+        }
+        if (requestUrl.pathname === '/api/v1/users') {
+          assert.equal(session.role, 'admin');
+          return jsonResponse({ users: [{ id: WORKER_ID, username: session.creatorName, role: 'user', enabled: true }] });
+        }
+        if (requestUrl.pathname === '/api/v1/platform-accounts') {
+          return jsonResponse({ platformAccounts: [{ id: ACCOUNT_ID, label: 'synthetic-account', enabled: true }] });
+        }
+        if (requestUrl.pathname === `/api/v1/platform-accounts/${ACCOUNT_ID}/credential-view`) {
+          return jsonResponse({ account: 'synthetic-view-account', password: 'synthetic-view-password' });
+        }
+        if (requestUrl.pathname === '/api/v1/import-batches') {
+          return jsonResponse({ importBatches: [], nextCursor: null });
+        }
+        if (requestUrl.pathname === '/api/v1/auth/extension-pairings') return jsonResponse({ pairings: [] });
+        if (requestUrl.pathname === '/api/v1/auth/extension-devices') return jsonResponse({ devices: [] });
+        if (requestUrl.pathname === '/api/v1/browser-commands' && method === 'POST') {
+          const payload = JSON.parse(String(options.body));
+          commands = [{ ...commands[0], id: '00000000-0000-0000-0000-000000000302', ...payload, requestedBy: session.id, status: 'pending' }, ...commands];
+          return jsonResponse({ command: commands[0] }, 201);
+        }
+        if (requestUrl.pathname === '/api/v1/browser-commands') {
+          return jsonResponse({ commands, nextCursor: null });
+        }
+        throw new Error(`unexpected request ${method} ${requestUrl.pathname}`);
+      };
+      dom.window.eval(script.body);
+      dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'));
+
+      const waitFor = async (predicate) => {
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+          if (predicate()) return;
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        assert.fail('timed out waiting for browser control UI');
+      };
+      await waitFor(() => dom.window.document.querySelector('[data-command-creator]')?.textContent === session.creatorName);
+      assert.equal(dom.window.document.querySelector('#current-backoffice-user').textContent, session.username);
+      assert.equal(dom.window.document.querySelector('[data-command-creator]').textContent, session.creatorName);
+      assert.doesNotMatch(dom.window.document.body.textContent, /a\*\*\*l|w\*\*\*r/);
+
+      const taskTypes = [...dom.window.document.querySelector('#browser-command-type').options].map((option) => option.value);
+      assert.deepEqual(taskTypes, ['QUERY_LI', 'QUERY_QZ', 'EXPORT_REPORT']);
+
+      if (session.role === 'admin') {
+        await waitFor(() => dom.window.document.querySelector('#platform-login-account').value === ACCOUNT_ID);
+        dom.window.document.querySelector('#platform-login-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+        await waitFor(() => requests.some((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands'));
+        const loginRequest = requests.find((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands');
+        assert.deepEqual(JSON.parse(String(loginRequest.body)), { type: 'LOGIN', platformAccountId: ACCOUNT_ID });
+
+        await waitFor(() => dom.window.document.querySelector('#platform-credential-show').disabled === false);
+        dom.window.document.querySelector('#platform-credential-show').click();
+        await waitFor(() => dom.window.document.querySelector('#platform-credential-password').textContent === 'synthetic-view-password');
+        assert.equal(dom.window.document.querySelector('#platform-credential-account').textContent, 'synthetic-view-account');
+        dom.window.document.querySelector('#platform-credential-hide').click();
+        assert.equal(dom.window.document.querySelector('#platform-credential-account').textContent, '');
+        assert.equal(dom.window.document.querySelector('#platform-credential-password').textContent, '');
+      }
+
+      } finally {
+        dom.window.close();
+      }
+    }
   } finally {
     await app.close();
   }

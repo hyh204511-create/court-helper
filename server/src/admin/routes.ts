@@ -89,8 +89,9 @@ export function registerAdminRoutes(app: FastifyInstance, options: RegisterAdmin
   app.get('/admin/assets/admin.css', async (_request, reply) => sendAsset(reply, ADMIN_STYLES, 'text/css; charset=utf-8'));
   app.get('/admin/assets/admin.js', async (_request, reply) => sendAsset(reply, ADMIN_SCRIPT, 'text/javascript; charset=utf-8'));
 
+  app.get('/', async (_request, reply) => reply.redirect('/admin/browser-control'));
   app.get('/admin/login', async (_request, reply) => sendHtml(reply, renderAdminPage('login', 'user')));
-  app.get('/admin', async (_request, reply) => reply.redirect('/admin/cases'));
+  app.get('/admin', async (_request, reply) => reply.redirect('/admin/browser-control'));
 
   app.get('/admin/users', async (request, reply) => renderProtectedPage('users', request, reply, authService, 'admin'));
   app.get('/admin/platform-accounts', async (request, reply) => renderProtectedPage('platform-accounts', request, reply, authService, 'admin'));

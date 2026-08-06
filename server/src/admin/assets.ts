@@ -204,6 +204,7 @@ button:disabled { cursor: not-allowed; opacity: .48; transform: none; }
 export const ADMIN_SCRIPT = String.raw`
 const API_BASE = '/api/v1';
 let csrfToken = null;
+let currentSessionUser = null;
 let casePollTimer = null;
 let caseCursor = null;
 let nextCaseCursor = null;
@@ -307,7 +308,7 @@ async function initLogin() {
       if (!result.ok) throw new ApiError(result.status, body?.error?.code, body?.error?.requestId);
       csrfToken = body.csrfToken || null;
       form.reset();
-      window.location.assign('/admin/cases');
+      window.location.assign('/admin/browser-control');
     } catch (error) {
       setMessage(message, error instanceof TypeError ? '服务器不可达，请重试' : '账号或密码错误/账号不可用');
       setFormBusy(form, false);
@@ -318,6 +319,9 @@ async function initLogin() {
 async function loadSession() {
   const result = await api('/auth/me');
   csrfToken = result.csrfToken || null;
+  currentSessionUser = result;
+  const currentUser = $('#current-backoffice-user');
+  if (currentUser) currentUser.textContent = result.username || '未知用户';
   return result;
 }
 
@@ -375,105 +379,6 @@ function renderStatus(value) {
 }
 
 let platformLabels = new Map();
-let loginCommandTimers = new Map();
-
-function loginCommandStatusLabel(status) {
-  if (status === 'pending') return '指令已创建';
-  if (status === 'executing') return '执行中';
-  if (status === 'success') return '成功';
-  if (status === 'failed') return '失败';
-  if (status === 'expired') return '已过期';
-  return status || '—';
-}
-
-function loginCommandStatusKind(status) {
-  return ['pending', 'executing', 'success', 'failed', 'expired'].includes(status) ? status : 'pending';
-}
-
-function renderLoginCommandPill(status, suffix = '') {
-  const text = loginCommandStatusLabel(status) + (suffix ? ' ' + suffix : '');
-  return element('span', text, 'status-pill status-login-' + loginCommandStatusKind(status));
-}
-
-function setRowLoginStatus(row, status, suffix = '') {
-  const target = $('[data-login-command-status]', row);
-  if (!target) return;
-  clear(target);
-  target.appendChild(renderLoginCommandPill(status, suffix));
-}
-
-function loginCommandResult(command) {
-  if (!command) return '—';
-  if (command.status === 'failed') {
-    return [command.resultCode, command.resultMessage].filter(Boolean).join(' · ') || '失败';
-  }
-  if (command.status === 'success') return '成功';
-  if (command.status === 'expired') return '已过期';
-  return '—';
-}
-
-function stopLoginCommandPolling(commandId) {
-  const timer = loginCommandTimers.get(commandId);
-  if (timer) clearInterval(timer);
-  loginCommandTimers.delete(commandId);
-}
-
-async function loadLoginCommands() {
-  const target = $('#login-command-rows');
-  if (!target) return [];
-  const result = await api('/login-commands?limit=100');
-  const commands = result.commands || [];
-  clear(target);
-  if (!commands.length) {
-    const row = element('tr');
-    const cell = element('td', '暂无登录指令');
-    cell.colSpan = 5;
-    row.appendChild(cell);
-    target.appendChild(row);
-    return commands;
-  }
-  commands.forEach((command) => {
-    const row = element('tr');
-    row.appendChild(element('td', command.accountLabel || '—'));
-    const status = element('td');
-    status.appendChild(renderLoginCommandPill(command.status));
-    row.appendChild(status);
-    row.appendChild(element('td', loginCommandResult(command)));
-    row.appendChild(element('td', dateLabel(command.createdAt)));
-    row.appendChild(element('td', dateLabel(command.updatedAt)));
-    target.appendChild(row);
-  });
-  return commands;
-}
-
-function startLoginCommandPolling(row, commandId, button) {
-  stopLoginCommandPolling(commandId);
-  const startedAt = Date.now();
-  const poll = async () => {
-    try {
-      const commands = await loadLoginCommands();
-      const command = commands.find((item) => item.id === commandId);
-      if (command) {
-        const suffix = command.status === 'failed' && command.resultCode ? '(' + command.resultCode + ')' : '';
-        setRowLoginStatus(row, command.status, suffix);
-        if (['success', 'failed', 'expired'].includes(command.status)) {
-          stopLoginCommandPolling(commandId);
-          if (button) button.disabled = row.dataset.enabled !== 'true';
-        }
-      }
-      if (Date.now() - startedAt >= 60000) {
-        stopLoginCommandPolling(commandId);
-        if (button) button.disabled = row.dataset.enabled !== 'true';
-      }
-    } catch {
-      setRowLoginStatus(row, 'failed', '(REQUEST_FAILED)');
-      stopLoginCommandPolling(commandId);
-      if (button) button.disabled = row.dataset.enabled !== 'true';
-    }
-  };
-  void poll();
-  loginCommandTimers.set(commandId, setInterval(poll, 2000));
-}
 
 async function loadPlatformLabels() {
   try {
@@ -726,15 +631,8 @@ async function loadPlatformAccounts() {
       row.appendChild(element('td', account.label));
       row.appendChild(element('td', account.enabled ? '启用' : '停用'));
       row.appendChild(element('td', dateLabel(account.updatedAt)));
-      const loginStatus = element('td');
-      loginStatus.dataset.loginCommandStatus = 'true';
-      loginStatus.appendChild(element('span', '—', 'muted'));
-      row.appendChild(loginStatus);
       const actions = element('td', null, 'row-actions');
-      const remoteLogin = actionButton('远程登录', 'remote-login', account.id);
-      remoteLogin.disabled = !account.enabled;
       actions.append(
-        remoteLogin,
         actionButton('编辑', 'edit-account', account.id),
         actionButton(account.enabled ? '停用' : '启用', 'toggle-account', account.id),
         actionButton('删除', 'delete-account', account.id, 'small-button danger'),
@@ -743,7 +641,6 @@ async function loadPlatformAccounts() {
       target.appendChild(row);
     });
     setMessage(message, '已更新', 'success');
-    await loadLoginCommands();
   } catch (error) {
     setMessage(message, errorMessage(error));
   }
@@ -784,16 +681,6 @@ function initPlatformAccounts() {
     const id = button.dataset.id;
     const row = button.closest('tr');
     try {
-      if (button.dataset.action === 'remote-login') {
-        button.disabled = true;
-        await api('/browser-commands', {
-          method: 'POST',
-          body: JSON.stringify({ type: 'LOGIN', platformAccountId: id }),
-        });
-        setMessage($('[data-platform-message]'), '统一登录任务已创建，请前往浏览器控制查看执行状态', 'success');
-        button.disabled = row.dataset.enabled !== 'true';
-        return;
-      }
       if (button.dataset.action === 'edit-account') {
         $('#platform-label').value = row.firstChild.textContent;
         $('#platform-enabled').value = row.dataset.enabled === 'true' ? 'true' : 'false';
@@ -814,11 +701,6 @@ function initPlatformAccounts() {
       setMessage($('[data-platform-message]'), '操作已保存', 'success');
       await loadPlatformAccounts();
     } catch (error) {
-      if (button.dataset.action === 'remote-login') {
-        const duplicate = error instanceof ApiError && error.code === 'DUPLICATE_PENDING';
-        button.disabled = row.dataset.enabled !== 'true';
-        if (duplicate) setMessage($('[data-platform-message]'), '已有进行中的统一登录任务，请前往浏览器控制查看');
-      }
       setMessage($('[data-platform-message]'), errorMessage(error));
     }
   });
@@ -921,6 +803,7 @@ async function loadReportExports(append = false) {
 
 let browserCommandPollTimer = null;
 let browserControlVisible = true;
+let browserControlUserNames = null;
 
 function browserCommandStatusLabel(status) {
   const labels = { pending: '等待中', executing: '执行中', succeeded: '成功', failed: '失败', expired: '已过期', manual_required: '待人工', cancelled: '已取消' };
@@ -937,19 +820,65 @@ function browserCommandProgressLabel(progress) {
   return '进行中';
 }
 
-async function loadBrowserControlAccounts() {
-  const select = $('#browser-command-account');
+function clearPlatformCredential() {
+  const view = $('#platform-credential-view');
+  const account = $('#platform-credential-account');
+  const password = $('#platform-credential-password');
+  if (account) account.textContent = '';
+  if (password) password.textContent = '';
+  if (view) view.hidden = true;
+}
+
+function fillPlatformAccountSelect(select, accounts, includeEmpty) {
   if (!select) return;
+  const selected = select.value;
+  clear(select);
+  if (includeEmpty) {
+    const empty = element('option', '不选择');
+    empty.value = '';
+    select.appendChild(empty);
+  }
+  accounts.forEach((account) => {
+    const option = element('option', account.label || '未命名');
+    option.value = account.id;
+    option.selected = account.id === selected;
+    select.appendChild(option);
+  });
+}
+
+async function loadBrowserControlAccounts() {
+  const taskSelect = $('#browser-command-account');
+  const loginSelect = $('#platform-login-account');
+  if (!taskSelect && !loginSelect) return;
   try {
     const result = await api('/platform-accounts');
-    clear(select);
-    const empty = element('option', '不选择'); empty.value = ''; select.appendChild(empty);
-    (result.platformAccounts || []).filter((account) => account.enabled !== false).forEach((account) => {
-      const option = element('option', account.label || '未命名');
-      option.value = account.id;
-      select.appendChild(option);
-    });
-  } catch (error) { setMessage($('[data-browser-command-message]'), errorMessage(error)); }
+    const accounts = (result.platformAccounts || []).filter((account) => account.enabled !== false);
+    fillPlatformAccountSelect(taskSelect, accounts, true);
+    fillPlatformAccountSelect(loginSelect, accounts, false);
+    if (loginSelect && !loginSelect.value && accounts[0]) loginSelect.value = accounts[0].id;
+    clearPlatformCredential();
+  } catch (error) {
+    setMessage($('[data-browser-command-message]'), errorMessage(error));
+    setMessage($('[data-platform-login-message]'), errorMessage(error));
+  }
+}
+
+async function loadBrowserControlUserNames() {
+  if (browserControlUserNames) return browserControlUserNames;
+  const names = new Map();
+  if (currentSessionUser?.id && currentSessionUser?.username) {
+    names.set(currentSessionUser.id, currentSessionUser.username);
+  }
+  if (currentSessionUser?.role === 'admin') {
+    try {
+      const result = await api('/users');
+      (result.users || []).forEach((user) => names.set(user.id, user.username));
+    } catch {
+      // The command table remains usable if the optional name map is temporarily unavailable.
+    }
+  }
+  browserControlUserNames = names;
+  return names;
 }
 
 async function loadImportBatches() {
@@ -976,17 +905,22 @@ async function loadBrowserCommands() {
   const message = $('[data-browser-command-status]');
   if (!target || !browserControlVisible) return;
   try {
-    const result = await api('/browser-commands?limit=100');
+    const [result, userNames] = await Promise.all([
+      api('/browser-commands?limit=100'),
+      loadBrowserControlUserNames(),
+    ]);
     clear(target);
     (result.commands || []).forEach((command) => {
       const row = element('tr'); row.dataset.id = command.id; row.dataset.type = command.type; row.dataset.account = command.platformAccountId || ''; row.dataset.batch = command.clientBatchId || '';
-      row.append(element('td', command.type), element('td', browserCommandStatusLabel(command.status), 'status-pill'), element('td', browserCommandProgressLabel(command.progress)), element('td', [command.resultCode, command.resultSummary].filter(Boolean).join(' / ') || '—'), element('td', dateLabel(command.createdAt)));
+      const creator = element('td', userNames.get(command.requestedBy) || '未知用户');
+      creator.dataset.commandCreator = 'true';
+      row.append(element('td', command.type), element('td', browserCommandStatusLabel(command.status), 'status-pill'), element('td', browserCommandProgressLabel(command.progress)), element('td', [command.resultCode, command.resultSummary].filter(Boolean).join(' / ') || '—'), creator, element('td', dateLabel(command.createdAt)));
       const actions = element('td', null, 'row-actions');
       if (['pending', 'executing'].includes(command.status)) actions.append(actionButton('取消', 'cancel-browser-command', command.id, 'small-button danger'));
       if (['failed', 'manual_required', 'expired'].includes(command.status)) actions.append(actionButton('重试', 'retry-browser-command', command.id));
       row.appendChild(actions); target.appendChild(row);
     });
-    if (!target.firstChild) { const row = element('tr'); const cell = element('td', '暂无浏览器任务'); cell.colSpan = 6; row.appendChild(cell); target.appendChild(row); }
+    if (!target.firstChild) { const row = element('tr'); const cell = element('td', '暂无浏览器任务'); cell.colSpan = 7; row.appendChild(cell); target.appendChild(row); }
     setMessage(message, '已更新 ' + (result.commands?.length || 0) + ' 条任务', 'success');
   } catch (error) { setMessage(message, errorMessage(error)); }
 }
@@ -1054,16 +988,52 @@ function startBrowserCommandPolling() {
 
 function initBrowserControl() {
   const commandForm = $('#browser-command-form');
+  const loginForm = $('#platform-login-form');
+  const loginAccount = $('#platform-login-account');
   const importForm = $('#import-batch-form');
   const type = $('#browser-command-type');
   const account = $('#browser-command-account');
   const batch = $('#browser-command-batch');
   document.addEventListener('visibilitychange', () => { browserControlVisible = document.visibilityState === 'visible'; if (browserControlVisible) void loadBrowserCommands(); });
-  type?.addEventListener('change', () => { account.required = type.value === 'LOGIN' || type.value.startsWith('QUERY_'); batch.required = type.value.startsWith('QUERY_'); });
+  window.addEventListener('pagehide', clearPlatformCredential);
+  loginAccount?.addEventListener('change', clearPlatformCredential);
+  $('#platform-credential-hide')?.addEventListener('click', clearPlatformCredential);
+  $('#platform-credential-show')?.addEventListener('click', async () => {
+    const platformAccountId = loginAccount?.value || '';
+    if (!platformAccountId) { setMessage($('[data-platform-login-message]'), '请选择平台账号'); return; }
+    clearPlatformCredential();
+    try {
+      const credential = await api('/platform-accounts/' + encodeURIComponent(platformAccountId) + '/credential-view');
+      $('#platform-credential-account').textContent = credential.account || '';
+      $('#platform-credential-password').textContent = credential.password || '';
+      $('#platform-credential-view').hidden = false;
+      setMessage($('[data-platform-login-message]'), '凭据已按需读取；关闭或切换账号后立即清空', 'success');
+    } catch (error) {
+      clearPlatformCredential();
+      setMessage($('[data-platform-login-message]'), errorMessage(error));
+    }
+  });
+  loginForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const platformAccountId = loginAccount?.value || '';
+    if (!platformAccountId) { setMessage($('[data-platform-login-message]'), '请选择平台账号'); return; }
+    setFormBusy(loginForm, true);
+    try {
+      await api('/browser-commands', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'LOGIN', platformAccountId }),
+      });
+      setMessage($('[data-platform-login-message]'), '登录任务已创建', 'success');
+      await loadBrowserCommands();
+    } catch (error) {
+      setMessage($('[data-platform-login-message]'), errorMessage(error));
+    } finally { setFormBusy(loginForm, false); }
+  });
+  type?.addEventListener('change', () => { account.required = type.value.startsWith('QUERY_'); batch.required = type.value.startsWith('QUERY_'); });
   type?.dispatchEvent(new Event('change'));
   commandForm?.addEventListener('submit', async (event) => {
     event.preventDefault(); const selectedType = type.value; const platformAccountId = selectedType === 'EXPORT_REPORT' ? null : (account.value || null); const importBatchId = selectedType.startsWith('QUERY_') ? (batch.value || null) : null;
-    if ((selectedType === 'LOGIN' || selectedType.startsWith('QUERY_')) && !platformAccountId) { setMessage($('[data-browser-command-message]'), '请选择平台账号'); return; }
+    if (selectedType.startsWith('QUERY_') && !platformAccountId) { setMessage($('[data-browser-command-message]'), '请选择平台账号'); return; }
     if (selectedType.startsWith('QUERY_') && !importBatchId) { setMessage($('[data-browser-command-message]'), '查询任务必须选择导入批次'); return; }
     setFormBusy(commandForm, true);
     try { await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: selectedType, platformAccountId, importBatchId }) }); setMessage($('[data-browser-command-message]'), '任务已创建', 'success'); await loadBrowserCommands(); }
