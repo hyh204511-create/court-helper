@@ -5,7 +5,8 @@ export const BROWSER_COMMAND_ALARM_NAME = "browser-command-poll";
 export const BROWSER_COMMAND_ALARM_PERIOD_MINUTES = 1;
 const COURT_URL_PATTERN = "https://zxfw.court.gov.cn/*";
 const POLL_INTERVAL_MS = 3000;
-const CONFIG_KEYS = ["serverUrl", "token", "expiresAt", "remoteLoginEnabled", "browserCommandDeviceId"];
+const CONFIG_KEYS = ["serverUrl", "token", "expiresAt", "browserCommandDeviceId"];
+const AUTHORIZATION_KEYS = ["token", "expiresAt", "browserCommandDeviceId"];
 const MANUAL_CODES = new Set(["NEEDS_HUMAN", "SELECTOR_CHANGED", "SESSION_EXPIRED", "UNKNOWN"]);
 
 function trim(value) {
@@ -56,7 +57,7 @@ export function createBrowserCommandPoller({
     const stored = await chromeApi.storage.local.get(CONFIG_KEYS);
     const serverUrl = trim(stored.serverUrl);
     const token = trim(stored.token);
-    if (!serverUrl || !token || stored.remoteLoginEnabled !== true || Number(stored.expiresAt) <= now()) return null;
+    if (!serverUrl || !token || Number(stored.expiresAt) <= now()) return null;
     let deviceId = trim(stored.browserCommandDeviceId);
     if (!deviceId) {
       deviceId = globalThis.crypto?.randomUUID?.() ?? `device-${Math.random().toString(16).slice(2, 18)}`;
@@ -124,6 +125,15 @@ export function createBrowserCommandPoller({
       await writeResult(runtime.client, claim.command.id, claim.claimToken, runtime.deviceId, response);
       return { ...response, commandId: claim.command.id };
     } catch (error) {
+      if (error?.status === 401 || error?.code === "AUTH_REQUIRED") {
+        stop();
+        if (typeof chromeApi?.storage?.local?.remove === "function") {
+          await chromeApi.storage.local.remove(AUTHORIZATION_KEYS);
+        } else {
+          await chromeApi?.storage?.local?.set?.({ token: undefined, expiresAt: undefined, browserCommandDeviceId: undefined });
+        }
+        return { ok: false, reason: "AUTH_REQUIRED" };
+      }
       return { ok: false, reason: error?.code ?? "REMOTE_ERROR" };
     } finally {
       inFlight = false;

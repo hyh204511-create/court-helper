@@ -6,14 +6,18 @@ import { createDebuggerDriver } from "./sw/debugger-driver.js";
 import {
   DISABLE_REMOTE_LOGIN,
   ENABLE_REMOTE_LOGIN,
-  REMOTE_LOGIN_ALARM_NAME,
   REMOTE_LOGIN_STATUS_REQUEST,
-  createLoginCommandPoller,
 } from "./sw/login-command-poll.js";
 import {
   BROWSER_COMMAND_ALARM_NAME,
   createBrowserCommandPoller,
 } from "./sw/browser-command-poll.js";
+import {
+  EXTENSION_PAIRING_ALARM_NAME,
+  EXTENSION_PAIRING_REQUEST,
+  EXTENSION_PAIRING_STATUS_REQUEST,
+  createExtensionPairer,
+} from "./sw/extension-pairing.js";
 
 const SYNC_STATUS_REQUEST = "SYNC_STATUS_REQUEST";
 const SYNC_CONFIG_KEYS = Object.freeze([
@@ -32,8 +36,10 @@ let remoteClient = null;
 let syncGeneration = 0;
 export let syncInitialization = Promise.resolve(null);
 const debuggerDriver = createDebuggerDriver();
-const loginCommandPoller = createLoginCommandPoller();
 const browserCommandPoller = createBrowserCommandPoller();
+const extensionPairer = createExtensionPairer({
+  onAuthorized: async () => wakeBrowserCommandPoller({ immediate: true }),
+});
 
 function stringValue(...values) {
   return values.find((value) => typeof value === "string" && value.trim() !== "")?.trim() ?? "";
@@ -181,40 +187,34 @@ export function getRemoteClient() {
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
 
-function wakeLoginCommandPoller({ immediate = true } = {}) {
-  return loginCommandPoller.start({ immediate }).catch(() => null);
-}
-
-function createLoginCommandAlarm() {
-  loginCommandPoller.ensureAlarm?.();
-}
-
 function wakeBrowserCommandPoller({ immediate = true } = {}) {
   return browserCommandPoller.start({ immediate }).catch(() => null);
 }
 
+function wakeExtensionPairer({ immediate = true } = {}) {
+  return extensionPairer.start({ immediate }).catch(() => null);
+}
+
 if (globalThis.chrome?.runtime?.onStartup?.addListener) {
   chrome.runtime.onStartup.addListener(() => {
-    createLoginCommandAlarm();
-    wakeLoginCommandPoller({ immediate: true });
     browserCommandPoller.ensureAlarm();
     wakeBrowserCommandPoller({ immediate: true });
+    wakeExtensionPairer({ immediate: true });
   });
 }
 
 if (globalThis.chrome?.runtime?.onInstalled?.addListener) {
   chrome.runtime.onInstalled.addListener(() => {
-    createLoginCommandAlarm();
-    wakeLoginCommandPoller({ immediate: true });
     browserCommandPoller.ensureAlarm();
     wakeBrowserCommandPoller({ immediate: true });
+    wakeExtensionPairer({ immediate: true });
   });
 }
 
 if (globalThis.chrome?.alarms?.onAlarm?.addListener) {
   chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm?.name === REMOTE_LOGIN_ALARM_NAME) loginCommandPoller.pollOnce().catch(() => {});
     if (alarm?.name === BROWSER_COMMAND_ALARM_NAME) browserCommandPoller.pollOnce().catch(() => {});
+    if (alarm?.name === EXTENSION_PAIRING_ALARM_NAME) extensionPairer.pollOnce().catch(() => {});
   });
 }
 
@@ -225,11 +225,12 @@ if (globalThis.chrome?.storage?.onChanged?.addListener) {
       queueSyncRebuild();
     }
     if (changes.remoteLoginEnabled?.newValue === false) {
-      loginCommandPoller.stop({ clearToken: true }).catch(() => {});
       browserCommandPoller.stop();
     } else if (changes.remoteLoginEnabled?.newValue === true) {
-      wakeLoginCommandPoller({ immediate: true });
       wakeBrowserCommandPoller({ immediate: true });
+    }
+    if (Object.hasOwn(changes ?? {}, "serverUrl") || Object.hasOwn(changes ?? {}, "token") || Object.hasOwn(changes ?? {}, "expiresAt")) {
+      wakeExtensionPairer({ immediate: true });
     }
   });
 }
@@ -303,21 +304,35 @@ function handleSyncRetry(sendResponse) {
 
 function handleRemoteLoginMessage(message, sendResponse) {
   if (message?.type === ENABLE_REMOTE_LOGIN) {
-    loginCommandPoller.enable({ serverPassword: message.serverPassword })
-      .then((response) => sendResponse(response))
-      .catch(() => sendResponse({ ok: false, reason: "REMOTE_ERROR" }));
-    return true;
+    sendResponse({ ok: false, reason: "PAIRING_REQUIRED" });
+    return false;
   }
   if (message?.type === DISABLE_REMOTE_LOGIN) {
-    loginCommandPoller.disable()
+    extensionPairer.disable()
+      .then(() => {
+        browserCommandPoller.stop();
+        return { ok: true, status: "stopped", enabled: false };
+      })
       .then((response) => sendResponse({ ...response, status: "stopped", enabled: false }))
       .catch(() => sendResponse({ ok: false, status: "stopped", enabled: false }));
     return true;
   }
   if (message?.type === REMOTE_LOGIN_STATUS_REQUEST) {
-    loginCommandPoller.getStatus()
-      .then((status) => sendResponse({ ok: true, ...status }))
-      .catch(() => sendResponse({ ok: false, status: "stopped", enabled: false }));
+    sendResponse({ ok: true, ...extensionPairer.getStatus() });
+    return false;
+  }
+  return false;
+}
+
+function handleExtensionPairingMessage(message, sendResponse) {
+  if (message?.type === EXTENSION_PAIRING_STATUS_REQUEST) {
+    sendResponse({ ok: true, ...extensionPairer.getStatus() });
+    return false;
+  }
+  if (message?.type === EXTENSION_PAIRING_REQUEST) {
+    extensionPairer.requestPairing()
+      .then((response) => sendResponse({ ok: true, ...response }))
+      .catch(() => sendResponse({ ok: false, status: "unavailable", code: "PAIRING_UNAVAILABLE" }));
     return true;
   }
   return false;
@@ -329,11 +344,11 @@ if (globalThis.chrome?.runtime?.onMessage?.addListener) {
       return debuggerDriver.handleMessage(message, sender, sendResponse);
     }
     if (message?.type !== ENABLE_REMOTE_LOGIN && message?.type !== DISABLE_REMOTE_LOGIN) {
-      wakeLoginCommandPoller({ immediate: true });
       wakeBrowserCommandPoller({ immediate: true });
     }
     // AUTO_LOGIN 只在 content script 处理，service worker 不接收、不转发、不持久化。
     if (message?.type === "AUTO_LOGIN") return false;
+    if (handleExtensionPairingMessage(message, sendResponse)) return true;
     if (message?.type === "LOGIN_STATE") {
       persistLoginState(message, sendResponse);
       return true;

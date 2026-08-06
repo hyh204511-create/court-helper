@@ -64,13 +64,7 @@ export function registerPlatformAccountRoutes(
   const { authService, config, prefix, service } = options;
   const protectedPreHandler = async (request: FastifyRequest) => authenticateRequest(request, authService);
   const adminPreHandler = async (request: FastifyRequest) => requireAdmin(request, authService);
-  const credentialViewPreHandler = async (request: FastifyRequest) => {
-    await authenticateRequest(request, authService);
-    const context = request.auth;
-    if (!context || context.mechanism !== 'cookie' || context.session.clientType !== 'admin_ui') {
-      throw new ForbiddenError();
-    }
-  };
+  const credentialViewPreHandler = async (request: FastifyRequest) => authenticateRequest(request, authService);
   const extensionCredentialPreHandler = async (request: FastifyRequest) => {
     await authenticateRequest(request, authService);
     const context = request.auth;

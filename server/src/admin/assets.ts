@@ -245,6 +245,7 @@ function errorMessage(error) {
   if (error instanceof ApiError) {
     if (error.status === 403) return '无权访问';
     if (error.status === 401 || error.code === 'ACCOUNT_DISABLED') return '账号或密码错误/账号不可用';
+    if (error.code === 'DUPLICATE_PENDING') return '已有进行中的统一登录任务，请前往浏览器控制查看';
     if (error.requestId) return '请求失败，请提供请求编号 ' + error.requestId;
   }
   return '请求失败，请稍后重试';
@@ -785,14 +786,12 @@ function initPlatformAccounts() {
     try {
       if (button.dataset.action === 'remote-login') {
         button.disabled = true;
-        setRowLoginStatus(row, 'pending');
-        const command = await api('/login-commands', {
+        await api('/browser-commands', {
           method: 'POST',
-          body: JSON.stringify({ platformAccountId: id }),
+          body: JSON.stringify({ type: 'LOGIN', platformAccountId: id }),
         });
-        setMessage($('[data-platform-message]'), '登录指令已创建', 'success');
-        await loadLoginCommands();
-        startLoginCommandPolling(row, command.id, button);
+        setMessage($('[data-platform-message]'), '统一登录任务已创建，请前往浏览器控制查看执行状态', 'success');
+        button.disabled = row.dataset.enabled !== 'true';
         return;
       }
       if (button.dataset.action === 'edit-account') {
@@ -817,8 +816,8 @@ function initPlatformAccounts() {
     } catch (error) {
       if (button.dataset.action === 'remote-login') {
         const duplicate = error instanceof ApiError && error.code === 'DUPLICATE_PENDING';
-        setRowLoginStatus(row, duplicate ? 'pending' : 'failed', duplicate ? '(已有未完成指令)' : '(REQUEST_FAILED)');
         button.disabled = row.dataset.enabled !== 'true';
+        if (duplicate) setMessage($('[data-platform-message]'), '已有进行中的统一登录任务，请前往浏览器控制查看');
       }
       setMessage($('[data-platform-message]'), errorMessage(error));
     }
@@ -992,6 +991,61 @@ async function loadBrowserCommands() {
   } catch (error) { setMessage(message, errorMessage(error)); }
 }
 
+async function loadExtensionAuthorizations() {
+  const pairingTarget = $('#extension-pairing-list');
+  const deviceTarget = $('#extension-device-list');
+  const message = $('[data-extension-authorization-message]');
+  if (!pairingTarget || !deviceTarget) return;
+  try {
+    const [pairingResult, deviceResult] = await Promise.all([
+      api('/auth/extension-pairings'),
+      api('/auth/extension-devices'),
+    ]);
+    clear(pairingTarget);
+    (pairingResult.pairings || []).forEach((pairing) => {
+      const row = element('tr');
+      row.dataset.id = pairing.id;
+      row.append(
+        element('td', pairing.deviceId || '—'),
+        element('td', pairing.label || '未命名'),
+        element('td', dateLabel(pairing.expiresAt)),
+      );
+      const codeCell = element('td');
+      const code = document.createElement('input');
+      code.type = 'text'; code.inputMode = 'numeric'; code.maxLength = 6; code.autocomplete = 'one-time-code';
+      code.setAttribute('aria-label', '扩展核对码');
+      codeCell.append(code);
+      const actions = element('td', null, 'row-actions');
+      actions.append(actionButton('批准', 'approve-extension-pairing', pairing.id));
+      row.append(codeCell, actions);
+      pairingTarget.append(row);
+    });
+    if (!pairingTarget.firstChild) {
+      const row = element('tr'); const cell = element('td', '暂无待批准的扩展请求'); cell.colSpan = 5; row.append(cell); pairingTarget.append(row);
+    }
+    clear(deviceTarget);
+    (deviceResult.devices || []).forEach((device) => {
+      const row = element('tr'); row.dataset.id = device.id;
+      row.append(
+        element('td', device.deviceId || '—'),
+        element('td', device.label || '未命名'),
+        element('td', dateLabel(device.lastSeenAt)),
+        element('td', device.enabled && !device.revokedAt ? '已授权' : '已撤销'),
+      );
+      const actions = element('td', null, 'row-actions');
+      if (device.enabled && !device.revokedAt) actions.append(actionButton('撤销', 'revoke-extension-device', device.id, 'small-button danger'));
+      row.append(actions);
+      deviceTarget.append(row);
+    });
+    if (!deviceTarget.firstChild) {
+      const row = element('tr'); const cell = element('td', '暂无已授权设备'); cell.colSpan = 5; row.append(cell); deviceTarget.append(row);
+    }
+    setMessage(message, '授权状态已更新', 'success');
+  } catch (error) {
+    setMessage(message, errorMessage(error));
+  }
+}
+
 function startBrowserCommandPolling() {
   if (browserCommandPollTimer) window.clearInterval(browserCommandPollTimer);
   browserCommandPollTimer = window.setInterval(() => { if (browserControlVisible) void loadBrowserCommands(); }, 3000);
@@ -1023,12 +1077,40 @@ function initBrowserControl() {
     catch (error) { setMessage($('[data-import-batch-message]'), errorMessage(error)); } finally { setFormBusy(importForm, false); }
   });
   $('#browser-command-refresh')?.addEventListener('click', () => { void loadBrowserCommands(); void loadImportBatches(); });
+  $('#extension-pairing-list')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-action="approve-extension-pairing"]');
+    if (!button) return;
+    const row = button.closest('tr');
+    const verificationCode = row?.querySelector('input')?.value?.trim() || '';
+    try {
+      button.disabled = true;
+      await api('/auth/extension-pairings/' + encodeURIComponent(button.dataset.id) + '/approve', {
+        method: 'POST', body: JSON.stringify({ verificationCode }),
+      });
+      setMessage($('[data-extension-authorization-message]'), '扩展已批准，正在等待设备兑换授权', 'success');
+      await loadExtensionAuthorizations();
+    } catch (error) {
+      setMessage($('[data-extension-authorization-message]'), errorMessage(error));
+    } finally { button.disabled = false; }
+  });
+  $('#extension-device-list')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-action="revoke-extension-device"]');
+    if (!button || !window.confirm('确认撤销此扩展设备？')) return;
+    try {
+      button.disabled = true;
+      await api('/auth/extension-devices/' + encodeURIComponent(button.dataset.id) + '/revoke', { method: 'POST', body: '{}' });
+      setMessage($('[data-extension-authorization-message]'), '扩展设备已撤销', 'success');
+      await loadExtensionAuthorizations();
+    } catch (error) {
+      setMessage($('[data-extension-authorization-message]'), errorMessage(error));
+    } finally { button.disabled = false; }
+  });
   $('#browser-command-rows')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-action]'); if (!button) return; const id = button.dataset.id;
     try { button.disabled = true; if (button.dataset.action === 'cancel-browser-command') await api('/browser-commands/' + encodeURIComponent(id) + '/cancel', { method: 'POST', body: '{}' }); else if (button.dataset.action === 'retry-browser-command') { const row = button.closest('tr'); await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: row.dataset.type, platformAccountId: row.dataset.account || null, importBatchId: row.dataset.batch || null }) }); } await loadBrowserCommands(); }
     catch (error) { setMessage($('[data-browser-command-status]'), errorMessage(error)); } finally { button.disabled = false; }
   });
-  void loadBrowserControlAccounts(); void loadImportBatches(); startBrowserCommandPolling();
+  void loadBrowserControlAccounts(); void loadImportBatches(); void loadExtensionAuthorizations(); startBrowserCommandPolling();
 }
 
 function initReportExports() {

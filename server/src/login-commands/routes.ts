@@ -82,7 +82,10 @@ async function requireAdminCookie(
 ): Promise<AuthContext> {
   await requireAdmin(request, authService);
   const context = request.auth as AuthContext;
-  if (context.mechanism !== 'cookie') {
+  if (context.session.clientType === 'extension') {
+    return context;
+  }
+  if (context.mechanism !== 'cookie' || context.session.clientType !== 'admin_ui') {
     throw new ForbiddenError('Admin cookie session required');
   }
   assertCookieWrite(request, authService, config);

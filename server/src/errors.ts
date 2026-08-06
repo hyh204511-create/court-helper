@@ -55,8 +55,8 @@ export class ConflictError extends AppError {
 export class TooManyRequestsError extends AppError {
   public readonly retryAfterSeconds: number;
 
-  constructor(retryAfterSeconds: number) {
-    super('Too many login attempts', 'RATE_LIMITED', 429, true);
+  constructor(retryAfterSeconds: number, message = 'Too many requests') {
+    super(message, 'RATE_LIMITED', 429, true);
     this.retryAfterSeconds = retryAfterSeconds;
   }
 }

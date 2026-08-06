@@ -201,30 +201,16 @@ test("配置服务器后登录、列出平台账号，并在点击时取凭据�
   const chromeApi = makeChrome({
     storageData: {
       serverUrl: "https://sync.example.test",
-      serverUsername: "worker",
+      token: "paired-extension-token",
+      expiresAt: Date.now() + 60_000,
     },
   });
   const { dom, controller, result } = await initController({
     chromeApi,
-    setupDom: (document) => {
-      const input = document.createElement("input");
-      input.id = "login-server-password";
-      input.type = "password";
-      input.value = "server-login-pass";
-      document.body.append(input);
-    },
     fetchImpl: async (url, init = {}) => {
       calls.push({ url, init });
-      if (url === "https://sync.example.test/api/v1/auth/login") {
-        assert.deepEqual(JSON.parse(init.body), {
-          username: "worker",
-          password: "server-login-pass",
-          clientType: "extension",
-        });
-        return jsonResponse({ token: "opaque-extension-token" });
-      }
       if (url === "https://sync.example.test/api/v1/platform-accounts") {
-        assert.equal(init.headers.Authorization, "Bearer opaque-extension-token");
+        assert.equal(init.headers.Authorization, "Bearer paired-extension-token");
         return jsonResponse({
           platformAccounts: [
             { id: "pa-1", label: "Court Primary", enabled: true, updatedAt: "2026-08-05T00:00:00.000Z" },
@@ -233,7 +219,7 @@ test("配置服务器后登录、列出平台账号，并在点击时取凭据�
       }
       if (url === "https://sync.example.test/api/v1/platform-accounts/pa-1/credential") {
         assert.equal(init.method, "POST");
-        assert.equal(init.headers.Authorization, "Bearer opaque-extension-token");
+        assert.equal(init.headers.Authorization, "Bearer paired-extension-token");
         return jsonResponse({ account: "court-user", password: "court-secret" });
       }
       throw new Error(`unexpected url ${url}`);
@@ -252,10 +238,10 @@ test("配置服务器后登录、列出平台账号，并在点击时取凭据�
     password: "court-secret",
     serviceUrl: "http://127.0.0.1:8765",
   }]);
-  assert.equal(JSON.stringify(chromeApi.calls.storageWrites).includes("opaque-extension-token"), false);
+  assert.equal(JSON.stringify(calls).includes("server-login-pass"), false);
   assert.equal(JSON.stringify(chromeApi.calls.storageWrites).includes("court-secret"), false);
   assert.equal(dom.window.document.body.textContent.includes("court-secret"), false);
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 2);
   controller.destroy();
   dom.window.close();
 });
@@ -264,20 +250,14 @@ test("服务器不可达时提示服务器不可达且不触发 AUTO_LOGIN", asy
   const chromeApi = makeChrome({
     storageData: {
       serverUrl: "https://sync.example.test",
-      serverUsername: "worker",
+      token: "paired-extension-token",
+      expiresAt: Date.now() + 60_000,
     },
   });
   const { dom, controller, result } = await initController({
     chromeApi,
-    setupDom: (document) => {
-      const input = document.createElement("input");
-      input.id = "login-server-password";
-      input.type = "password";
-      input.value = "server-login-pass";
-      document.body.append(input);
-    },
     fetchImpl: async () => {
-      throw new Error("network down with secret server-login-pass");
+      throw new Error("network down");
     },
   });
   assert.deepEqual(result, { ok: false, error: "SERVER_UNREACHABLE" });
@@ -285,7 +265,6 @@ test("服务器不可达时提示服务器不可达且不触发 AUTO_LOGIN", asy
   assert.equal(dom.window.document.querySelector("#btn-auto-login").disabled, true);
   await controller.sendAutoLogin();
   assert.equal(chromeApi.calls.messages.length, 0);
-  assert.equal(dom.window.document.body.textContent.includes("server-login-pass"), false);
   controller.destroy();
   dom.window.close();
 });
@@ -294,30 +273,23 @@ test("服务器登录失败时提示登录失败且不触发 AUTO_LOGIN", async 
   const chromeApi = makeChrome({
     storageData: {
       serverUrl: "https://sync.example.test",
-      serverUsername: "worker",
+      token: "paired-extension-token",
+      expiresAt: Date.now() + 60_000,
     },
   });
   const { dom, controller, result } = await initController({
     chromeApi,
-    setupDom: (document) => {
-      const input = document.createElement("input");
-      input.id = "login-server-password";
-      input.type = "password";
-      input.value = "wrong-pass";
-      document.body.append(input);
-    },
     fetchImpl: async () => ({
       ok: false,
       status: 401,
-      json: async () => ({ error: { code: "AUTH_FAILED", message: "wrong-pass" } }),
-      text: async () => JSON.stringify({ error: { code: "AUTH_FAILED", message: "wrong-pass" } }),
+      json: async () => ({ error: { code: "AUTH_REQUIRED" } }),
+      text: async () => JSON.stringify({ error: { code: "AUTH_REQUIRED" } }),
     }),
   });
   assert.deepEqual(result, { ok: false, error: "SERVER_AUTH_FAILED" });
   assert.equal(dom.window.document.querySelector("#login-service-status").dataset.state, "auth-failed");
   await controller.sendAutoLogin();
   assert.equal(chromeApi.calls.messages.length, 0);
-  assert.equal(dom.window.document.body.textContent.includes("wrong-pass"), false);
   controller.destroy();
   dom.window.close();
 });
@@ -326,18 +298,12 @@ test("取服务器平台凭据失败时提示凭据获取失败且不触发 AUTO
   const chromeApi = makeChrome({
     storageData: {
       serverUrl: "https://sync.example.test",
-      serverUsername: "worker",
+      token: "paired-extension-token",
+      expiresAt: Date.now() + 60_000,
     },
   });
   const { dom, controller, result } = await initController({
     chromeApi,
-    setupDom: (document) => {
-      const input = document.createElement("input");
-      input.id = "login-server-password";
-      input.type = "password";
-      input.value = "server-login-pass";
-      document.body.append(input);
-    },
     fetchImpl: async (url) => {
       if (url.endsWith("/auth/login")) return jsonResponse({ token: "opaque-extension-token" });
       if (url.endsWith("/platform-accounts")) {

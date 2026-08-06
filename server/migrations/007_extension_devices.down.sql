@@ -1,0 +1,10 @@
+DROP INDEX IF EXISTS sessions_extension_device_id_idx;
+DROP INDEX IF EXISTS extension_pairings_one_active_device_idx;
+DROP INDEX IF EXISTS extension_pairings_status_created_idx;
+DROP INDEX IF EXISTS extension_devices_paired_by_idx;
+DELETE FROM sessions WHERE extension_device_id IS NOT NULL;
+ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_extension_device_id_fkey;
+ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_extension_device_id_fk;
+ALTER TABLE sessions DROP COLUMN IF EXISTS extension_device_id;
+DROP TABLE IF EXISTS extension_pairings;
+DROP TABLE IF EXISTS extension_devices;

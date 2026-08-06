@@ -49,14 +49,6 @@ function accessOf(request: FastifyRequest): ImportBatchAccess {
   return { userId: auth.user.id };
 }
 
-async function requireAdminUiCookie(request: FastifyRequest, authService: AuthService): Promise<void> {
-  await authenticateRequest(request, authService);
-  const context = request.auth;
-  if (!context || context.mechanism !== 'cookie' || context.session.clientType !== 'admin_ui') {
-    throw new ForbiddenError();
-  }
-}
-
 async function readFilePart(part: MultipartFile): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -148,10 +140,10 @@ export function registerImportBatchRoutes(
   options: RegisterImportBatchOptions,
 ): void {
   const { authService, browserCommandService, config, prefix, service } = options;
-  const protectedPreHandler = async (request: FastifyRequest) => requireAdminUiCookie(request, authService);
+  const protectedPreHandler = async (request: FastifyRequest) => authenticateRequest(request, authService);
   const extensionPreHandler = async (request: FastifyRequest) => {
     await authenticateRequest(request, authService);
-    if (request.auth?.session.clientType !== 'extension') throw new ForbiddenError();
+    if (request.auth?.session.clientType !== 'extension' || !request.auth.extensionDevice) throw new ForbiddenError();
   };
 
   app.post(route(prefix, '/import-batches'), { preHandler: protectedPreHandler }, async (request, reply) => {
@@ -190,12 +182,19 @@ export function registerImportBatchRoutes(
       const id = importBatchId(request);
       const headers = request.headers as Record<string, unknown>;
       const commandId = headers['x-browser-command-id'];
-      const deviceId = headers['x-browser-command-device'];
+      const claimedDeviceId = headers['x-browser-command-device'];
       const claimToken = headers['x-browser-command-claim'];
-      if (typeof commandId !== 'string' || typeof deviceId !== 'string' || typeof claimToken !== 'string') {
+      if (typeof commandId !== 'string' || typeof claimedDeviceId !== 'string' || typeof claimToken !== 'string') {
         throw new ValidationError([{ field: 'claim', code: 'required' }]);
       }
-      await browserCommandService.authorizeExecutionData(commandId, id, deviceId, claimToken);
+      const context = request.auth;
+      if (!context?.extensionDevice) throw new ForbiddenError();
+      await browserCommandService.authorizeExecutionData(
+        commandId,
+        id,
+        context.extensionDevice.deviceId,
+        claimToken,
+      );
       const result = await service.readExecutionData(id);
       reply.header('cache-control', 'private, no-store');
       return {

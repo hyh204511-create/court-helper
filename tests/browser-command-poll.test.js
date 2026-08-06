@@ -21,7 +21,11 @@ function chromeMock(sendMessage) {
     browserCommandDeviceId: "device-test",
   };
   return {
-    storage: { local: { get: async () => stored, set: async (value) => Object.assign(stored, value) } },
+    storage: { local: {
+      get: async () => stored,
+      set: async (value) => Object.assign(stored, value),
+      remove: async (keys) => { for (const key of (Array.isArray(keys) ? keys : [keys])) delete stored[key]; },
+    } },
     tabs: {
       query: async () => [{ id: 7, url: "https://zxfw.court.gov.cn/#/pagesWsla/pc/list/index" }],
       sendMessage,
@@ -90,4 +94,50 @@ test("browser command poller reports NO_COURT_TAB without dispatching content", 
   assert.equal(result.error, "NO_COURT_TAB");
   assert.equal(resultBody.resultCode, "NO_COURT_TAB");
   assert.equal(resultBody.status, "failed");
+});
+
+test("browser command polling depends on a valid device token, not the legacy remote-login switch", async () => {
+  const chromeApi = chromeMock(async () => ({ ok: true }));
+  const stored = await chromeApi.storage.local.get();
+  stored.remoteLoginEnabled = false;
+  chromeApi.storage.local.get = async () => stored;
+  const scheduler = {
+    intervals: new Map(),
+    setInterval(callback, delay) { this.intervals.set(1, { callback, delay }); return 1; },
+    clearInterval(id) { this.intervals.delete(id); },
+  };
+  const poller = createBrowserCommandPoller({
+    chromeApi,
+    scheduler,
+    fetchImpl: async (url) => {
+      if (String(url).endsWith('/browser-commands/next')) return response({ command: null });
+      throw new Error(`unexpected ${url}`);
+    },
+  });
+  const started = await poller.start({ immediate: false });
+  assert.deepEqual(started, { ok: true });
+  assert.equal(scheduler.intervals.size, 1);
+});
+
+test("revoked device authorization clears its local token and stops unified polling", async () => {
+  const chromeApi = chromeMock(async () => ({ ok: true }));
+  const scheduler = {
+    intervals: new Map(),
+    setInterval(callback, delay) { this.intervals.set(1, { callback, delay }); return 1; },
+    clearInterval(id) { this.intervals.delete(id); },
+  };
+  const poller = createBrowserCommandPoller({
+    chromeApi,
+    scheduler,
+    fetchImpl: async () => response({ error: { code: "AUTH_REQUIRED" } }, 401),
+  });
+
+  await poller.start({ immediate: false });
+  const result = await poller.pollOnce();
+
+  assert.deepEqual(result, { ok: false, reason: "AUTH_REQUIRED" });
+  const stored = await chromeApi.storage.local.get();
+  assert.equal(stored.token, undefined);
+  assert.equal(stored.expiresAt, undefined);
+  assert.equal(scheduler.intervals.size, 0);
 });

@@ -13,6 +13,7 @@ import { PgImportBatchRepository } from '../src/import-batches/repository.ts';
 import { MAX_IMPORT_BATCH_BYTES } from '../src/import-batches/service.ts';
 import { IMPORT_BATCH_CONTENT_TYPE } from '../src/import-batches/types.ts';
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
+import { bindPairedExtensionRepository, pairedExtensionTokenForApp } from './paired-extension.ts';
 
 const TEST_KEY = Buffer.alloc(32, 41).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
@@ -150,6 +151,7 @@ async function makeApp(options = {}) {
     storageBackend,
   });
   await app.ready();
+  bindPairedExtensionRepository(app, authRepository);
   await authRepository.createUser({
     id: USER_ID,
     username: 'worker',
@@ -183,14 +185,7 @@ async function loginUi(app, username, password) {
 }
 
 async function loginExtension(app) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/auth/login',
-    headers: { origin: 'chrome-extension://test-extension' },
-    payload: { username: 'worker', password: USER_PASSWORD, clientType: 'extension' },
-  });
-  assert.equal(response.statusCode, 200);
-  return response.json().token;
+  return (await pairedExtensionTokenForApp(app)).token;
 }
 
 function cookieWriteHeaders(session) {
@@ -301,7 +296,7 @@ test('admin_ui Cookie upload creates a safe global import batch and any signed-i
   }
 });
 
-test('import batch routes require an admin_ui Cookie session and CSRF-protected writes', async () => {
+test('import batch routes require authentication; extension bearer writes do not use cookie CSRF', async () => {
   const { app } = await makeApp();
 
   try {
@@ -325,8 +320,7 @@ test('import batch routes require an admin_ui Cookie session and CSRF-protected 
       headers: { authorization: `Bearer ${extensionToken}`, ...payload.headers },
       payload: payload.payload,
     });
-    assert.equal(bearer.statusCode, 403);
-    assert.equal(errorCode(bearer), 'FORBIDDEN');
+      assert.equal(bearer.statusCode, 201);
 
     const fakeCookie = await app.inject({
       method: 'GET',
@@ -341,7 +335,7 @@ test('import batch routes require an admin_ui Cookie session and CSRF-protected 
       url: '/api/v1/import-batches',
       headers: { authorization: `Bearer ${extensionToken}` },
     });
-    assert.equal(bearerList.statusCode, 403);
+      assert.equal(bearerList.statusCode, 200);
   } finally {
     await app.close();
   }

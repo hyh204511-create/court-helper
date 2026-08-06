@@ -1,11 +1,17 @@
+import {
+  EXTENSION_PAIRING_REQUEST,
+  EXTENSION_PAIRING_STATUS_REQUEST,
+} from "../sw/extension-pairing.js";
+import { DISABLE_REMOTE_LOGIN } from "../sw/login-command-poll.js";
+
 export const UI_TEXT = Object.freeze({
-  checking: "正在检查远程登录状态...",
-  running: "轮询运行中",
+  checking: "正在检查后台授权状态...",
+  authorized: "后台授权已生效",
+  awaitingApproval: "请在后台浏览器控制页输入此核对码：",
   stopped: "已停用",
-  expired: "token 过期，请重新启用",
-  notConfigured: "未配置服务器",
-  enabling: "正在启用...",
-  enableFailed: "启用失败，请检查服务器配置、密码或服务器账号是否为 admin 角色",
+  unavailable: "后台授权服务不可达，请检查服务器配置",
+  requesting: "正在请求后台授权...",
+  requestFailed: "授权请求失败，请检查服务器配置后重试",
 });
 
 function getElement(document, selector) {
@@ -13,16 +19,16 @@ function getElement(document, selector) {
 }
 
 function statusText(status) {
-  if (status === "running") return UI_TEXT.running;
-  if (status === "token-expired") return UI_TEXT.expired;
-  if (status === "not-configured") return UI_TEXT.notConfigured;
+  if (status === "authorized") return UI_TEXT.authorized;
+  if (status === "unavailable" || status === "not_configured") return UI_TEXT.unavailable;
   return UI_TEXT.stopped;
 }
 
 function safeStatus(response = {}) {
-  if (response?.ok !== true && response?.enabled !== true) return "stopped";
-  const value = typeof response?.status === "string" ? response.status : "";
-  return ["running", "token-expired", "not-configured", "stopped"].includes(value) ? value : "stopped";
+  if (response?.status === "awaiting_approval") return "awaiting_approval";
+  if (response?.status === "authorized") return "authorized";
+  if (response?.status === "unavailable" || response?.status === "not_configured") return response.status;
+  return "stopped";
 }
 
 function sendRuntimeMessage(chromeApi, message) {
@@ -39,16 +45,20 @@ export function createRemoteLoginControls({
   document = globalThis.document,
   chromeApi = globalThis.chrome,
 } = {}) {
-  const passwordInput = getElement(document, "#remote-login-password");
   const enableButton = getElement(document, "#btn-enable-remote-login");
   const disableButton = getElement(document, "#btn-disable-remote-login");
   const statusElement = getElement(document, "#remote-login-status");
   let destroyed = false;
   let busy = false;
 
-  function setStatus(status) {
+  function setStatus(status, response = {}) {
     if (!statusElement) return;
-    statusElement.textContent = statusText(status);
+    const code = typeof response?.verificationCode === "string" && /^\d{6}$/.test(response.verificationCode)
+      ? response.verificationCode
+      : null;
+    statusElement.textContent = status === "awaiting_approval" && code
+      ? `${UI_TEXT.awaitingApproval}${code}`
+      : statusText(status);
     statusElement.dataset.state = status;
   }
 
@@ -60,28 +70,25 @@ export function createRemoteLoginControls({
 
   async function refreshStatus() {
     if (destroyed) return { ok: false };
-    const response = await sendRuntimeMessage(chromeApi, { type: "REMOTE_LOGIN_STATUS_REQUEST" });
-    const status = safeStatus(response);
-    setStatus(status);
+    const response = await sendRuntimeMessage(chromeApi, { type: EXTENSION_PAIRING_STATUS_REQUEST });
+    setStatus(safeStatus(response), response);
     return response;
   }
 
   async function enable() {
     if (destroyed || busy) return { ok: false };
-    const serverPassword = passwordInput?.value ?? "";
     setBusy(true);
     if (statusElement) {
-      statusElement.textContent = UI_TEXT.enabling;
+      statusElement.textContent = UI_TEXT.requesting;
       statusElement.dataset.state = "checking";
     }
     try {
-      const response = await sendRuntimeMessage(chromeApi, { type: "ENABLE_REMOTE_LOGIN", serverPassword });
+      const response = await sendRuntimeMessage(chromeApi, { type: EXTENSION_PAIRING_REQUEST });
       if (response?.ok === true) {
-        setStatus(safeStatus(response));
-        if (passwordInput) passwordInput.value = "";
+        setStatus(safeStatus(response), response);
       } else {
-        setStatus(response?.reason === "NOT_CONFIGURED" ? "not-configured" : "stopped");
-        if (statusElement) statusElement.textContent = UI_TEXT.enableFailed;
+        setStatus(response?.status === "not_configured" ? "not_configured" : "unavailable", response);
+        if (statusElement) statusElement.textContent = UI_TEXT.requestFailed;
       }
       return response;
     } finally {
@@ -93,9 +100,8 @@ export function createRemoteLoginControls({
     if (destroyed || busy) return { ok: false };
     setBusy(true);
     try {
-      const response = await sendRuntimeMessage(chromeApi, { type: "DISABLE_REMOTE_LOGIN" });
+      const response = await sendRuntimeMessage(chromeApi, { type: DISABLE_REMOTE_LOGIN });
       setStatus("stopped");
-      if (passwordInput) passwordInput.value = "";
       return response;
     } finally {
       setBusy(false);
@@ -127,11 +133,5 @@ export function createRemoteLoginControls({
     unbind();
   }
 
-  return {
-    init,
-    refreshStatus,
-    enable,
-    disable,
-    destroy,
-  };
+  return { init, refreshStatus, enable, disable, destroy };
 }

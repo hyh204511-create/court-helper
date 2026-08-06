@@ -5,7 +5,7 @@ export const ENABLE_REMOTE_LOGIN = "ENABLE_REMOTE_LOGIN";
 export const DISABLE_REMOTE_LOGIN = "DISABLE_REMOTE_LOGIN";
 export const REMOTE_LOGIN_STATUS_REQUEST = "REMOTE_LOGIN_STATUS_REQUEST";
 
-const CONFIG_KEYS = Object.freeze(["serverUrl", "serverUsername", "remoteLoginEnabled", "token", "expiresAt"]);
+const CONFIG_KEYS = Object.freeze(["serverUrl", "serverUsername", "remoteLoginEnabled", "legacyRemoteLoginEnabled", "token", "expiresAt"]);
 const TOKEN_KEYS = Object.freeze(["token", "expiresAt"]);
 const TOKEN_TTL_MS = 8 * 60 * 60 * 1000;
 const POLL_INTERVAL_MS = 3000;
@@ -32,7 +32,7 @@ function normalizeConfig(stored = {}, now = Date.now()) {
   const serverUsername = trimString(stored.serverUsername);
   const token = trimString(stored.token);
   const expiresAt = Number(stored.expiresAt);
-  const enabled = stored.remoteLoginEnabled === true;
+  const enabled = stored.remoteLoginEnabled === true && stored.legacyRemoteLoginEnabled !== false;
   return {
     serverUrl,
     serverUsername,
@@ -284,38 +284,10 @@ export function createLoginCommandPoller({
     return { ok: true };
   }
 
-  async function enable({ serverPassword } = {}) {
-    if (!chromeApi?.storage?.local?.get) return { ok: false, reason: "STORAGE_UNAVAILABLE" };
-    const stored = await chromeApi.storage.local.get(["serverUrl", "serverUsername"]);
-    const serverUrl = trimString(stored.serverUrl);
-    const serverUsername = trimString(stored.serverUsername);
-    const password = typeof serverPassword === "string" ? serverPassword : "";
-    if (!serverUrl || !serverUsername || !password) return { ok: false, reason: "NOT_CONFIGURED" };
-    const authClient = createRemoteClient({ baseUrl: serverUrl, fetchImpl });
-    if (!authClient) return { ok: false, reason: "NOT_CONFIGURED" };
-    let body;
-    try {
-      body = await authClient.request("/auth/login", {
-        method: "POST",
-        body: {
-          username: serverUsername,
-          password,
-          clientType: "extension",
-        },
-      });
-    } catch (error) {
-      return { ok: false, reason: isAuthFailure(error) ? "AUTH_FAILED" : "REMOTE_ERROR" };
-    }
-    const token = trimString(body?.token);
-    if (!token) return { ok: false, reason: "AUTH_FAILED" };
-    const expiresAt = now() + TOKEN_TTL_MS;
-    await chromeApi.storage.local.set({
-      remoteLoginEnabled: true,
-      token,
-      expiresAt,
-    });
-    await start({ immediate: true });
-    return { ok: true, status: lastStatus, expiresAt };
+  async function enable() {
+    // The old flow traded a password supplied to the popup for an extension token.
+    // Tokens are now minted only through explicit administrator device pairing.
+    return { ok: false, reason: "PAIRING_REQUIRED" };
   }
 
   async function getStatus() {

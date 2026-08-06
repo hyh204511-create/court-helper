@@ -30,8 +30,6 @@
       <span>本地登录服务</span>
       <span id="login-service-status" class="service-state" data-state="checking">检查中</span>
     </div>
-    <label for="login-server-password">服务器密码</label>
-    <input id="login-server-password" type="password" autocomplete="current-password">
     <label for="login-account">账号</label>
     <select id="login-account" aria-label="登录账号"></select>
     <button id="btn-auto-login" class="primary" disabled>一键登录</button>
@@ -40,12 +38,11 @@
 
   <section class="remote-login-controls">
     <div class="remote-login-row">
-      <span>远程登录</span>
+      <span>后台扩展授权</span>
       <span id="remote-login-status" class="remote-login-state" data-state="checking">正在检查...</span>
     </div>
-    <label for="remote-login-password">服务器密码</label>
-    <input id="remote-login-password" type="password" autocomplete="current-password">
-    <button id="btn-enable-remote-login" class="primary">启用</button>
+    <p class="hint">在后台“浏览器控制”页批准扩展显示的六码后，扩展会自动开始执行任务。</p>
+    <button id="btn-enable-remote-login" class="primary">请求后台授权</button>
     <button id="btn-disable-remote-login">停用</button>
   </section>
 

@@ -5,6 +5,7 @@ import { buildApp, loadConfig } from '../src/app.ts';
 import { DUMMY_PASSWORD_HASH, hashPassword } from '../src/auth/password.ts';
 import { MemoryAuthRepository } from '../src/auth/memory-repository.ts';
 import { AuthService } from '../src/auth/service.ts';
+import { hashToken } from '../src/auth/token.ts';
 
 const TEST_KEY = Buffer.alloc(32, 9).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
@@ -69,7 +70,7 @@ test('successful admin UI login starts the local OCR helper without blocking aut
       headers: { origin: 'chrome-extension://test-extension' },
       payload: { username: 'admin', password: ADMIN_PASSWORD, clientType: 'extension' },
     });
-    assert.equal(extension.statusCode, 200);
+    assert.equal(extension.statusCode, 400);
     assert.equal(starts, 1);
   } finally {
     await app.close();
@@ -106,8 +107,8 @@ async function loginWorker(app, password = 'Worker-pass-1', remoteAddress) {
   const request = {
     method: 'POST',
     url: '/auth/login',
-    headers: { origin: 'chrome-extension://test-extension' },
-    payload: { username: 'worker', password, clientType: 'extension' },
+    headers: { origin: 'https://admin.example.test' },
+    payload: { username: 'worker', password, clientType: 'admin_ui' },
     ...(remoteAddress ? { remoteAddress } : {}),
   };
   return app.inject(request);
@@ -162,7 +163,7 @@ test('admin login uses a secure HttpOnly cookie and stores only a token digest',
   }
 });
 
-test('extension login returns an opaque bearer token without a cookie', async () => {
+test('extension password login is rejected before a session is created', async () => {
   const repository = new MemoryAuthRepository();
   await addUser(repository);
   const { app } = await makeApp(repository);
@@ -170,13 +171,34 @@ test('extension login returns an opaque bearer token without a cookie', async ()
   try {
     const response = await loginWorker(app);
     assert.equal(response.statusCode, 200);
-    assert.equal(typeof response.json().token, 'string');
-    assert.equal(response.headers['set-cookie'], undefined);
+    assert.ok(response.headers['set-cookie']);
+    const passwordExtension = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: { origin: 'chrome-extension://test-extension' },
+      payload: { username: 'worker', password: 'Worker-pass-1', clientType: 'extension' },
+    });
+    assert.equal(passwordExtension.statusCode, 400);
+    assert.equal((await repository.listSessions()).every((session) => session.clientType === 'admin_ui'), true);
+  } finally {
+    await app.close();
+  }
+});
 
-    const sessions = await repository.listSessions();
-    const stored = sessions.find((session) => session.clientType === 'extension');
-    assert.ok(stored);
-    assert.notEqual(response.json().token, stored.tokenHash);
+test('password login never mints an extension session', async () => {
+  const repository = new MemoryAuthRepository();
+  await addUser(repository);
+  const { app } = await makeApp(repository);
+
+  try {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: { origin: 'chrome-extension://test-extension' },
+      payload: { username: 'worker', password: 'Worker-pass-1', clientType: 'extension' },
+    });
+    assert.equal(response.statusCode, 400);
+    assert.equal((await repository.listSessions()).length, 0);
   } finally {
     await app.close();
   }
@@ -197,8 +219,8 @@ test('wrong credentials are 401 and disabled accounts are rejected without secre
     const disabled = await app.inject({
       method: 'POST',
       url: '/auth/login',
-      headers: { origin: 'chrome-extension://test-extension' },
-      payload: { username: 'disabled', password: 'Worker-pass-1', clientType: 'extension' },
+      headers: { origin: 'https://admin.example.test' },
+      payload: { username: 'disabled', password: 'Worker-pass-1', clientType: 'admin_ui' },
     });
     assert.equal(disabled.statusCode, 409);
     assert.equal(disabled.json().error.code, 'ACCOUNT_DISABLED');
@@ -246,11 +268,11 @@ test('login throttles an IP across usernames but allows a different IP', async (
         method: 'POST',
         url: '/auth/login',
         remoteAddress: '198.51.100.10',
-        headers: { origin: 'chrome-extension://test-extension' },
+        headers: { origin: 'https://admin.example.test' },
         payload: {
           username: `worker-${index}`,
           password: 'wrong-password',
-          clientType: 'extension',
+          clientType: 'admin_ui',
         },
       });
       assert.equal(failed.statusCode, 401);
@@ -260,8 +282,8 @@ test('login throttles an IP across usernames but allows a different IP', async (
       method: 'POST',
       url: '/auth/login',
       remoteAddress: '198.51.100.10',
-      headers: { origin: 'chrome-extension://test-extension' },
-      payload: { username: 'worker-5', password: 'Worker-pass-1', clientType: 'extension' },
+      headers: { origin: 'https://admin.example.test' },
+      payload: { username: 'worker-5', password: 'Worker-pass-1', clientType: 'admin_ui' },
     });
     assert.equal(blocked.statusCode, 429);
 
@@ -269,8 +291,8 @@ test('login throttles an IP across usernames but allows a different IP', async (
       method: 'POST',
       url: '/auth/login',
       remoteAddress: '198.51.100.11',
-      headers: { origin: 'chrome-extension://test-extension' },
-      payload: { username: 'worker-5', password: 'Worker-pass-1', clientType: 'extension' },
+      headers: { origin: 'https://admin.example.test' },
+      payload: { username: 'worker-5', password: 'Worker-pass-1', clientType: 'admin_ui' },
     });
     assert.equal(allowed.statusCode, 200);
   } finally {
@@ -290,14 +312,14 @@ test('unknown login performs the dummy password verification path', async () => 
   });
 
   await assert.rejects(
-    service.login('missing', 'attempted-password', 'extension', '198.51.100.20'),
+    service.login('missing', 'attempted-password', 'admin_ui', '198.51.100.20'),
     (error) => error.code === 'AUTH_REQUIRED',
   );
   assert.deepEqual(calls, [{ passwordHash: DUMMY_PASSWORD_HASH, password: 'attempted-password' }]);
 
   calls.length = 0;
   await assert.rejects(
-    service.login('worker', 'attempted-password', 'extension', '198.51.100.21'),
+    service.login('worker', 'attempted-password', 'admin_ui', '198.51.100.21'),
     (error) => error.code === 'AUTH_REQUIRED',
   );
   assert.deepEqual(calls, [{ passwordHash: known.passwordHash, password: 'attempted-password' }]);
@@ -379,36 +401,57 @@ test('cookie logout requires the configured Origin and in-memory CSRF token', as
   }
 });
 
-test('user cannot access admin user management, while admin receives no password hashes', async () => {
+test('user and administrator extension bearers cannot access user management', async () => {
   const repository = new MemoryAuthRepository();
   await addUser(repository);
   const { app } = await makeApp(repository);
 
   try {
-    const worker = await loginWorker(app);
-    assert.equal(worker.statusCode, 200);
+    const workerUser = await repository.findUserByUsername('worker');
+    const workerDevice = await repository.createExtensionDevice({
+      id: '00000000-0000-4000-8000-000000000101',
+      deviceId: '00000000-0000-4000-8000-000000000102',
+      pairedBy: workerUser.id,
+    });
+    const workerToken = 'paired-worker-token';
+    await repository.createSession({
+      id: '00000000-0000-4000-8000-000000000103',
+      userId: workerUser.id,
+      tokenHash: hashToken(workerToken),
+      clientType: 'extension',
+      extensionDeviceId: workerDevice.id,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
     const denied = await app.inject({
       method: 'GET',
       url: '/users',
-      headers: { authorization: `Bearer ${worker.json().token}` },
+      headers: { authorization: `Bearer ${workerToken}` },
     });
     assert.equal(denied.statusCode, 403);
     assert.equal(denied.json().error.code, 'FORBIDDEN');
 
-    const admin = await app.inject({
-      method: 'POST',
-      url: '/auth/login',
-      headers: { origin: 'chrome-extension://test-extension' },
-      payload: { username: 'admin', password: ADMIN_PASSWORD, clientType: 'extension' },
+    const adminUser = await repository.findUserByUsername('admin');
+    const adminDevice = await repository.createExtensionDevice({
+      id: '00000000-0000-4000-8000-000000000104',
+      deviceId: '00000000-0000-4000-8000-000000000105',
+      pairedBy: adminUser.id,
+    });
+    const adminToken = 'paired-admin-token';
+    await repository.createSession({
+      id: '00000000-0000-4000-8000-000000000106',
+      userId: adminUser.id,
+      tokenHash: hashToken(adminToken),
+      clientType: 'extension',
+      extensionDeviceId: adminDevice.id,
+      expiresAt: new Date(Date.now() + 60_000),
     });
     const users = await app.inject({
       method: 'GET',
       url: '/users',
-      headers: { authorization: `Bearer ${admin.json().token}` },
+      headers: { authorization: `Bearer ${adminToken}` },
     });
-    assert.equal(users.statusCode, 200);
-    assert.equal(JSON.stringify(users.json()).includes('passwordHash'), false);
-    assert.equal(JSON.stringify(users.json()).includes('password_hash'), false);
+    assert.equal(users.statusCode, 403);
+    assert.equal(users.json().error.code, 'FORBIDDEN');
   } finally {
     await app.close();
   }
@@ -435,7 +478,7 @@ test('admin creates users and password reset revokes every prior session', async
     assert.equal(JSON.stringify(created.json()).includes('Worker-pass-1'), false);
 
     const workerLogin = await loginWorker(app);
-    const workerToken = workerLogin.json().token;
+    const workerToken = sessionToken(cookieHeader(workerLogin));
     const reset = await app.inject({
       method: 'POST',
       url: `/users/${created.json().id}/reset-password`,
@@ -451,7 +494,7 @@ test('admin creates users and password reset revokes every prior session', async
     const revoked = await app.inject({
       method: 'GET',
       url: '/auth/me',
-      headers: { authorization: `Bearer ${workerToken}` },
+      headers: { cookie: `court_helper_session=${workerToken}` },
     });
     assert.equal(revoked.statusCode, 401);
     assert.equal((await loginWorker(app, 'Worker-pass-1')).statusCode, 401);

@@ -170,7 +170,7 @@ test("service worker 登录态持久化只写 state/maskedAccount/updatedAt，�
   });
 });
 
-test("service worker registers remote-login alarm wakeups", async () => {
+test("service worker registers only unified browser-command alarm wakeups", async () => {
   await withGlobals(async () => {
     const nativeSetInterval = globalThis.setInterval;
     const nativeClearInterval = globalThis.clearInterval;
@@ -180,10 +180,9 @@ test("service worker registers remote-login alarm wakeups", async () => {
     const pollFetches = [];
     const remoteConfig = {
       serverUrl: "",
-      serverUsername: "",
-      remoteLoginEnabled: false,
       token: "",
       expiresAt: 0,
+      browserCommandDeviceId: "",
     };
     let intervalId = 0;
     const intervals = new Map();
@@ -240,17 +239,17 @@ test("service worker registers remote-login alarm wakeups", async () => {
       runtimeListeners.startup[0]();
       runtimeListeners.installed[0]();
       remoteConfig.serverUrl = "https://sync.example.test";
-      remoteConfig.serverUsername = "admin";
-      remoteConfig.remoteLoginEnabled = true;
       remoteConfig.token = "extension-token";
       remoteConfig.expiresAt = Date.now() + 60_000;
-      await alarmListeners[0]({ name: "remote-login-poll" });
+      remoteConfig.browserCommandDeviceId = "00000000-0000-4000-8000-000000000001";
+      await alarmListeners[0]({ name: "browser-command-poll" });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       assert.ok(alarmCreates.some((entry) => (
-        entry.name === "remote-login-poll" && entry.alarmInfo.periodInMinutes === 1
+        entry.name === "browser-command-poll" && entry.alarmInfo.periodInMinutes === 1
       )));
-      assert.ok(pollFetches.some((url) => url.endsWith("/api/v1/login-commands?status=pending")));
+      assert.ok(pollFetches.some((url) => url.endsWith("/api/v1/browser-commands/next")));
+      assert.equal(pollFetches.some((url) => url.includes("/login-commands")), false);
       assert.equal(intervals.size, 0);
     } finally {
       globalThis.setInterval = nativeSetInterval;

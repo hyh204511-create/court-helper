@@ -14,6 +14,7 @@ import {
   sanitizeReportExportFileName,
 } from '../src/report-exports/service.ts';
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
+import { bindPairedExtensionRepository, pairedExtensionTokenForApp } from './paired-extension.ts';
 
 const TEST_KEY = Buffer.alloc(32, 37).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
@@ -132,6 +133,7 @@ async function makeApp(storageBackend = new CountingStorageBackend()) {
     storageBackend,
   });
   await app.ready();
+  bindPairedExtensionRepository(app, authRepository);
   await authRepository.createUser({
     id: USER_A_ID,
     username: 'user-a',
@@ -150,14 +152,18 @@ async function makeApp(storageBackend = new CountingStorageBackend()) {
 }
 
 async function login(app, username, password, origin = 'chrome-extension://test-extension') {
+  if (origin === 'chrome-extension://test-extension') {
+    void password;
+    return (await pairedExtensionTokenForApp(app, username)).token;
+  }
   const response = await app.inject({
     method: 'POST',
     url: '/auth/login',
     headers: { origin },
-    payload: { username, password, clientType: 'extension' },
+    payload: { username, password, clientType: 'admin_ui' },
   });
   assert.equal(response.statusCode, 200);
-  return response.json().token;
+  return cookieHeader(response).split('=', 2)[1];
 }
 
 async function upload(app, token, payload = uploadPayload()) {

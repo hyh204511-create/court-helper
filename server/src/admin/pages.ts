@@ -214,6 +214,16 @@ function browserControlPage(role: AdminRole): string {
   return layout('browser-control', role, '浏览器控制', `
     <header class="page-head"><div><p class="eyebrow">Browser / Commands</p><h2>浏览器控制</h2><p>从后台创建浏览器任务，由扩展在已打开的法院标签页执行。页面隐藏时自动暂停轮询。</p></div></header>
     <section class="panel" aria-labelledby="browser-runtime-title"><div class="panel-head"><div><h3 id="browser-runtime-title">扩展运行状态</h3><p>仅按扩展最近回写推断；没有可靠回执时保持“未确认”。</p></div></div><div class="panel-body detail-grid"><dl class="detail-item"><dt>浏览器连接</dt><dd id="browser-connection-status">未确认</dd></dl><dl class="detail-item"><dt>法院标签页</dt><dd id="court-tab-status">未确认</dd></dl><dl class="detail-item"><dt>登录状态 / 当前账号</dt><dd id="court-login-status">未确认</dd></dl></div></section>
+    <section class="panel" aria-labelledby="extension-authorization-title">
+      <div class="panel-head"><div><h3 id="extension-authorization-title">扩展设备授权</h3><p>扩展会自行发起一次性配对请求。请核对扩展显示的六码后批准；设备只能执行业务操作，不能管理系统用户。</p></div></div>
+      <div class="panel-body">
+        <p class="message muted" data-extension-authorization-message aria-live="polite">准备读取</p>
+        <h4>待批准请求</h4>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>设备</th><th>标签</th><th>过期时间</th><th>核对码</th><th>操作</th></tr></thead><tbody id="extension-pairing-list"></tbody></table></div>
+        <h4>已授权设备</h4>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>设备</th><th>标签</th><th>最近在线</th><th>状态</th><th>操作</th></tr></thead><tbody id="extension-device-list"></tbody></table></div>
+      </div>
+    </section>
     <section class="panel" aria-labelledby="browser-command-title">
       <div class="panel-head"><div><h3 id="browser-command-title">创建浏览器任务</h3><p>任务参数仅包含非敏感引用；登录凭据不会进入命令负载。</p></div></div>
       <div class="panel-body">

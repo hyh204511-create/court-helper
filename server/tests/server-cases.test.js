@@ -12,6 +12,7 @@ import { PgCaseRepository } from '../src/cases/repository.ts';
 import { runMigrations } from '../src/db/migrator.ts';
 import { MemoryScreenshotRepository } from '../src/screenshots/memory-repository.ts';
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
+import { bindPairedExtensionRepository, pairedExtensionTokenForApp } from './paired-extension.ts';
 
 const TEST_KEY = Buffer.alloc(32, 23).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
@@ -82,6 +83,7 @@ async function makeApp({ accountEnabled = true } = {}) {
     storageBackend,
   });
   await app.ready();
+  bindPairedExtensionRepository(app, authRepository);
   await addUser(authRepository);
   return {
     app,
@@ -94,14 +96,8 @@ async function makeApp({ accountEnabled = true } = {}) {
 }
 
 async function loginExtension(app, username = 'worker', password = WORKER_PASSWORD) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/auth/login',
-    headers: { origin: 'chrome-extension://test-extension' },
-    payload: { username, password, clientType: 'extension' },
-  });
-  assert.equal(response.statusCode, 200);
-  return response.json().token;
+  void password;
+  return (await pairedExtensionTokenForApp(app, username)).token;
 }
 
 function caseItem(overrides = {}) {

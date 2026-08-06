@@ -41,13 +41,15 @@ test('versioned migrations create the required tables and constraints', async ()
     await runMigrations(pool);
 
     const names = await tableNames(pool);
-    for (const name of ['users', 'sessions', 'platform_accounts', 'cases', 'screenshots', 'login_commands', 'report_exports', 'import_batches']) {
+    for (const name of ['users', 'sessions', 'platform_accounts', 'cases', 'screenshots', 'login_commands', 'report_exports', 'import_batches', 'extension_devices', 'extension_pairings']) {
       assert.equal(names.has(name), true, `missing table ${name}`);
     }
 
     const expectedColumns = {
       users: ['id', 'username', 'password_hash', 'role', 'enabled', 'deleted_at', 'created_at', 'updated_at'],
-      sessions: ['id', 'user_id', 'token_hash', 'client_type', 'expires_at', 'revoked_at', 'created_at'],
+      sessions: ['id', 'user_id', 'token_hash', 'client_type', 'extension_device_id', 'expires_at', 'revoked_at', 'created_at'],
+      extension_devices: ['id', 'device_id', 'label', 'paired_by', 'enabled', 'revoked_at', 'last_seen_at', 'created_at', 'updated_at'],
+      extension_pairings: ['id', 'device_id', 'label', 'exchange_secret_hash', 'verification_code_hash', 'status', 'approved_by', 'approved_at', 'consumed_at', 'expires_at', 'created_at', 'updated_at'],
       platform_accounts: ['id', 'label', 'secret_ciphertext', 'secret_iv', 'secret_tag', 'secret_version', 'enabled', 'deleted_at', 'created_by', 'created_at', 'updated_at'],
       cases: ['id', 'client_uid', 'platform_account_id', 'created_by', 'kind', 'plaintiff', 'defendant', 'status', 'filed_time', 'case_number', 'reject_time', 'reject_reason', 'query_time', 'needs_human', 'error_code', 'source_event_id', 'source_updated_at', 'revision', 'created_at', 'updated_at'],
       screenshots: ['id', 'case_id', 'type', 'object_key', 'content_type', 'byte_size', 'sha256', 'captured_at', 'created_at'],
@@ -247,8 +249,20 @@ test('running migrations twice is harmless and explicit rollback restores a clea
   try {
     await runMigrations(pool);
     await runMigrations(pool);
+    await pool.query(`
+      INSERT INTO users (id, username, password_hash, role)
+      VALUES ('00000000-0000-0000-0000-000000000001', 'admin', 'hash', 'admin')
+    `);
+    await pool.query(`
+      INSERT INTO extension_devices (id, device_id, paired_by)
+      VALUES ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001')
+    `);
+    await pool.query(`
+      INSERT INTO sessions (id, user_id, token_hash, client_type, extension_device_id, expires_at)
+      VALUES ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', $1, 'extension', '00000000-0000-0000-0000-000000000002', NOW() + INTERVAL '30 days')
+    `, ['a'.repeat(64)]);
     const applied = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
-    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands', '006_import_batches']);
+    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands', '006_import_batches', '007_extension_devices']);
 
     await rollbackLastMigration(pool);
     const afterRollback = await tableNames(pool);
@@ -256,13 +270,18 @@ test('running migrations twice is harmless and explicit rollback restores a clea
     assert.equal(afterRollback.has('screenshots'), true);
     assert.equal(afterRollback.has('login_commands'), true);
     assert.equal(afterRollback.has('report_exports'), true);
-    assert.equal(afterRollback.has('import_batches'), false);
+    assert.equal(afterRollback.has('import_batches'), true);
+    assert.equal(afterRollback.has('extension_devices'), false);
+    assert.equal((await pool.query("SELECT COUNT(*) AS count FROM sessions WHERE client_type = 'extension'")).rows[0].count, 0);
     assert.equal((await columnNames(pool, 'cases')).has('created_by'), true);
     const appliedAfterRollback = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
-    assert.deepEqual(appliedAfterRollback.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands']);
+    assert.deepEqual(appliedAfterRollback.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands', '006_import_batches']);
 
     // pg-mem retains this primary-key relation after DROP TABLE; PostgreSQL removes it.
     await pool.query('DROP INDEX IF EXISTS browser_commands_pkey');
+    await pool.query('DROP INDEX IF EXISTS extension_devices_pkey');
+    await pool.query('DROP INDEX IF EXISTS extension_devices_device_id_key');
+    await pool.query('DROP INDEX IF EXISTS extension_pairings_pkey');
     await runMigrations(pool);
     const afterReapply = await tableNames(pool);
     assert.equal(afterReapply.has('users'), true);

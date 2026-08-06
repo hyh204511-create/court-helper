@@ -12,6 +12,7 @@ import { runMigrations } from '../src/db/migrator.ts';
 import { MemoryScreenshotRepository } from '../src/screenshots/memory-repository.ts';
 import { PgScreenshotRepository } from '../src/screenshots/repository.ts';
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
+import { bindPairedExtensionRepository, pairedExtensionTokenForApp } from './paired-extension.ts';
 
 const TEST_KEY = Buffer.alloc(32, 29).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
@@ -129,19 +130,13 @@ async function makeApp() {
     storageBackend,
   });
   await app.ready();
+  bindPairedExtensionRepository(app, authRepository);
   await addUser(authRepository);
   return { app, authRepository, caseRepository, screenshotRepository, storageBackend };
 }
 
 async function loginExtension(app) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/auth/login',
-    headers: { origin: 'chrome-extension://test-extension' },
-    payload: { username: 'worker', password: WORKER_PASSWORD, clientType: 'extension' },
-  });
-  assert.equal(response.statusCode, 200);
-  return response.json().token;
+  return (await pairedExtensionTokenForApp(app)).token;
 }
 
 async function loginAdmin(app) {

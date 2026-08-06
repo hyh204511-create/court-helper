@@ -11,6 +11,7 @@ import { MemoryPlatformAccountRepository } from '../src/platform-accounts/memory
 import { runMigrations, rollbackLastMigration } from '../src/db/migrator.ts';
 import { MemoryImportBatchRepository } from '../src/import-batches/memory-repository.ts';
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
+import { bindPairedExtensionRepository, pairedExtensionTokenForApp } from './paired-extension.ts';
 
 const TEST_KEY = Buffer.alloc(32, 73).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
@@ -161,6 +162,7 @@ async function makeApp(options = {}) {
     clock: () => new Date('2026-08-06T10:00:00.000Z'),
   });
   await app.ready();
+  bindPairedExtensionRepository(app, auth);
   return { app, browserCommands, importBatchRepository };
 }
 
@@ -183,14 +185,36 @@ async function loginUi(app, username, password) {
 }
 
 async function loginExtension(app, username = 'worker', password = USER_PASSWORD) {
-  const response = await app.inject({
+  void password;
+  return (await pairedExtensionTokenForApp(app, username)).token;
+}
+
+async function pairAdministratorExtension(app) {
+  const deviceId = randomUUID();
+  const exchangeSecret = 'PZmwk1B9s7U0-vmCh0a9ebZhH1tl1TSeKVXIUb4VQyQ';
+  const pairing = await app.inject({
     method: 'POST',
-    url: '/api/v1/auth/login',
+    url: '/api/v1/auth/extension-pairings',
     headers: { origin: 'chrome-extension://test-extension' },
-    payload: { username, password, clientType: 'extension' },
+    payload: { deviceId, label: 'test extension', exchangeSecret },
   });
-  assert.equal(response.statusCode, 200);
-  return response.json().token;
+  assert.equal(pairing.statusCode, 201);
+  const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
+  const approved = await app.inject({
+    method: 'POST',
+    url: `/api/v1/auth/extension-pairings/${pairing.json().pairing.id}/approve`,
+    headers: cookieHeaders(admin),
+    payload: { verificationCode: pairing.json().pairing.verificationCode },
+  });
+  assert.equal(approved.statusCode, 200);
+  const exchanged = await app.inject({
+    method: 'POST',
+    url: `/api/v1/auth/extension-pairings/${pairing.json().pairing.id}/exchange`,
+    headers: { origin: 'chrome-extension://test-extension' },
+    payload: { exchangeSecret },
+  });
+  assert.equal(exchanged.statusCode, 200);
+  return exchanged.json().token;
 }
 
 function cookieHeaders(session) {
@@ -219,7 +243,7 @@ async function postgres() {
 }
 
 test('extension pending feed and execution-data lease authorization are claimant bound', async () => {
-  const { app } = await makeApp();
+  const { app, browserCommands } = await makeApp();
   const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
   const extensionToken = await loginExtension(app);
   const created = await createCommand(app, admin, '/api/v1', {
@@ -245,6 +269,7 @@ test('extension pending feed and execution-data lease authorization are claimant
     payload: { deviceId: 'device-bound-test' },
   });
   assert.equal(claim.statusCode, 200);
+  assert.notEqual((await browserCommands.get(commandId)).claimedBy, 'device-bound-test');
   const { claimToken } = claim.json();
   const executionData = await app.inject({
     method: 'GET',
@@ -262,7 +287,7 @@ test('extension pending feed and execution-data lease authorization are claimant
   assert.ok(executionData.json().rows.length > 0);
   assert.equal(executionData.json().rows.some((row) => Object.hasOwn(row, 'password')), false);
 
-  const stranger = await app.inject({
+  const spoofedDeviceHeader = await app.inject({
     method: 'GET',
     url: `/api/v1/import-batches/${IMPORT_BATCH_ID}/extension-data`,
     headers: {
@@ -273,7 +298,7 @@ test('extension pending feed and execution-data lease authorization are claimant
       'x-browser-command-claim': claimToken,
     },
   });
-  assert.equal(stranger.statusCode, 403);
+  assert.equal(spoofedDeviceHeader.statusCode, 200);
   const { BrowserCommandService } = await browserModule();
   assert.equal(typeof BrowserCommandService, 'function');
   const { service } = await makeService();
@@ -307,6 +332,7 @@ test('005 browser command migration creates a reversible secure queue and keeps 
       '004_report_exports',
       '005_browser_commands',
       '006_import_batches',
+      '007_extension_devices',
     ]);
 
     const columns = await pool.query(`
@@ -350,6 +376,7 @@ test('005 browser command migration creates a reversible secure queue and keeps 
       VALUES ($1, 'QUERY_QZ', $2, $3, $4, now() + interval '5 minutes')
     `, [randomUUID(), ACCOUNT_ID, ADMIN_ID, JSON.stringify({ batchId: 'batch-safe-2' })]));
 
+    assert.equal(await rollbackLastMigration(pool), '007_extension_devices');
     assert.equal(await rollbackLastMigration(pool), '006_import_batches');
     assert.equal(await rollbackLastMigration(pool), '005_browser_commands');
     const afterRollback = await pool.query(`
@@ -584,6 +611,39 @@ test('browser command routes require authentication and register both REST prefi
   }
 });
 
+test('administrator-paired extension can create, list, and cancel unified business commands', async () => {
+  const { app } = await makeApp();
+  try {
+    const token = await pairAdministratorExtension(app);
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/browser-commands',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { type: 'EXPORT_REPORT', platformAccountId: null },
+    });
+    assert.equal(created.statusCode, 201);
+
+    const listed = await app.inject({
+      method: 'GET',
+      url: '/api/v1/browser-commands',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(listed.statusCode, 200);
+    assert.equal(listed.json().commands[0].id, created.json().command.id);
+
+    const cancelled = await app.inject({
+      method: 'POST',
+      url: `/api/v1/browser-commands/${created.json().command.id}/cancel`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {},
+    });
+    assert.equal(cancelled.statusCode, 200);
+    assert.equal(cancelled.json().command.status, 'cancelled');
+  } finally {
+    await app.close();
+  }
+});
+
 test('browser command routes bind query importBatchId and reject free clientBatchId', async () => {
   const { app } = await makeApp();
   try {
@@ -685,6 +745,7 @@ test('browser command extension claim and claimant result reject strangers and e
       payload: { deviceId: 'device-a' },
     });
     assert.equal(claim.statusCode, 200);
+    assert.notEqual(claim.json().command.claimedBy, 'device-bound-test');
     assert.equal(claim.json().command.status, 'executing');
     assert.match(claim.json().claimToken, /^[A-Za-z0-9_-]{20,}$/);
     assert.equal(claim.body.includes('claimTokenHash'), false);

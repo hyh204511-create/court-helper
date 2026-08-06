@@ -3,6 +3,10 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 
 import { createLoginCommandPoller } from "../extension/sw/login-command-poll.js";
+import {
+  EXTENSION_PAIRING_REQUEST,
+  EXTENSION_PAIRING_STATUS_REQUEST,
+} from "../extension/sw/extension-pairing.js";
 
 const BASE_URL = "https://sync.example.test";
 const TOKEN = "extension-token";
@@ -284,7 +288,7 @@ test("auth failure clears stored token, stops interval, and clears fallback alar
   assert.deepEqual(chromeApi.calls.alarmsClear, ["remote-login-poll"]);
 });
 
-test("enable logs in with server password, stores only token TTL, and starts polling", async () => {
+test("legacy password-based remote login is disabled and requires administrator device pairing", async () => {
   const chromeApi = makeChrome({ storageData: { remoteLoginEnabled: false, token: undefined, expiresAt: undefined } });
   const fetchImpl = makeFetch({ command: null });
   const scheduler = makeScheduler();
@@ -295,25 +299,18 @@ test("enable logs in with server password, stores only token TTL, and starts pol
     now: () => 10_000,
   });
   const result = await poller.enable({ serverPassword: "server-pass" });
-  assert.equal(result.ok, true);
-  assert.equal(result.status, "running");
-  assert.equal(chromeApi.data.remoteLoginEnabled, true);
-  assert.equal(chromeApi.data.token, TOKEN);
-  assert.equal(chromeApi.data.expiresAt, FUTURE);
-  assert.equal(scheduler.intervals.size, 1);
-  assert.ok(chromeApi.calls.alarmsCreate.some((entry) => entry.name === "remote-login-poll"));
-  assert.deepEqual(parseBody(fetchImpl.calls[0]), {
-    username: "worker",
-    password: "server-pass",
-    clientType: "extension",
-  });
+  assert.deepEqual(result, { ok: false, reason: "PAIRING_REQUIRED" });
+  assert.equal(chromeApi.data.remoteLoginEnabled, false);
+  assert.equal(chromeApi.data.token, undefined);
+  assert.equal(chromeApi.data.expiresAt, undefined);
+  assert.equal(scheduler.intervals.size, 0);
+  assert.equal(fetchImpl.calls.length, 0);
   assert.equal(JSON.stringify(chromeApi.calls.storageSet).includes("server-pass"), false);
 });
 
-test("popup remote login section sends enable, disable, and status messages to service worker", async () => {
+test("popup authorization section never accepts a server password and requests backend pairing", async () => {
   const dom = new JSDOM(`
     <!doctype html><html><body>
-      <input id="remote-login-password" value="server-pass">
       <button id="btn-enable-remote-login"></button>
       <button id="btn-disable-remote-login"></button>
       <span id="remote-login-status"></span>
@@ -327,10 +324,13 @@ test("popup remote login section sends enable, disable, and status messages to s
       runtime: {
         sendMessage: async (message) => {
           messages.push(message);
-          if (message.type === "REMOTE_LOGIN_STATUS_REQUEST") {
-            return { ok: true, status: "stopped", enabled: false };
+          if (message.type === EXTENSION_PAIRING_STATUS_REQUEST) {
+            return { ok: true, status: "awaiting_approval", verificationCode: "123456" };
           }
-          return { ok: true, status: "running", enabled: true };
+          if (message.type === EXTENSION_PAIRING_REQUEST) {
+            return { ok: true, status: "awaiting_approval", verificationCode: "123456" };
+          }
+          return { ok: true, status: "stopped", enabled: false };
         },
       },
     },
@@ -341,11 +341,11 @@ test("popup remote login section sends enable, disable, and status messages to s
   dom.window.document.querySelector("#btn-disable-remote-login").click();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(messages, [
-    { type: "REMOTE_LOGIN_STATUS_REQUEST" },
-    { type: "ENABLE_REMOTE_LOGIN", serverPassword: "server-pass" },
+    { type: EXTENSION_PAIRING_STATUS_REQUEST },
+    { type: EXTENSION_PAIRING_REQUEST },
     { type: "DISABLE_REMOTE_LOGIN" },
   ]);
-  assert.equal(dom.window.document.body.textContent.includes("server-pass"), false);
+  assert.match(dom.window.document.querySelector("#remote-login-status").textContent, /已停用/);
   controls.destroy();
   dom.window.close();
 });

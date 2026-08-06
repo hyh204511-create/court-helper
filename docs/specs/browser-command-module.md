@@ -136,3 +136,50 @@
 - 不做多浏览器、多租户、SSE/WebSocket、无限重试、离线伪成功。
 - 不在本模块中删除旧 `login_commands` 表；待 browser_commands 真实验收和兼容窗口结束后另立迁移任务。
 - 不把真实模板、密码、截图、案号或当事人明文写入 Vault/Git/日志。
+
+## 10. 扩展设备授权（v0.7）
+
+### 10.1 安全边界
+
+- 管理员持有有效 `admin_ui` Cookie 会话后，可在 `/admin/browser-control` 显式批准当前扩展设备。
+- 配对成功的扩展取得不透明、设备绑定的 Bearer 会话；除用户管理外，可调用现有资源归属、claimant 与 payload 校验允许的全部业务 API。
+- **用户管理除外**：每个 `/users*` 端点必须要求管理员 `admin_ui` Cookie、同源请求与 CSRF。即使令牌来自管理员配对的扩展 Bearer 也必须返回 `403 FORBIDDEN`。
+- `/admin/*` HTML 及设备管理仍是后台 Cookie 路由；扩展不得取得管理员 Cookie。扩展 Origin/ID 仅是发起配对的条件，而不是授权凭据。
+
+### 10.2 一次性配对合约
+
+```text
+extension 生成稳定 deviceId + 随机 32-byte exchangeSecret
+  -> POST /auth/extension-pairings（精确配置的 extension Origin）
+  -> pairing id + 短核对码（有效期五分钟）
+  -> 管理员显式批准相符的 pending pairing
+  -> extension 以 pairing id + exchangeSecret 兑换一次
+  -> 返回有效期 30 天的设备绑定 Bearer token，SW 启动统一轮询
+```
+
+- 服务器仅保存 exchange secret 和核对码的 SHA-256 摘要；明文不得进入数据库记录、日志、命令 payload、后台 HTML、IndexedDB 或 git。
+- 状态固定为 `pending`、`approved`、`consumed`、`expired`、`cancelled`。错误、过期或重放数据返回稳定错误且不得签发 token。
+- 兑换必须原子消费：同一配对并发兑换最多一个成功。token 明文仅出现在一次兑换响应，扩展仅存入 `chrome.storage.local`。
+- 后台撤销设备后，其 session 下一请求即失效；停用、删除或重置配对管理员的密码时也必须撤销该用户的设备 session。
+- 配对创建按来源 IP 和设备 ID 限流；同一设备同一时间最多保留一个 `pending` 或 `approved` 配对。新的显式请求会原子取消旧的活动配对，避免后台出现多个可批准核对码。
+- 撤销是对原设备 ID 的永久终态：服务端在创建阶段即返回 `DEVICE_REVOKED`，不得让管理员批准一条无法兑换的请求。扩展不会自动重试；只有用户再次点击“请求后台授权”时才轮换到新的随机设备 ID，并再次经管理员核对码审批。
+
+### 10.3 REST 权限矩阵
+
+| 方法 | 路径 | 调用方 | 约束 |
+|---|---|---|---|
+| `POST` | `/auth/extension-pairings` | 精确 extension Origin | `deviceId`、安全 label、`exchangeSecret` |
+| `GET` | `/auth/extension-pairings` | admin_ui admin | 仅安全 pending 摘要 |
+| `POST` | `/auth/extension-pairings/:id/approve` | admin_ui admin | Cookie + Origin + CSRF + 核对码 |
+| `POST` | `/auth/extension-pairings/:id/exchange` | 精确 extension Origin | exchange secret；一次 token 响应 |
+| `GET` | `/auth/extension-devices` | admin_ui admin | 仅安全设备摘要 |
+| `POST` | `/auth/extension-devices/:id/revoke` | admin_ui admin | Cookie + Origin + CSRF |
+| 任意 | `/users*` | admin_ui admin only | 已配对扩展始终拒绝 |
+| 任意 | 其他业务 API | paired extension / existing back office | 现有资源与 claim 校验继续生效 |
+
+### 10.4 自动测试闸门
+
+- 缺少或错误的 Origin、secret、核对码、CSRF、管理员 Cookie 均须拒绝。
+- 未批准、过期、已消费、已撤销、重放和并发兑换不得获得第二个 token。
+- 管理员配对的 extension token 调用每个 `/users*` 路径均为 403，同时仍可运行 browser-command 轮询和既有执行 API。
+- 设备撤销及管理员停用、删除、重置密码须使 token 在下一请求失效，且不泄漏 token 或 secret。

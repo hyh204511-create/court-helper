@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import { authenticateRequest } from '../auth/routes.ts';
 import { AuthService, type AuthContext } from '../auth/service.ts';
-import { AuthenticationRequiredError } from '../errors.ts';
+import { AuthenticationRequiredError, ForbiddenError } from '../errors.ts';
 import { ADMIN_SCRIPT, ADMIN_STYLES } from './assets.ts';
 import { renderAdminPage, type AdminPage, type AdminRole } from './pages.ts';
 
@@ -47,7 +47,11 @@ async function pageAuth(
 ): Promise<AuthContext | null> {
   try {
     await authenticateRequest(request, authService);
-    return request.auth;
+    const context = request.auth;
+    if (!context || context.mechanism !== 'cookie' || context.session.clientType !== 'admin_ui') {
+      throw new ForbiddenError();
+    }
+    return context;
   } catch (error) {
     if (error instanceof AuthenticationRequiredError) {
       reply.redirect('/admin/login');

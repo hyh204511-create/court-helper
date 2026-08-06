@@ -143,3 +143,10 @@ popup「一键抓取」→ START_BATCH（列表页）→ 批量执行器（app-m
 - 成功建立 `admin_ui` Cookie 会话后，服务器异步确保本机 `127.0.0.1:8765` OCR 助手可用：已健康时不重复启动；未运行时仅以固定脚本 `scripts/login-helper-server.py` 启动。
 - 启动失败不得影响后台登录结果，不向客户端返回进程细节、环境变量、账号或密码；扩展仍按既有 `SERVICE_UNAVAILABLE` / `NEEDS_HUMAN` 路径降级。
 - extension Bearer 登录、错误密码、被限流或被禁用账号均不得触发启动；服务关闭时仅停止本服务器进程自行启动的子进程。
+
+## 11. 后台绑定的扩展授权（v0.7）
+
+- 管理员成功登录后台后，OCR helper 的按需启动保持不变；扩展服务器身份改为管理员显式批准的一次性设备配对，不再由 popup 提交服务器用户名或密码。
+- 扩展生成 `deviceId` 与高熵 `exchangeSecret`，从配置的 extension Origin 发起 pending pairing；管理员仅在 `/admin/browser-control` 对核对码批准。兑换后的 30 天 opaque Bearer session 绑定设备，仅保存在 `chrome.storage.local`，并可由后台撤销。
+- 管理员创建的 extension session 可执行业务操作，但不能管理用户：`/users*` 必须要求 `admin_ui` Cookie、管理员角色、受信 Origin 与 CSRF。extension Origin 不构成认证，也不得换取 Cookie。
+- popup 在真实端到端验收前只保留授权状态和降级提示；不得再展示或传递服务器密码。最终删除 popup 仍以后端统一命令的真实验收门槛为准。

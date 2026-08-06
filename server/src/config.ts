@@ -17,6 +17,7 @@ export interface ServerConfig {
   auth: {
     adminInitialPassword: string;
     sessionTtlSeconds: number;
+    extensionSessionTtlSeconds: number;
   };
   localLoginHelper: {
     autoStart: boolean;
@@ -132,6 +133,7 @@ export function loadConfig(env: Environment = process.env): ServerConfig {
   const adminInitialPassword = required(env, 'ADMIN_INITIAL_PASSWORD');
 
   const sessionTtlSeconds = positiveInteger(env, 'SESSION_TTL_SECONDS', 8 * 60 * 60);
+  const extensionSessionTtlSeconds = positiveInteger(env, 'EXTENSION_SESSION_TTL_SECONDS', 30 * 24 * 60 * 60);
 
   return {
     port,
@@ -152,6 +154,7 @@ export function loadConfig(env: Environment = process.env): ServerConfig {
     auth: {
       adminInitialPassword,
       sessionTtlSeconds,
+      extensionSessionTtlSeconds,
     },
     localLoginHelper: {
       autoStart: optionalBoolean(env, 'LOCAL_LOGIN_HELPER_AUTOSTART', false),

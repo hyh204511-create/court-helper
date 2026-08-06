@@ -12,6 +12,8 @@ import {
   adminUser,
   AuthService,
   normalizeUsername,
+  publicExtensionDevice,
+  publicExtensionPairing,
   publicUser,
   type AuthContext,
 } from './service.ts';
@@ -88,6 +90,13 @@ function assertLoginOrigin(request: FastifyRequest, config: ServerConfig, client
   }
 }
 
+function assertExtensionOrigin(request: FastifyRequest, config: ServerConfig): void {
+  const origin = originOf(request);
+  if (!origin || !config.cors.extensionOrigins.includes(origin)) {
+    throw new ForbiddenError('Origin not allowed');
+  }
+}
+
 export function assertCookieWrite(request: FastifyRequest, service: AuthService, config: ServerConfig): void {
   const context = request.auth;
   if (!context || context.mechanism !== 'cookie') return;
@@ -126,12 +135,33 @@ export async function requireAdmin(request: FastifyRequest, service: AuthService
   }
 }
 
+export async function requireAdminUiAdmin(request: FastifyRequest, service: AuthService): Promise<void> {
+  await authenticateRequest(request, service);
+  const context = request.auth;
+  if (!context || context.mechanism !== 'cookie' || context.session.clientType !== 'admin_ui' || context.user.role !== 'admin') {
+    throw new ForbiddenError();
+  }
+}
+
 function protectedHandler(service: AuthService) {
   return async (request: FastifyRequest) => authenticateRequest(request, service);
 }
 
 function adminHandler(service: AuthService) {
-  return async (request: FastifyRequest) => requireAdmin(request, service);
+  return async (request: FastifyRequest) => requireAdminUiAdmin(request, service);
+}
+
+function optionalSafeLabel(body: RequestBody, field: string): string | undefined {
+  if (body[field] === undefined) return undefined;
+  return requiredString(body, field);
+}
+
+function pairingId(request: FastifyRequest): string {
+  const id = (request.params as { id?: unknown }).id;
+  if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    throw new ValidationError([{ field: 'id', code: 'uuid_required' }]);
+  }
+  return id;
 }
 
 function route(prefix: string, path: string): string {
@@ -147,7 +177,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: RegisterAuthOp
     const body = bodyOf(request);
     const username = requiredString(body, 'username');
     const password = requiredString(body, 'password');
-    const clientType = enumValue(body, 'clientType', ['admin_ui', 'extension'] as const);
+    const clientType = enumValue(body, 'clientType', ['admin_ui'] as const);
     assertLoginOrigin(request, config, clientType);
     let result;
     try {
@@ -191,6 +221,71 @@ export function registerAuthRoutes(app: FastifyInstance, options: RegisterAuthOp
       reply.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
     }
     return { ok: true };
+  });
+
+  app.post(route(prefix, '/auth/extension-pairings'), async (request, reply) => {
+    assertExtensionOrigin(request, config);
+    const body = bodyOf(request);
+    const result = await service.createExtensionPairing({
+      deviceId: requiredString(body, 'deviceId'),
+      label: optionalSafeLabel(body, 'label'),
+      exchangeSecret: requiredString(body, 'exchangeSecret'),
+      ip: request.ip,
+    });
+    reply.header('cache-control', 'no-store').code(201);
+    return {
+      pairing: {
+        ...publicExtensionPairing(result.pairing),
+        verificationCode: result.verificationCode,
+      },
+    };
+  });
+
+  app.get(route(prefix, '/auth/extension-pairings'), async (request) => {
+    await requireAdminUiAdmin(request, service);
+    const pairings = await service.listPendingExtensionPairings();
+    return { pairings: pairings.map(publicExtensionPairing) };
+  });
+
+  app.post(route(prefix, '/auth/extension-pairings/:id/approve'), async (request) => {
+    await requireAdminUiAdmin(request, service);
+    assertCookieWrite(request, service, config);
+    const body = bodyOf(request);
+    const context = request.auth as AuthContext;
+    const pairing = await service.approveExtensionPairing(
+      pairingId(request),
+      requiredString(body, 'verificationCode'),
+      context.user.id,
+    );
+    return { pairing: publicExtensionPairing(pairing) };
+  });
+
+  app.post(route(prefix, '/auth/extension-pairings/:id/exchange'), async (request, reply) => {
+    assertExtensionOrigin(request, config);
+    const result = await service.exchangeExtensionPairing(
+      pairingId(request),
+      requiredString(bodyOf(request), 'exchangeSecret'),
+    );
+    reply.header('cache-control', 'no-store');
+    return {
+      token: result.token,
+      expiresAt: result.expiresAt.toISOString(),
+      device: publicExtensionDevice(result.device),
+    };
+  });
+
+  app.get(route(prefix, '/auth/extension-devices'), async (request) => {
+    await requireAdminUiAdmin(request, service);
+    const devices = await service.listExtensionDevices();
+    return { devices: devices.map(publicExtensionDevice) };
+  });
+
+  app.post(route(prefix, '/auth/extension-devices/:id/revoke'), async (request) => {
+    await requireAdminUiAdmin(request, service);
+    assertCookieWrite(request, service, config);
+    bodyOf(request);
+    const device = await service.revokeExtensionDevice(pairingId(request));
+    return { device: publicExtensionDevice(device) };
   });
 
   app.get(route(prefix, '/users'), { preHandler: adminPreHandler }, async () => {

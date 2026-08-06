@@ -131,16 +131,22 @@ async function requireBackOffice(
 ): Promise<AuthContext> {
   await authenticateRequest(request, authService);
   const context = contextOf(request);
-  if (context.session.clientType !== 'admin_ui') throw new ForbiddenError();
-  assertCookieWrite(request, authService, config);
+  if (context.session.clientType === 'admin_ui') {
+    assertCookieWrite(request, authService, config);
+  }
   return context;
 }
 
 async function requireExtension(request: FastifyRequest, authService: AuthService): Promise<AuthContext> {
   await authenticateRequest(request, authService);
   const context = contextOf(request);
-  if (context.session.clientType !== 'extension') throw new ForbiddenError();
+  if (context.session.clientType !== 'extension' || !context.extensionDevice) throw new ForbiddenError();
   return context;
+}
+
+function extensionDeviceId(context: AuthContext): string {
+  if (!context.extensionDevice) throw new ForbiddenError();
+  return context.extensionDevice.deviceId;
 }
 
 function createInput(body: RequestBody, requestedBy: string): BrowserCommandCreateInput {
@@ -176,8 +182,7 @@ export function registerBrowserCommandRoutes(
   const { authService, config, prefix, service } = options;
   const readPreHandler = async (request: FastifyRequest) => {
     await authenticateRequest(request, authService);
-    const context = contextOf(request);
-    if (context.session.clientType !== 'admin_ui') throw new ForbiddenError();
+    contextOf(request);
   };
   const extensionPreHandler = async (request: FastifyRequest) => requireExtension(request, authService);
 
@@ -221,7 +226,10 @@ export function registerBrowserCommandRoutes(
   app.post(route(prefix, '/browser-commands/:id/claim'), { preHandler: extensionPreHandler }, async (request) => {
     const body = bodyOf(request);
     assertKnownFields(body, CLAIM_FIELDS);
-    const claim = await service.claim(commandId(request), body.deviceId as string);
+    if (typeof body.deviceId !== 'string' || body.deviceId.trim() === '') {
+      throw new ValidationError([{ field: 'deviceId', code: 'string_required' }]);
+    }
+    const claim = await service.claim(commandId(request), extensionDeviceId(contextOf(request)));
     return {
       command: publicBrowserCommand(claim.command),
       claimToken: claim.claimToken,
@@ -229,7 +237,11 @@ export function registerBrowserCommandRoutes(
   });
 
   app.post(route(prefix, '/browser-commands/:id/result'), { preHandler: extensionPreHandler }, async (request) => {
-    const command = await service.writeResult(commandId(request), resultInput(bodyOf(request)));
+    const input = resultInput(bodyOf(request));
+    const command = await service.writeResult(commandId(request), {
+      ...input,
+      deviceId: extensionDeviceId(contextOf(request)),
+    });
     return { command: publicBrowserCommand(command) };
   });
 

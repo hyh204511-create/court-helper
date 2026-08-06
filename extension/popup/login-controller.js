@@ -3,7 +3,7 @@ import { createRemoteClient } from "../data/remote-client.js";
 
 export const LOGIN_SERVICE_URL = "http://127.0.0.1:8765";
 
-const SERVER_CONFIG_KEYS = Object.freeze(["serverUrl", "serverUsername"]);
+const SERVER_CONFIG_KEYS = Object.freeze(["serverUrl", "token", "expiresAt"]);
 
 const UI_TEXT = {
   checking: "正在检查登录服务...",
@@ -61,11 +61,12 @@ async function readServerConfig(chromeApi) {
   try {
     const stored = await storage.get(SERVER_CONFIG_KEYS);
     const serverUrl = trimString(stored?.serverUrl);
-    const serverUsername = trimString(stored?.serverUsername);
+    const token = trimString(stored?.token);
+    const expiresAt = Number(stored?.expiresAt) || 0;
     return {
-      configured: Boolean(serverUrl && serverUsername),
+      configured: Boolean(serverUrl && token && expiresAt > Date.now()),
       serverUrl,
-      serverUsername,
+      token,
     };
   } catch {
     return { configured: false };
@@ -98,7 +99,6 @@ export function createLoginController({
   const autoLoginButton = getElement(document, "#btn-auto-login");
   const resultElement = getElement(document, "#login-result");
   const loginStatus = getElement(document, "#login-status");
-  const serverPasswordInput = getElement(document, "#login-server-password");
   const localCredentials = new Map();
   const serverAccounts = new Map();
   let credentialSource = "local";
@@ -193,9 +193,8 @@ export function createLoginController({
     return { ok: true, accounts: accounts.length, source: "local" };
   }
 
-  async function loginServer({ serverUrl, serverUsername }) {
-    const password = serverPasswordInput?.value ?? "";
-    if (!password) {
+  async function loginServer({ serverUrl, token }) {
+    if (!token) {
       const error = new Error("SERVER_AUTH_FAILED");
       error.code = "SERVER_AUTH_FAILED";
       throw error;
@@ -204,20 +203,6 @@ export function createLoginController({
     if (!authClient) {
       const error = new Error("SERVER_UNREACHABLE");
       error.code = "SERVER_UNREACHABLE";
-      throw error;
-    }
-    const response = await authClient.request("/auth/login", {
-      method: "POST",
-      body: {
-        username: serverUsername,
-        password,
-        clientType: "extension",
-      },
-    });
-    const token = trimString(response?.token);
-    if (!token) {
-      const error = new Error("SERVER_AUTH_FAILED");
-      error.code = "SERVER_AUTH_FAILED";
       throw error;
     }
     return createRemoteClient({ baseUrl: serverUrl, token, fetchImpl });
@@ -260,10 +245,15 @@ export function createLoginController({
       renderServerAccounts(accounts);
       setServiceStatus(serviceStatus, accounts.length ? UI_TEXT.serverOnline : UI_TEXT.empty, "online");
       return { ok: true, accounts: accounts.length, source: "server" };
-    } catch {
+    } catch (error) {
       renderServerAccounts([]);
-      setServiceStatus(serviceStatus, UI_TEXT.serverUnreachable, "offline");
-      return { ok: false, error: "SERVER_UNREACHABLE" };
+      const code = classifyRemoteError(error);
+      setServiceStatus(
+        serviceStatus,
+        code === "SERVER_AUTH_FAILED" ? UI_TEXT.serverAuthFailed : UI_TEXT.serverUnreachable,
+        code === "SERVER_AUTH_FAILED" ? "auth-failed" : "offline",
+      );
+      return { ok: false, error: code };
     }
   }
 
@@ -378,7 +368,6 @@ export function createLoginController({
     if (bound || !autoLoginButton) return;
     bound = true;
     autoLoginButton.addEventListener("click", sendAutoLogin);
-    serverPasswordInput?.addEventListener?.("change", loadAccounts);
   }
 
   function init() {
@@ -393,7 +382,6 @@ export function createLoginController({
     if (destroyed) return;
     destroyed = true;
     autoLoginButton?.removeEventListener("click", sendAutoLogin);
-    serverPasswordInput?.removeEventListener?.("change", loadAccounts);
     localCredentials.clear();
     serverAccounts.clear();
     serverClient = null;

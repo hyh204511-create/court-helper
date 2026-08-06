@@ -7,6 +7,7 @@ import { buildApp, loadConfig } from '../src/app.ts';
 import { hashPassword } from '../src/auth/password.ts';
 import { MemoryAuthRepository } from '../src/auth/memory-repository.ts';
 import { MemoryPlatformAccountRepository } from '../src/platform-accounts/memory-repository.ts';
+import { bindPairedExtensionRepository, pairedExtensionTokenForApp } from './paired-extension.ts';
 import { PgPlatformAccountRepository } from '../src/platform-accounts/repository.ts';
 import { runMigrations } from '../src/db/migrator.ts';
 
@@ -53,6 +54,7 @@ async function makeApp() {
     platformAccountRepository,
   });
   await app.ready();
+  bindPairedExtensionRepository(app, authRepository);
   await addUser(authRepository, {
     username: 'worker',
     password: 'Worker-pass-1',
@@ -83,14 +85,8 @@ async function loginAdmin(app) {
 }
 
 async function loginExtension(app, username = 'worker', password = 'Worker-pass-1') {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/auth/login',
-    headers: { origin: 'chrome-extension://test-extension' },
-    payload: { username, password, clientType: 'extension' },
-  });
-  assert.equal(response.statusCode, 200);
-  return response.json().token;
+  void password;
+  return (await pairedExtensionTokenForApp(app, username)).token;
 }
 
 function adminHeaders(admin) {
@@ -179,7 +175,7 @@ test('platform accounts hide credentials, enforce role visibility, and re-encryp
   }
 });
 
-test('credential view accepts only admin_ui cookie sessions for admin and user roles', async () => {
+test('credential view is available to every authenticated business session except user-management routes', async () => {
   const { app } = await makeApp();
 
   try {
@@ -233,8 +229,8 @@ test('credential view accepts only admin_ui cookie sessions for admin and user r
         url: `/api/v1/platform-accounts/${created.json().id}/credential-view`,
         headers: { authorization },
       });
-      assert.equal(response.statusCode, 403);
-      assert.equal(response.json().error.code, 'FORBIDDEN');
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(response.json(), { account: 'view-account', password: 'view-password' });
     }
 
     const extensionCookie = await app.inject({
@@ -242,8 +238,8 @@ test('credential view accepts only admin_ui cookie sessions for admin and user r
       url: `/api/v1/platform-accounts/${created.json().id}/credential-view`,
       headers: { cookie: `court_helper_session=${extensionUserToken}` },
     });
-    assert.equal(extensionCookie.statusCode, 403);
-    assert.equal(extensionCookie.json().error.code, 'FORBIDDEN');
+    assert.equal(extensionCookie.statusCode, 200);
+    assert.deepEqual(extensionCookie.json(), { account: 'view-account', password: 'view-password' });
   } finally {
     await app.close();
   }

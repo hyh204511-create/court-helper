@@ -11,6 +11,7 @@ import { runMigrations, rollbackLastMigration } from '../src/db/migrator.ts';
 import { LoginCommandService } from '../src/login-commands/service.ts';
 import { MemoryLoginCommandRepository } from '../src/login-commands/memory-repository.ts';
 import { PgLoginCommandRepository } from '../src/login-commands/repository.ts';
+import { bindPairedExtensionRepository, pairedExtensionTokenForApp } from './paired-extension.ts';
 
 const TEST_KEY = Buffer.alloc(32, 71).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
@@ -86,6 +87,7 @@ async function makeApp() {
     clock: () => new Date('2026-08-05T10:00:00.000Z'),
   });
   await app.ready();
+  bindPairedExtensionRepository(app, auth);
   return { app, loginCommands };
 }
 
@@ -108,14 +110,8 @@ async function loginAdmin(app) {
 }
 
 async function loginExtension(app, username = 'worker', password = WORKER_PASSWORD) {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/auth/login',
-    headers: { origin: 'chrome-extension://test-extension' },
-    payload: { username, password, clientType: 'extension' },
-  });
-  assert.equal(response.statusCode, 200);
-  return response.json().token;
+  void password;
+  return (await pairedExtensionTokenForApp(app, username)).token;
 }
 
 function adminHeaders(admin, includeCsrf = true) {
@@ -425,6 +421,7 @@ test('003 login command migration has reversible table, constraints, and indexes
       '004_report_exports',
       '005_browser_commands',
       '006_import_batches',
+      '007_extension_devices',
     ]);
 
     const columns = await pool.query(`
@@ -496,6 +493,7 @@ test('003 login command migration has reversible table, constraints, and indexes
       )
     `));
 
+    assert.equal(await rollbackLastMigration(pool), '007_extension_devices');
     assert.equal(await rollbackLastMigration(pool), '006_import_batches');
     assert.equal(await rollbackLastMigration(pool), '005_browser_commands');
     assert.equal(await rollbackLastMigration(pool), '004_report_exports');
@@ -518,7 +516,7 @@ test('003 login command migration has reversible table, constraints, and indexes
   }
 });
 
-test('admin UI exposes remote login controls and the recent login command section without credentials', async () => {
+test('legacy platform remote-login entry creates a unified browser command and shows duplicate guidance', async () => {
   const { app } = await makeApp();
   try {
     const admin = await loginAdmin(app);
@@ -534,8 +532,9 @@ test('admin UI exposes remote login controls and the recent login command sectio
     const script = await app.inject({ method: 'GET', url: '/admin/assets/admin.js' });
     assert.equal(script.statusCode, 200);
     assert.match(script.body, /远程登录/);
-    assert.match(script.body, /loadLoginCommands/);
-    assert.match(script.body, /setInterval\([^,]+,\s*2000\)/);
+    assert.match(script.body, /browser-commands/);
+    assert.match(script.body, /已有进行中的统一登录任务/);
+    assert.doesNotMatch(script.body, /api\('\/login-commands',\s*\{/);
     assert.doesNotMatch(script.body, /secretCiphertext|secret_ciphertext|court-pass/);
   } finally {
     await app.close();
