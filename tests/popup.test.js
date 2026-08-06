@@ -87,6 +87,44 @@ test("popup 选择强执时发送 START_BATCH kind=qz", async () => {
   }
 });
 
+test("popup 初始化以 StorageArea 上下文读取登录状态", async () => {
+  const dom = new JSDOM(`<!doctype html><html><body>
+    <button id="btn-import"></button><button id="btn-export"></button><button id="btn-query"></button>
+    <select id="query-kind"><option value="li">立案</option></select>
+    <span id="progress-text"></span><span id="query-kind-hint"></span>
+    <input id="search-input"><button id="btn-search"></button>
+    <select id="status-filter"></select><table><tbody id="results-body"></tbody></table>
+  </body></html>`);
+  const previous = { document: globalThis.document, chrome: globalThis.chrome, fetch: globalThis.fetch };
+  const storageArea = {
+    get() {
+      assert.equal(this, storageArea, "StorageArea.get 必须保留调用上下文");
+      return Promise.resolve({ state: "logged-in", maskedAccount: "a***n" });
+    },
+    onChanged: { addListener() {} },
+  };
+  globalThis.document = dom.window.document;
+  globalThis.fetch = async () => ({ ok: false });
+  globalThis.chrome = {
+    storage: { local: storageArea, onChanged: storageArea.onChanged },
+    tabs: { query: async () => [], sendMessage: async () => ({}) },
+    runtime: {},
+  };
+  try {
+    await import(`../extension/popup/popup.js?popup-storage-context-test=${importSequence++}`);
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  } finally {
+    dom.window.close();
+    if (previous.document === undefined) delete globalThis.document;
+    else globalThis.document = previous.document;
+    if (previous.chrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previous.chrome;
+    if (previous.fetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previous.fetch;
+  }
+});
+
 test("popup 导出先本地下载，再显示三种上传回执", async () => {
   const dom = new JSDOM(`<!doctype html><html><body><span id="progress-text"></span></body></html>`);
   const previous = { document: globalThis.document, chrome: globalThis.chrome };

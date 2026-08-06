@@ -248,8 +248,10 @@ function bindLoginControls() {
     if (state.state) pageStatus.state = state.state;
     updateQueryAvailability();
   };
-  const readState = chrome.storage?.local?.get;
-  if (typeof readState === "function") Promise.resolve(readState(["state", "maskedAccount"])).then(applyState).catch(() => {});
+  const storageLocal = chrome.storage?.local;
+  if (typeof storageLocal?.get === "function") {
+    Promise.resolve(storageLocal.get(["state", "maskedAccount"])).then(applyState).catch(() => {});
+  }
   chrome.storage?.onChanged?.addListener?.((changes, areaName) => {
     if (areaName !== "local") return;
     applyState({
