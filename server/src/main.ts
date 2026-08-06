@@ -4,6 +4,7 @@ import { buildApp, loadConfig } from './app.ts';
 import { PgAuthRepository } from './auth/repository.ts';
 import { PgPlatformAccountRepository } from './platform-accounts/repository.ts';
 import { PgLoginCommandRepository } from './login-commands/repository.ts';
+import { PgBrowserCommandRepository } from './browser-commands/repository.ts';
 import { PgCaseRepository } from './cases/repository.ts';
 import { PgScreenshotRepository } from './screenshots/repository.ts';
 import { PgReportExportRepository } from './report-exports/repository.ts';
@@ -19,6 +20,7 @@ const app = buildApp({
   authRepository: new PgAuthRepository(pool),
   platformAccountRepository: new PgPlatformAccountRepository(pool),
   loginCommandRepository: new PgLoginCommandRepository(pool),
+  browserCommandRepository: new PgBrowserCommandRepository(pool),
   caseRepository: new PgCaseRepository(pool),
   screenshotRepository: new PgScreenshotRepository(pool),
   reportExportRepository: new PgReportExportRepository(pool),
