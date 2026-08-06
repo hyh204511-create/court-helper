@@ -1,7 +1,7 @@
 // court-content.js — 平台页内容脚本（列表页批量执行 + 详情页自动取证）
 // 经 esbuild 打包为 ../dist/court-content.bundle.js（manifest 引用）
 // 依据 docs/specs/query-module.md 与 app-module.md：
-// - 登录全人工：批量执行前校验已登录 + 当前账号与案件账号一致（不一致 → 待人工切换）；
+// - 登录由后台统一命令驱动；批量执行前校验已登录 + 当前账号与案件账号一致（不一致 → 待人工切换）；
 // - 驳回案件：列表行直读审核意见（驳回原因），审核时间/截图由「案件空间」新标签的
 //   详情页实例自动采集（storage.session 传递待办，详情页回写 db）；
 // - 截图用 html2canvas captureElement（content script 内可用，无需扩展权限）。
@@ -692,7 +692,7 @@ async function showReadyBadge() {
   el.style.cssText =
     "position:fixed;top:12px;right:12px;z-index:2147483646;background:#16a34a;color:#fff;" +
     "padding:6px 12px;border-radius:999px;font:12px/1.4 sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.25);cursor:pointer";
-  el.title = "法院立案/强执查询助手：已连接，可点击扩展图标打开面板";
+  el.title = "法院立案/强执查询助手：已连接；业务操作请使用后台控制台";
   el.addEventListener("click", () => el.remove());
   document.documentElement.appendChild(el);
 }

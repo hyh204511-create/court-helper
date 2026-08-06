@@ -30,6 +30,9 @@ test("manifest 保持最小权限并以 Options/Setup 取代 Popup", () => {
   const serviceWorker = readFileSync(join(ROOT, "extension", "service-worker.js"), "utf8");
   assert.match(serviceWorker, /chrome\.action\.onClicked\.addListener/);
   assert.match(serviceWorker, /routeExtensionAction/);
+
+  const courtContent = readFileSync(join(ROOT, "extension", "content", "court-content.js"), "utf8");
+  assert.doesNotMatch(courtContent, /扩展图标打开面板/);
 });
 
 test("Phase 11 相关规格与启动提示不再保留 Popup 业务入口", () => {
