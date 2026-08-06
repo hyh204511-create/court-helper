@@ -2,7 +2,7 @@
 // 折叠式：默认右下角悬浮球，点击展开完整操作面板（Shadow DOM 隔离样式）。
 // - 登录全人工：面板只显示登录状态（脱敏账号），不做登录动作；
 // - 状态禁猜：未知一律待人工，面板不猜测；
-// - 复用 app-module 操作：导入/开始查询/导出由宿主（court-content.js）注入回调。
+// - 后台是唯一业务入口；面板降级为状态、进度与人工接管提示。
 
 /** 账号脱敏：首尾各 1 位 + ***；≤2 位整体掩码；空值返回空 */
 export function maskAccount(account) {
@@ -85,20 +85,7 @@ const SHELL_HTML = `
       <button class="collapse" title="收起">−</button>
     </header>
     <div class="body">
-      <div class="notice hidden"></div>
-      <div class="actions">
-        <button class="btn-import">导入模板</button>
-        <button class="btn-query primary">开始查询</button>
-        <button class="btn-export">导出报表</button>
-      </div>
-      <div class="query-kind-row">
-        <label for="court-helper-query-kind">查询类型</label>
-        <select id="court-helper-query-kind" class="query-kind">
-          <option value="li">立案</option>
-          <option value="qz">强执</option>
-        </select>
-        <span class="query-kind-hint hidden">强执查询前请先在页面顶部切换到执行 tab</span>
-      </div>
+      <div class="notice">业务操作请前往后台控制台；本面板仅显示状态、进度与人工接管提示。</div>
       <section class="sync-box" aria-live="polite">
         <div class="sync-head"><span>服务器同步</span><span class="sync-state">未配置</span></div>
         <div class="sync-meta"><span class="sync-pending">待上传: 0</span><span class="sync-last">最后同步: -</span></div>
@@ -109,12 +96,8 @@ const SHELL_HTML = `
       <div class="progress-head"><span class="progress-text">待处理: -</span></div>
       <div class="bar"><i></i></div>
       <div class="groups"></div>
-      <div class="ctrl">
-        <button class="btn-pause">暂停</button>
-        <button class="btn-resume">继续</button>
-      </div>
     </div>
-    <footer class="foot">登录全人工 · 未知状态标记待人工</footer>
+    <footer class="foot">后台唯一业务入口 · 未知状态标记待人工</footer>
   </section>`;
 
 /**
@@ -135,8 +118,6 @@ export function createCourtPanel({ document, handlers = {}, shadowMode = "closed
   const shell = shadow.querySelector(".shell");
   const fab = shadow.querySelector(".fab");
   const collapse = shadow.querySelector(".collapse");
-  const queryKind = shadow.querySelector(".query-kind");
-  const queryKindHint = shadow.querySelector(".query-kind-hint");
   const statusEl = shadow.querySelector(".login-status");
   const loginText = shadow.querySelector(".login-text");
   const notice = shadow.querySelector(".notice");
@@ -161,26 +142,6 @@ export function createCourtPanel({ document, handlers = {}, shadowMode = "closed
   fab.addEventListener("click", toggle);
   collapse.addEventListener("click", toggle);
 
-  shadow.querySelector(".btn-import").addEventListener("click", () => handlers.onImport?.());
-  queryKind.addEventListener("change", () => {
-    queryKindHint.classList.toggle("hidden", queryKind.value !== "qz");
-  });
-  shadow.querySelector(".btn-query").addEventListener("click", () => {
-    const kind = queryKind.value === "qz" ? "qz" : "li";
-    try {
-      const result = handlers.onQuery?.(kind);
-      Promise.resolve(result)
-        .then((response) => {
-          if (response?.ok === false) showQueryError(response.error ?? response.code);
-        })
-        .catch(showQueryError);
-    } catch (error) {
-      showQueryError(error);
-    }
-  });
-  shadow.querySelector(".btn-export").addEventListener("click", () => handlers.onExport?.());
-  shadow.querySelector(".btn-pause").addEventListener("click", () => handlers.onPause?.());
-  shadow.querySelector(".btn-resume").addEventListener("click", () => handlers.onResume?.());
   syncRetry.addEventListener("click", () => (handlers.onSyncRetry ?? handlers.onRetrySync)?.());
 
   /** @param {{state: 'login'|'logged-in'|'session-expired'|'unknown', account?: string|null}} s */
@@ -252,7 +213,8 @@ export function createCourtPanel({ document, handlers = {}, shadowMode = "closed
   /** @param {boolean} ready 采集器（content script）是否就绪 */
   function setReady(ready) {
     if (ready) {
-      notice.classList.add("hidden");
+      notice.textContent = "业务操作请前往后台控制台；本面板仅显示状态、进度与人工接管提示。";
+      notice.classList.remove("hidden");
       notice.classList.remove("bad");
     } else {
       notice.textContent = "采集器未就绪，请刷新页面后重试";
