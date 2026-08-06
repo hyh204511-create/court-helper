@@ -916,7 +916,7 @@ async function loadBrowserCommands() {
       creator.dataset.commandCreator = 'true';
       row.append(element('td', command.type), element('td', browserCommandStatusLabel(command.status), 'status-pill'), element('td', browserCommandProgressLabel(command.progress)), element('td', [command.resultCode, command.resultSummary].filter(Boolean).join(' / ') || '—'), creator, element('td', dateLabel(command.createdAt)));
       const actions = element('td', null, 'row-actions');
-      if (['pending', 'executing'].includes(command.status)) actions.append(actionButton('取消', 'cancel-browser-command', command.id, 'small-button danger'));
+      if (['pending', 'executing'].includes(command.status) && command.requestedBy === currentSessionUser?.id) actions.append(actionButton('取消', 'cancel-browser-command', command.id, 'small-button danger'));
       if (['failed', 'manual_required', 'expired'].includes(command.status)) actions.append(actionButton('重试', 'retry-browser-command', command.id));
       row.appendChild(actions); target.appendChild(row);
     });
@@ -994,21 +994,29 @@ function initBrowserControl() {
   const type = $('#browser-command-type');
   const account = $('#browser-command-account');
   const batch = $('#browser-command-batch');
+  let credentialRequestGeneration = 0;
+  const invalidatePlatformCredential = () => {
+    credentialRequestGeneration += 1;
+    clearPlatformCredential();
+  };
   document.addEventListener('visibilitychange', () => { browserControlVisible = document.visibilityState === 'visible'; if (browserControlVisible) void loadBrowserCommands(); });
-  window.addEventListener('pagehide', clearPlatformCredential);
-  loginAccount?.addEventListener('change', clearPlatformCredential);
-  $('#platform-credential-hide')?.addEventListener('click', clearPlatformCredential);
+  window.addEventListener('pagehide', invalidatePlatformCredential);
+  loginAccount?.addEventListener('change', invalidatePlatformCredential);
+  $('#platform-credential-hide')?.addEventListener('click', invalidatePlatformCredential);
   $('#platform-credential-show')?.addEventListener('click', async () => {
     const platformAccountId = loginAccount?.value || '';
     if (!platformAccountId) { setMessage($('[data-platform-login-message]'), '请选择平台账号'); return; }
+    const requestGeneration = ++credentialRequestGeneration;
     clearPlatformCredential();
     try {
       const credential = await api('/platform-accounts/' + encodeURIComponent(platformAccountId) + '/credential-view');
+      if (requestGeneration !== credentialRequestGeneration || loginAccount?.value !== platformAccountId) return;
       $('#platform-credential-account').textContent = credential.account || '';
       $('#platform-credential-password').textContent = credential.password || '';
       $('#platform-credential-view').hidden = false;
       setMessage($('[data-platform-login-message]'), '凭据已按需读取；关闭或切换账号后立即清空', 'success');
     } catch (error) {
+      if (requestGeneration !== credentialRequestGeneration) return;
       clearPlatformCredential();
       setMessage($('[data-platform-login-message]'), errorMessage(error));
     }

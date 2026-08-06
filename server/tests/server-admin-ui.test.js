@@ -226,6 +226,7 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
     assert.match(browserControl.body, /id="current-backoffice-user"/);
     assert.match(browserControl.body, /id="import-batch-form"/);
     assert.match(browserControl.body, /id="browser-command-rows"/);
+    assert.match(browserControl.body, /id="extension-authorization-title"/);
     assert.doesNotMatch(browserControl.body, /id="browser-connection-status"|id="court-tab-status"|id="court-login-status"/);
     assert.doesNotMatch(browserControl.body, /扩展运行状态/);
     const browserControlScript = await app.inject({ method: 'GET', url: '/admin/assets/admin.js' });
@@ -251,6 +252,7 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
     });
     assert.equal(workerBrowserControl.statusCode, 200);
     assert.match(workerBrowserControl.body, /data-page="browser-control"/);
+    assert.doesNotMatch(workerBrowserControl.body, /id="extension-authorization-title"|id="extension-pairing-list"|id="extension-device-list"/);
 
     const platformAccounts = await app.inject({
       method: 'GET',
@@ -303,10 +305,11 @@ test('browser control renders full session and creator names, separates LOGIN, a
       });
       try {
       const requests = [];
+      let deferredCredentialResponse = null;
       let commands = [{
         id: '00000000-0000-0000-0000-000000000301',
         type: 'QUERY_LI',
-        status: 'succeeded',
+        status: 'pending',
         platformAccountId: ACCOUNT_ID,
         clientBatchId: null,
         requestedBy: session.creatorId,
@@ -337,6 +340,7 @@ test('browser control renders full session and creator names, separates LOGIN, a
           return jsonResponse({ platformAccounts: [{ id: ACCOUNT_ID, label: 'synthetic-account', enabled: true }] });
         }
         if (requestUrl.pathname === `/api/v1/platform-accounts/${ACCOUNT_ID}/credential-view`) {
+          if (deferredCredentialResponse) return deferredCredentialResponse;
           return jsonResponse({ account: 'synthetic-view-account', password: 'synthetic-view-password' });
         }
         if (requestUrl.pathname === '/api/v1/import-batches') {
@@ -368,6 +372,8 @@ test('browser control renders full session and creator names, separates LOGIN, a
       assert.equal(dom.window.document.querySelector('#current-backoffice-user').textContent, session.username);
       assert.equal(dom.window.document.querySelector('[data-command-creator]').textContent, session.creatorName);
       assert.doesNotMatch(dom.window.document.body.textContent, /a\*\*\*l|w\*\*\*r/);
+      const cancelButton = dom.window.document.querySelector('[data-action="cancel-browser-command"]');
+      assert.equal(cancelButton !== null, session.creatorId === session.id);
 
       const taskTypes = [...dom.window.document.querySelector('#browser-command-type').options].map((option) => option.value);
       assert.deepEqual(taskTypes, ['QUERY_LI', 'QUERY_QZ', 'EXPORT_REPORT']);
@@ -392,6 +398,20 @@ test('browser control renders full session and creator names, separates LOGIN, a
       dom.window.dispatchEvent(new dom.window.Event('pagehide'));
       assert.equal(dom.window.document.querySelector('#platform-credential-account').textContent, '');
       assert.equal(dom.window.document.querySelector('#platform-credential-password').textContent, '');
+
+      let resolveCredentialResponse;
+      deferredCredentialResponse = new Promise((resolve) => { resolveCredentialResponse = resolve; });
+      const credentialRequestsBefore = requests.filter((request) => request.path.endsWith('/credential-view')).length;
+      dom.window.document.querySelector('#platform-credential-show').click();
+      await waitFor(() => requests.filter((request) => request.path.endsWith('/credential-view')).length > credentialRequestsBefore);
+      dom.window.document.querySelector('#platform-login-account').value = '';
+      dom.window.document.querySelector('#platform-login-account').dispatchEvent(new dom.window.Event('change'));
+      resolveCredentialResponse(jsonResponse({ account: 'stale-account', password: 'stale-password' }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(dom.window.document.querySelector('#platform-credential-account').textContent, '');
+      assert.equal(dom.window.document.querySelector('#platform-credential-password').textContent, '');
+      deferredCredentialResponse = null;
 
       } finally {
         dom.window.close();

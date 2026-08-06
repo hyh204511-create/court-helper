@@ -207,6 +207,17 @@ function reportExportsPage(role: AdminRole): string {
 }
 
 function browserControlPage(role: AdminRole): string {
+  const extensionAuthorization = role === 'admin' ? `
+    <section class="panel" aria-labelledby="extension-authorization-title">
+      <div class="panel-head"><div><h3 id="extension-authorization-title">扩展设备授权</h3><p>扩展会自行发起一次性配对请求。请核对扩展显示的六码后批准；设备只能执行业务操作，不能管理系统用户。</p></div></div>
+      <div class="panel-body">
+        <p class="message muted" data-extension-authorization-message aria-live="polite">准备读取</p>
+        <h4>待批准请求</h4>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>设备</th><th>标签</th><th>过期时间</th><th>核对码</th><th>操作</th></tr></thead><tbody id="extension-pairing-list"></tbody></table></div>
+        <h4>已授权设备</h4>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>设备</th><th>标签</th><th>最近在线</th><th>状态</th><th>操作</th></tr></thead><tbody id="extension-device-list"></tbody></table></div>
+      </div>
+    </section>` : '';
   return layout('browser-control', role, '浏览器控制', `
     <header class="page-head"><div><p class="eyebrow">Browser / Commands</p><h2>浏览器控制</h2><p>登录、导入、查询和导出的唯一业务入口。任务由扩展在已打开的法院标签页执行。</p></div><p class="subtle">当前后台用户：<strong id="current-backoffice-user">加载中…</strong></p></header>
     <section class="panel" aria-labelledby="platform-login-title">
@@ -220,16 +231,7 @@ function browserControlPage(role: AdminRole): string {
         <p class="message" data-platform-login-message aria-live="polite"></p>
       </div>
     </section>
-    <section class="panel" aria-labelledby="extension-authorization-title">
-      <div class="panel-head"><div><h3 id="extension-authorization-title">扩展设备授权</h3><p>扩展会自行发起一次性配对请求。请核对扩展显示的六码后批准；设备只能执行业务操作，不能管理系统用户。</p></div></div>
-      <div class="panel-body">
-        <p class="message muted" data-extension-authorization-message aria-live="polite">准备读取</p>
-        <h4>待批准请求</h4>
-        <div class="table-wrap"><table class="data-table"><thead><tr><th>设备</th><th>标签</th><th>过期时间</th><th>核对码</th><th>操作</th></tr></thead><tbody id="extension-pairing-list"></tbody></table></div>
-        <h4>已授权设备</h4>
-        <div class="table-wrap"><table class="data-table"><thead><tr><th>设备</th><th>标签</th><th>最近在线</th><th>状态</th><th>操作</th></tr></thead><tbody id="extension-device-list"></tbody></table></div>
-      </div>
-    </section>
+    ${extensionAuthorization}
     <section class="panel" aria-labelledby="browser-command-title">
       <div class="panel-head"><div><h3 id="browser-command-title">通用任务</h3><p>仅创建立案查询、强执查询或导出；登录请使用上方独立入口。</p></div></div>
       <div class="panel-body">
