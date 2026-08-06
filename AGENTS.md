@@ -18,6 +18,7 @@
 - **敏感数据**：真实案号、原告/被告名、身份证号、密码（含 `accounts.txt`）、驳回原因、截图 = 真实业务数据，**不得提交 git、不得写入知识库、不得外传**。`*.xlsx` 已 ignore（唯一例外：`tests/fixtures/*.xlsx` 脱敏测试模板）。真实模板只放本地私有位置。
 - **节流**：批量查询每案间隔 3–8s 随机、单批上限 50 条、失败重试 1 次后标记待人工。
 - 涉及批量任务/识别链路改动前先读知识库对应模块笔记。
+- **与三客一危严格分离（2026-08-06 用户明确要求）**：court-helper 只用 courthelper 库；用户级环境变量 `DATABASE_URL` 指向三客一危的 assistant 库且优先于 `--env-file`，服务器启动必须走 `scripts/start-server.ps1`（unset 污染）；禁止向 assistant 库迁移/写入 court-helper 对象。
 
 ## Obsidian 知识库
 本项目知识库 = `C:\Users\28368\Documents\Obsidian\Vaults\Codex-Knowledge`，入口：`Projects/法院立案强执查询助手/` 下的 `项目索引.md`、`Architecture.md`、`LoginModule.md`、`QueryModule.md`、`ExcelModule.md`、`Todo.md`。
