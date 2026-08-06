@@ -107,6 +107,6 @@ admin_ui Cookie 会话
 ## 8. 范围外
 
 - 不实现 browser command 与批次的绑定，不实现 extension-data。
-- 不实现后台页面 `/admin/browser-control`，不移除 popup。
+- 本模块不单独定义或实现后台页面；批次上传由 Phase 11 的 `/admin/browser-control` 唯一业务入口承载，扩展侧不保留第二套上传入口。
 - 不存解析后的完整行、账号、密码、案号、当事人或截图。
 - 不支持 xls、csv、宏工作簿、多个业务 Sheet、超过 20 MiB 或超过 5,000 行的文件。

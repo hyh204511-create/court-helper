@@ -50,6 +50,6 @@ if %errorlevel%==0 (
   echo [WARN] OCR health check failed - see %LOGDIR%\ocr.log
 )
 echo.
-echo Done. Open the extension popup and click auto-login.
+echo Done. Open http://127.0.0.1:3000/admin/browser-control for business operations.
 timeout /t 5 /nobreak >nul 2>&1
 exit /b 0

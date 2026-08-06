@@ -1,10 +1,10 @@
 # 规格：report-export-module（报表导出记录与再下载）
 
-> 版本：0.1 ｜ 状态：已确认、待实现 ｜ 依据：2026-08-06 用户任务（popup 操作台挂真实平台；导出报表参考 san-ke-yi-wei 报表处理：真实平台导出后后端有记录、可再次下载）、server-module 0.1（存储/鉴权/错误模型复用）
+> 版本：0.2 ｜ 状态：已确认、待真实验收 ｜ 依据：Phase 11 后台控制台唯一入口决策、browser-command-module、server-module（存储/鉴权/错误模型复用）
 
 ## 1. 目标与边界
 
-插件在 popup / 浮动面板导出 `立案与强执查询表-<日期>.xlsx`（核心流程不变：仍本地生成、本地下载）后，若已配置服务器且在线，**自动上传该文件到服务器**；服务器持久化记录（PostgreSQL + 对象存储），后台管理页可**再次下载**与删除。
+后台控制台创建 `EXPORT_REPORT` 命令后，扩展在真实法院标签页执行导出：生成并本地下载 `立案与强执查询表-<日期>.xlsx`，随后在服务器在线时**自动上传该文件**；服务器持久化记录（PostgreSQL + 对象存储），后台管理页可**再次下载**与删除。浮动面板只显示脱敏状态和进度，不提供导出按钮。
 
 - 参考（san-ke-yi-wei）：服务端 `ExportJob` 记录 `file_name / file_sha256 / 导出人 / 创建时间`；`GET api/exports/<id>/download` 流式返回（`as_attachment` + 原文件名 + `Cache-Control: no-store` + `X-Content-SHA256` 响应头）；过期定期清理。
 - 本模块完全复用 `screenshots` 模块的既有模式：对象存储（本地磁盘 / COS/OSS）、鉴权（Bearer / Cookie）、错误信封、30 天保留。
@@ -62,37 +62,36 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_uidx
 - 扩展 `retention/service.ts`：按 `created_at` 早于截止线删除 `report_exports`；先删对象（成功或已不存在）再删记录；结果计数并入 `RetentionCleanupResult`（`deletedReportExports`）。
 - 与案件/截图同一调度器每日执行 + 启动补跑；失败留待下次，日志仅计数。
 
-## 6. 插件侧（popup / 浮动面板）
+## 6. 扩展命令执行链
 
 ### 6.1 导出后上传（核心流程不变，只做加法）
 
 ```
-导出按钮 → buildExportWorkbook → 本地下载（既有逻辑原样）
+后台控制台创建 EXPORT_REPORT → SW 领取命令 → content 执行器
+        → buildExportWorkbook → 本地下载（既有逻辑原样）
         → 计算 sha256（crypto.subtle，hex64）
-        → 二进制转 base64（popup 内完成），chrome.runtime.sendMessage({type:"EXPORT_UPLOAD", fileName, sha256, base64, mime})
+        → 二进制转 base64，chrome.runtime.sendMessage({type:"EXPORT_UPLOAD", fileName, sha256, base64, mime})
         → SW 解码 base64 → Blob → remote client POST /report-exports
         → 回执：成功 → 提示「已上传服务器，后台可再次下载」
                  NOT_CONFIGURED → 提示「未配置服务器，仅本地保存」
                  失败 → 提示「上传失败，本地文件已保存」（不重试、不阻塞）
 ```
 
-- `EXPORT_UPLOAD` 由 **service-worker** 处理（token 只在 SW 内存，popup/content 不接触凭据）；SW 在 `initializeSyncCoordinator` 时持有 remote client 引用；未配置服务器 → `{ok:false, code:"NOT_CONFIGURED"}`。
-- **二进制交接用 base64**：Chromium 扩展消息为 JSON 序列化（官方 messaging 文档），Blob/ArrayBuffer 不保真；popup/面板把 xlsx 字节转 base64 字符串随消息发送，SW 侧 `atob` 解码为 Uint8Array 再构造 Blob 上传。base64 膨胀约 33%，单文件受服务器 20 MiB 上限约束（超出由服务器 413 拒绝）。测试必须模拟浏览器 JSON 序列化往返（`JSON.parse(JSON.stringify(message))`）。
-- popup 与面板共用同一消息与同一回执文案；上传中按钮不重复触发（复用现有 in-flight 防抖）。
+- `EXPORT_UPLOAD` 由 **service-worker** 处理（设备 token 只在 SW 使用，content 不接触该 token）；SW 在 `initializeSyncCoordinator` 时持有 remote client 引用；未配置服务器 → `{ok:false, code:"NOT_CONFIGURED"}`。
+- **二进制交接用 base64**：Chromium 扩展消息为 JSON 序列化（官方 messaging 文档），Blob/ArrayBuffer 不保真；content 执行器把 xlsx 字节转 base64 字符串随消息发送，SW 侧 `atob` 解码为 Uint8Array 再构造 Blob 上传。base64 膨胀约 33%，单文件受服务器 20 MiB 上限约束（超出由服务器 413 拒绝）。测试必须模拟浏览器 JSON 序列化往返（`JSON.parse(JSON.stringify(message))`）。
+- 导出执行保持 single-flight；同一法院标签页不得并发生成两份报表。状态和安全摘要通过统一 browser command 回写，浮动面板只作状态提示。
 - **SW 配置懒初始化**：`EXPORT_UPLOAD` 到达时若 SW 尚无 remote client，须重新读取 `chrome.storage.local` 同步配置并初始化（运行中新增/清除服务器配置立即生效）；相关 storage 键变化时重建 client，不得沿用过期配置。
 
-### 6.2 popup 门禁：我的案件页放行（挂真实平台）
+### 6.2 列表页门禁
 
-- `query-gate.js`：`LIST_ROUTE` 单值改为 `LIST_ROUTES` 数组：
-  - `#/pagesWsla/pc/list/index`（网上立案列表，含执行 tab）
-  - `#/pages/pc/case-list/index`（我的案件，用户核心工作页，recon 已确认）
-- `isListRoute` = 任一前缀命中（兼容尾部 `/` 与 `?`）；content 侧 `isListPage`（includes `list/index`）已覆盖两路由，不改。
+- content 执行器仅在网上立案列表 `#/pagesWsla/pc/list/index` 或我的案件列表 `#/pages/pc/case-list/index` 执行查询/导出命令；登录页和详情页不得误执行。
+- 页面门禁由 content 与统一 browser command 执行器负责，不再存在独立界面路由门禁模块。
 
 ### 6.3 强执批量入口（挂真实平台）
 
-- popup 与面板操作区增加「查询类型」选择：**立案 / 强执**；`START_BATCH` 消息载荷带 `kind`（`li`/`qz`）。
+- 后台控制台以 `QUERY_LI` / `QUERY_QZ` 区分查询类型；SW 下发给 content 的 `START_BATCH` 消息载荷带 `kind`（`li`/`qz`）。
 - content `startBatch(kind)` 既有实现已按 kind 选 store（`cases`/`enforcementCases`），不改调度核心。
-- **不自动切 tab**：强执批量要求用户当前停在「执行」tab（采集器按行内 caseType 识别状态，不改写动作）。**启动门禁**：`START_BATCH(kind=qz)` 时若当前页面可见行中不存在执行类 caseType（含「执行」）的行 → 返回稳定错误 `EXECUTION_TAB_REQUIRED`，popup/面板提示「请先在页面顶部切换到执行 tab」，禁止继续执行（防止在民事 tab 下把强执记录写成错误状态）。
+- **不自动切 tab**：强执批量要求用户当前停在「执行」tab（采集器按行内 caseType 识别状态，不改写动作）。**启动门禁**：`START_BATCH(kind=qz)` 时若当前页面可见行中不存在执行类 caseType（含「执行」）的行 → 返回稳定错误 `EXECUTION_TAB_REQUIRED`，控制台任务状态与浮动面板提示人工切换，禁止继续执行（防止在民事 tab 下把强执记录写成错误状态）。
 
 ## 7. 后台管理（admin-ui 增量）
 
@@ -113,16 +112,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_uidx
   - 保留：`created_at` 早于截止线被清理（对象与记录），晚于截止线保留。
 - **extension 测试**：
   - `remote-client.test.js` 增补：`uploadReportExport` 构造 FormData（字段与文件）、错误映射、幂等头；
-  - `EXPORT_UPLOAD` 消息测试须经 JSON 序列化往返（模拟浏览器丢 Blob 类型）；覆盖：base64 解码正确、未配置后置写入配置再上传成功（懒初始化）、popup 真实点击按钮发送所选 kind（mock 事件对象不是 `kind`）、qz 门禁 `EXECUTION_TAB_REQUIRED`；
+  - `EXPORT_UPLOAD` 消息测试须经 JSON 序列化往返（模拟浏览器丢 Blob 类型）；覆盖：base64 解码正确、未配置后置写入配置再上传成功（懒初始化）、统一命令下发所选 kind、qz 门禁 `EXECUTION_TAB_REQUIRED`；
   - service-worker：`EXPORT_UPLOAD` 未配置 → `NOT_CONFIGURED`；已配置 → 调 client 并回执（mock fetch + fake 配置）；
-  - `query-gate.test.js`（或并入既有）：`isListRoute` 对两个真实路由为 true，对登录/详情路由为 false；
-  - popup/panel：导出上传流程（mock chrome.runtime.sendMessage）——本地下载先行、上传成功/失败/未配置三种回执文案；强执类型选择发送 `kind:"qz"`。
+  - content 路由门禁对两个真实列表路由放行，对登录/详情路由拒绝；
+  - browser command/content：导出上传流程（mock chrome.runtime.sendMessage）——本地下载先行、上传成功/失败/未配置三种回执文案；强执命令发送 `kind:"qz"`。
 - 既有测试不得因本次改动改变结果。
 
 ## 9. 验收门槛（真实验收）
 
 1. 本机 PostgreSQL + 服务器：插件导出 → 后台「报表导出」出现记录 → 下载文件与本地导出一致（sha256 对比）→ 删除后消失。
-2. 真实平台（用户已登录会话）：网上立案列表页与「我的案件」页 popup「开始查询」均可用；执行 tab 下「强执」批量可跑通 2–3 条；导出后后台有记录并可再下载。验收记录只写脱敏摘要。
+2. 真实平台（用户已登录会话）：控制台在网上立案列表页与“我的案件”页创建的查询命令均可执行；执行 tab 下“强执”批量可跑通 2–3 条；导出后后台有记录并可再下载。验收记录只写脱敏摘要。
 
 ## 10. 范围外（不做）
 

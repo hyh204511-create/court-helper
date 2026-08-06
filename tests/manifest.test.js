@@ -31,3 +31,17 @@ test("manifest 保持最小权限并以 Options/Setup 取代 Popup", () => {
   assert.match(serviceWorker, /chrome\.action\.onClicked\.addListener/);
   assert.match(serviceWorker, /routeExtensionAction/);
 });
+
+test("Phase 11 相关规格与启动提示不再保留 Popup 业务入口", () => {
+  const reportSpec = readFileSync(join(ROOT, "docs", "specs", "report-export-module.md"), "utf8");
+  const panelSpec = readFileSync(join(ROOT, "docs", "specs", "panel-module.md"), "utf8");
+  const importSpec = readFileSync(join(ROOT, "docs", "specs", "import-batches-module.md"), "utf8");
+  const appSpec = readFileSync(join(ROOT, "docs", "specs", "app-module.md"), "utf8");
+  const startScript = readFileSync(join(ROOT, "scripts", "start-services.bat"), "utf8");
+
+  assert.doesNotMatch(reportSpec, /popup\s*\/\s*浮动面板|popup\s*与面板|popup「开始查询」/i);
+  assert.doesNotMatch(panelSpec, /popup\s*保留|与\s*popup\s*同功能|panel\s*\/\s*popup/i);
+  assert.doesNotMatch(importSpec, /不移除\s*popup/i);
+  assert.doesNotMatch(appSpec, /不做账号自动切换\/自动登录（登录全人工）/);
+  assert.doesNotMatch(startScript, /extension popup/i);
+});
