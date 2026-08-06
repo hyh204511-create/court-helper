@@ -167,18 +167,20 @@ test('running migrations twice is harmless and explicit rollback restores a clea
     await runMigrations(pool);
     await runMigrations(pool);
     const applied = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
-    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports']);
+    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands']);
 
     await rollbackLastMigration(pool);
     const afterRollback = await tableNames(pool);
     assert.equal(afterRollback.has('users'), true);
     assert.equal(afterRollback.has('screenshots'), true);
     assert.equal(afterRollback.has('login_commands'), true);
-    assert.equal(afterRollback.has('report_exports'), false);
+    assert.equal(afterRollback.has('report_exports'), true);
     assert.equal((await columnNames(pool, 'cases')).has('created_by'), true);
     const appliedAfterRollback = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
-    assert.deepEqual(appliedAfterRollback.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands']);
+    assert.deepEqual(appliedAfterRollback.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports']);
 
+    // pg-mem retains this primary-key relation after DROP TABLE; PostgreSQL removes it.
+    await pool.query('DROP INDEX IF EXISTS browser_commands_pkey');
     await runMigrations(pool);
     const afterReapply = await tableNames(pool);
     assert.equal(afterReapply.has('users'), true);

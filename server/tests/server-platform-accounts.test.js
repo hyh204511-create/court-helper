@@ -67,15 +67,19 @@ function cookieHeader(response) {
   return first.split(';', 1)[0];
 }
 
-async function loginAdmin(app) {
+async function loginAdminUi(app, username = 'admin', password = ADMIN_PASSWORD) {
   const response = await app.inject({
     method: 'POST',
     url: '/auth/login',
     headers: { origin: 'https://admin.example.test' },
-    payload: { username: 'admin', password: ADMIN_PASSWORD, clientType: 'admin_ui' },
+    payload: { username, password, clientType: 'admin_ui' },
   });
   assert.equal(response.statusCode, 200);
   return { cookie: cookieHeader(response), csrfToken: response.json().csrfToken };
+}
+
+async function loginAdmin(app) {
+  return loginAdminUi(app);
 }
 
 async function loginExtension(app, username = 'worker', password = 'Worker-pass-1') {
@@ -97,7 +101,26 @@ function adminHeaders(admin) {
   };
 }
 
-test('platform accounts hide credentials, enforce role visibility, and decrypt only for admin sessions', async () => {
+function tokenFromCookie(cookie) {
+  const separator = cookie.indexOf('=');
+  assert.notEqual(separator, -1);
+  return cookie.slice(separator + 1);
+}
+
+function assertCredentialError(response, {
+  statusCode,
+  code,
+  cacheControl,
+  credential,
+}) {
+  assert.equal(response.statusCode, statusCode);
+  assert.equal(response.json().error.code, code);
+  assert.equal(response.headers['cache-control'], cacheControl);
+  assert.equal(response.body.includes(credential.account), false);
+  assert.equal(response.body.includes(credential.password), false);
+}
+
+test('platform accounts hide credentials, enforce role visibility, and re-encrypt replacements', async () => {
   const { app, platformAccountRepository } = await makeApp();
 
   try {
@@ -124,27 +147,13 @@ test('platform accounts hide credentials, enforce role visibility, and decrypt o
     const workerToken = await loginExtension(app);
     const workerList = await app.inject({
       method: 'GET',
-      url: '/platform-accounts',
+      url: '/api/v1/platform-accounts',
       headers: { authorization: `Bearer ${workerToken}` },
     });
     assert.equal(workerList.statusCode, 200);
     assert.deepEqual(workerList.json().platformAccounts, [created.json()]);
-
-    const cookieCredential = await app.inject({
-      method: 'POST',
-      url: `/platform-accounts/${created.json().id}/credential`,
-      headers: { cookie: admin.cookie },
-    });
-    assert.equal(cookieCredential.statusCode, 200);
-    assert.deepEqual(cookieCredential.json(), { account: 'court-user', password: 'court-pass' });
-
-    const credential = await app.inject({
-      method: 'POST',
-      url: `/platform-accounts/${created.json().id}/credential`,
-      headers: { authorization: `Bearer ${workerToken}` },
-    });
-    assert.equal(credential.statusCode, 403);
-    assert.equal(credential.json().error.code, 'FORBIDDEN');
+    assert.equal(workerList.body.includes('court-user'), false);
+    assert.equal(workerList.body.includes('court-pass'), false);
 
     const replacement = await app.inject({
       method: 'PATCH',
@@ -156,7 +165,7 @@ test('platform accounts hide credentials, enforce role visibility, and decrypt o
     const adminToken = await loginExtension(app, 'admin', ADMIN_PASSWORD);
     const replacementCredential = await app.inject({
       method: 'POST',
-      url: `/platform-accounts/${created.json().id}/credential`,
+      url: `/api/v1/platform-accounts/${created.json().id}/credential`,
       headers: { authorization: `Bearer ${adminToken}` },
     });
     assert.equal(replacementCredential.statusCode, 200);
@@ -165,6 +174,227 @@ test('platform accounts hide credentials, enforce role visibility, and decrypt o
 
     const replaced = await platformAccountRepository.findById(created.json().id);
     assert.notDeepEqual(replaced.secretIv, stored.secretIv);
+  } finally {
+    await app.close();
+  }
+});
+
+test('credential view accepts only admin_ui cookie sessions for admin and user roles', async () => {
+  const { app } = await makeApp();
+
+  try {
+    const admin = await loginAdmin(app);
+    const backOfficeUser = await loginAdminUi(app, 'worker', 'Worker-pass-1');
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/platform-accounts',
+      headers: adminHeaders(admin),
+      payload: { label: 'credential-view', account: 'view-account', password: 'view-password' },
+    });
+    assert.equal(created.statusCode, 201);
+
+    const adminView = await app.inject({
+      method: 'GET',
+      url: `/api/v1/platform-accounts/${created.json().id}/credential-view`,
+      headers: { cookie: admin.cookie },
+    });
+    assert.equal(adminView.statusCode, 200);
+    assert.deepEqual(adminView.json(), { account: 'view-account', password: 'view-password' });
+    assert.equal(adminView.headers['cache-control'], 'private, no-store');
+
+    const userView = await app.inject({
+      method: 'GET',
+      url: `/api/v1/platform-accounts/${created.json().id}/credential-view`,
+      headers: { cookie: backOfficeUser.cookie },
+    });
+    assert.equal(userView.statusCode, 200);
+    assert.deepEqual(userView.json(), { account: 'view-account', password: 'view-password' });
+    assert.equal(userView.headers['cache-control'], 'private, no-store');
+
+    const bareView = await app.inject({
+      method: 'GET',
+      url: `/platform-accounts/${created.json().id}/credential-view`,
+      headers: { cookie: admin.cookie },
+    });
+    assert.equal(bareView.statusCode, 404);
+    assert.equal(bareView.json().error.code, 'NOT_FOUND');
+    assert.equal(bareView.body.includes('view-account'), false);
+    assert.equal(bareView.body.includes('view-password'), false);
+
+    const extensionUserToken = await loginExtension(app);
+    const extensionAdminToken = await loginExtension(app, 'admin', ADMIN_PASSWORD);
+    for (const authorization of [
+      `Bearer ${extensionUserToken}`,
+      `Bearer ${extensionAdminToken}`,
+      `Bearer ${tokenFromCookie(admin.cookie)}`,
+    ]) {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/platform-accounts/${created.json().id}/credential-view`,
+        headers: { authorization },
+      });
+      assert.equal(response.statusCode, 403);
+      assert.equal(response.json().error.code, 'FORBIDDEN');
+    }
+
+    const extensionCookie = await app.inject({
+      method: 'GET',
+      url: `/api/v1/platform-accounts/${created.json().id}/credential-view`,
+      headers: { cookie: `court_helper_session=${extensionUserToken}` },
+    });
+    assert.equal(extensionCookie.statusCode, 403);
+    assert.equal(extensionCookie.json().error.code, 'FORBIDDEN');
+  } finally {
+    await app.close();
+  }
+});
+
+test('credential automation endpoint accepts only extension bearer sessions for admin and user roles', async () => {
+  const { app } = await makeApp();
+
+  try {
+    const admin = await loginAdmin(app);
+    const backOfficeUser = await loginAdminUi(app, 'worker', 'Worker-pass-1');
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/platform-accounts',
+      headers: adminHeaders(admin),
+      payload: { label: 'automation-credential', account: 'automation-account', password: 'automation-password' },
+    });
+    assert.equal(created.statusCode, 201);
+
+    for (const cookie of [admin.cookie, backOfficeUser.cookie]) {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/v1/platform-accounts/${created.json().id}/credential`,
+        headers: { cookie },
+      });
+      assert.equal(response.statusCode, 403);
+      assert.equal(response.json().error.code, 'FORBIDDEN');
+    }
+
+    const extensionUserToken = await loginExtension(app);
+    const extensionAdminToken = await loginExtension(app, 'admin', ADMIN_PASSWORD);
+    for (const url of [
+      `/platform-accounts/${created.json().id}/credential`,
+      `/api/v1/platform-accounts/${created.json().id}/credential`,
+    ]) {
+      for (const token of [extensionUserToken, extensionAdminToken]) {
+        const response = await app.inject({
+          method: 'POST',
+          url,
+          headers: { authorization: `Bearer ${token}` },
+        });
+        assert.equal(response.statusCode, 200);
+        assert.deepEqual(response.json(), { account: 'automation-account', password: 'automation-password' });
+        assert.equal(response.headers['cache-control'], 'no-store');
+      }
+    }
+
+    const extensionCookie = await app.inject({
+      method: 'POST',
+      url: `/api/v1/platform-accounts/${created.json().id}/credential`,
+      headers: { cookie: `court_helper_session=${extensionUserToken}` },
+    });
+    assert.equal(extensionCookie.statusCode, 403);
+    assert.equal(extensionCookie.json().error.code, 'FORBIDDEN');
+
+    const backOfficeBearer = await app.inject({
+      method: 'POST',
+      url: `/api/v1/platform-accounts/${created.json().id}/credential`,
+      headers: { authorization: `Bearer ${tokenFromCookie(admin.cookie)}` },
+    });
+    assert.equal(backOfficeBearer.statusCode, 403);
+    assert.equal(backOfficeBearer.json().error.code, 'FORBIDDEN');
+  } finally {
+    await app.close();
+  }
+});
+
+test('credential endpoints report disabled and deleted accounts as non-cacheable ACCOUNT_DISABLED without credentials', async () => {
+  const { app } = await makeApp();
+
+  try {
+    const admin = await loginAdmin(app);
+    const extensionToken = await loginExtension(app);
+    const disabledSecret = { account: 'disabled-account', password: 'disabled-password' };
+    const disabled = await app.inject({
+      method: 'POST',
+      url: '/api/v1/platform-accounts',
+      headers: adminHeaders(admin),
+      payload: { label: 'disabled-credential', ...disabledSecret },
+    });
+    assert.equal(disabled.statusCode, 201);
+    const disable = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/platform-accounts/${disabled.json().id}`,
+      headers: adminHeaders(admin),
+      payload: { enabled: false },
+    });
+    assert.equal(disable.statusCode, 200);
+
+    const disabledView = await app.inject({
+      method: 'GET',
+      url: `/api/v1/platform-accounts/${disabled.json().id}/credential-view`,
+      headers: { cookie: admin.cookie },
+    });
+    assertCredentialError(disabledView, {
+      statusCode: 409,
+      code: 'ACCOUNT_DISABLED',
+      cacheControl: 'private, no-store',
+      credential: disabledSecret,
+    });
+
+    const disabledAutomation = await app.inject({
+      method: 'POST',
+      url: `/api/v1/platform-accounts/${disabled.json().id}/credential`,
+      headers: { authorization: `Bearer ${extensionToken}` },
+    });
+    assertCredentialError(disabledAutomation, {
+      statusCode: 409,
+      code: 'ACCOUNT_DISABLED',
+      cacheControl: 'no-store',
+      credential: disabledSecret,
+    });
+
+    const deletedSecret = { account: 'deleted-account', password: 'deleted-password' };
+    const deleted = await app.inject({
+      method: 'POST',
+      url: '/api/v1/platform-accounts',
+      headers: adminHeaders(admin),
+      payload: { label: 'deleted-credential', ...deletedSecret },
+    });
+    assert.equal(deleted.statusCode, 201);
+    const remove = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/platform-accounts/${deleted.json().id}`,
+      headers: adminHeaders(admin),
+    });
+    assert.equal(remove.statusCode, 200);
+
+    const deletedView = await app.inject({
+      method: 'GET',
+      url: `/api/v1/platform-accounts/${deleted.json().id}/credential-view`,
+      headers: { cookie: admin.cookie },
+    });
+    assertCredentialError(deletedView, {
+      statusCode: 409,
+      code: 'ACCOUNT_DISABLED',
+      cacheControl: 'private, no-store',
+      credential: deletedSecret,
+    });
+
+    const deletedAutomation = await app.inject({
+      method: 'POST',
+      url: `/api/v1/platform-accounts/${deleted.json().id}/credential`,
+      headers: { authorization: `Bearer ${extensionToken}` },
+    });
+    assertCredentialError(deletedAutomation, {
+      statusCode: 409,
+      code: 'ACCOUNT_DISABLED',
+      cacheControl: 'no-store',
+      credential: deletedSecret,
+    });
   } finally {
     await app.close();
   }
@@ -223,16 +453,17 @@ test('admins see disabled accounts, users do not, and deletion is soft', async (
   }
 });
 
-test('credential authentication failures and authenticated decryption failures never disclose secrets', async () => {
+test('credential decryption failures never disclose secrets and are not cacheable', async () => {
   const { app, platformAccountRepository } = await makeApp();
 
   try {
     const admin = await loginAdmin(app);
+    const secret = { account: 'secret-account', password: 'secret-password' };
     const created = await app.inject({
       method: 'POST',
       url: '/platform-accounts',
       headers: adminHeaders(admin),
-      payload: { label: 'tamper-test', account: 'secret-account', password: 'secret-password' },
+      payload: { label: 'tamper-test', ...secret },
     });
     const adminToken = await loginExtension(app, 'admin', ADMIN_PASSWORD);
 
@@ -240,15 +471,35 @@ test('credential authentication failures and authenticated decryption failures n
     stored.secretTag[0] ^= 0xff;
     await platformAccountRepository.update(created.json().id, { secretTag: stored.secretTag });
 
-    const response = await app.inject({
-      method: 'POST',
-      url: `/platform-accounts/${created.json().id}/credential`,
-      headers: { authorization: `Bearer ${adminToken}` },
-    });
-    assert.equal(response.statusCode, 503);
-    assert.equal(response.json().error.code, 'CREDENTIAL_UNAVAILABLE');
-    assert.equal(response.body.includes('secret-account'), false);
-    assert.equal(response.body.includes('secret-password'), false);
+    const requests = [
+      {
+        method: 'GET',
+        url: `/api/v1/platform-accounts/${created.json().id}/credential-view`,
+        headers: { cookie: admin.cookie },
+        cacheControl: 'private, no-store',
+      },
+      {
+        method: 'POST',
+        url: `/platform-accounts/${created.json().id}/credential`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        cacheControl: 'no-store',
+      },
+      {
+        method: 'POST',
+        url: `/api/v1/platform-accounts/${created.json().id}/credential`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        cacheControl: 'no-store',
+      },
+    ];
+    for (const request of requests) {
+      const response = await app.inject(request);
+      assertCredentialError(response, {
+        statusCode: 503,
+        code: 'CREDENTIAL_UNAVAILABLE',
+        cacheControl: request.cacheControl,
+        credential: secret,
+      });
+    }
   } finally {
     await app.close();
   }

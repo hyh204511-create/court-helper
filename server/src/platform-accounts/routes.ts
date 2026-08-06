@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 
 import type { ServerConfig } from '../config.ts';
-import { ConflictError, ValidationError } from '../errors.ts';
+import { ConflictError, ForbiddenError, ValidationError } from '../errors.ts';
 import {
   assertCookieWrite,
   authenticateRequest,
@@ -64,6 +64,20 @@ export function registerPlatformAccountRoutes(
   const { authService, config, prefix, service } = options;
   const protectedPreHandler = async (request: FastifyRequest) => authenticateRequest(request, authService);
   const adminPreHandler = async (request: FastifyRequest) => requireAdmin(request, authService);
+  const credentialViewPreHandler = async (request: FastifyRequest) => {
+    await authenticateRequest(request, authService);
+    const context = request.auth;
+    if (!context || context.mechanism !== 'cookie' || context.session.clientType !== 'admin_ui') {
+      throw new ForbiddenError();
+    }
+  };
+  const extensionCredentialPreHandler = async (request: FastifyRequest) => {
+    await authenticateRequest(request, authService);
+    const context = request.auth;
+    if (!context || context.mechanism !== 'bearer' || context.session.clientType !== 'extension') {
+      throw new ForbiddenError();
+    }
+  };
 
   app.get(route(prefix, '/platform-accounts'), { preHandler: protectedPreHandler }, async (request) => {
     const accounts = await service.list((request.auth as NonNullable<typeof request.auth>).user.role);
@@ -126,9 +140,15 @@ export function registerPlatformAccountRoutes(
     return publicPlatformAccount(deleted);
   });
 
-  app.post(route(prefix, '/platform-accounts/:id/credential'), { preHandler: adminPreHandler }, async (request, reply) => {
-    const credential = await service.credential((request.params as { id: string }).id);
+  if (prefix === '/api/v1') {
+    app.get(route(prefix, '/platform-accounts/:id/credential-view'), { preHandler: credentialViewPreHandler }, async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+      return service.credential((request.params as { id: string }).id);
+    });
+  }
+
+  app.post(route(prefix, '/platform-accounts/:id/credential'), { preHandler: extensionCredentialPreHandler }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    return credential;
+    return service.credential((request.params as { id: string }).id);
   });
 }

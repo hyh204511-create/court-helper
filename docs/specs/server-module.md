@@ -20,7 +20,8 @@
 |---|---|
 | `users` | `id`，`username`（大小写归一后唯一），`password_hash`，`role` ∈ `{admin,user}`，`enabled`，`deleted_at`，`created_at`，`updated_at` |
 | `sessions` | `id`，`user_id`，`token_hash`（唯一，只存摘要），`client_type` ∈ `{admin_ui,extension}`，`expires_at`，`revoked_at`，`created_at`；用户停用、删除或重置密码时全部撤销 |
-| `platform_accounts` | `id`，`label`（非密唯一标签），`secret_ciphertext`，`secret_iv`，`secret_tag`，`secret_version=1`，`enabled`，`deleted_at`，`created_by`，`created_at`，`updated_at` |
+| `platform_accounts` | `id`，`label`（非密唯一标签），`secret_ciphertext`，`secret_iv`，`secret_tag`，`secret_version=1`，`enabled`，`deleted_at`，`created_by`，`created_at`，`updated_at`；所有已登录后台用户可经专用 no-store 接口读取明文账号密码 |
+| `import_batches` | `id`，`file_name`（净化 basename），`object_key`（私有且不经普通响应返回），`sha256`，`byte_size`，`created_by`，`created_at`，`updated_at`，`expires_at`；保存后台上传 xlsx 与受控解析结果的批次基线，所有已登录后台用户可查看完整内容/下载 |
 | `cases` | `id`，`client_uid`（唯一，对应 IndexedDB `uid`），`platform_account_id`，`kind` ∈ `{li,qz}`，`plaintiff`，`defendant`，`status` ∈ `{立案成功,强执成功,已驳回,审核中,UNKNOWN}`，`filed_time`，`case_number`，`reject_time`，`reject_reason`，`query_time`，`needs_human`，`error_code`，`source_event_id`，`source_updated_at`，`revision`（全局单调递增），`created_at`，`updated_at` |
 | `screenshots` | `id`，`case_id`，`type` ∈ `{success,reject,enforcement_success}`，`object_key`（唯一且不经普通 API 返回），`content_type` ∈ `{image/jpeg,image/png}`，`byte_size`，`sha256`，`captured_at`，`created_at`；`(case_id,type)` 唯一，重传相同哈希为幂等，替换时清理旧对象 |
 | `report_exports` | `id`，`file_name`（净化名，仅 basename），`object_key`（唯一且不经普通 API 返回），`content_type`（固定 xlsx），`byte_size`，`sha256`，`created_by`，`created_at`，`updated_at`；`(sha256,created_by)` 唯一，同用户重传同文件幂等返回既有记录；详见 report-export-module 规格 |
@@ -41,9 +42,13 @@
 | `GET/POST /users` | admin | 列表 / 创建系统用户；密码只在请求中出现 |
 | `GET/PATCH/DELETE /users/:id` | admin | 查看、改名/角色/启停、软删除；禁止停用/删除/降级最后一个启用的 admin |
 | `POST /users/:id/reset-password` | admin | 请求体由管理员提交新密码；成功后撤销目标用户全部会话，响应不回显密码 |
-| `GET /platform-accounts` | admin,user | admin 可见全部，user 只见启用项；只返回 `id,label,enabled,updatedAt` |
-| `POST /platform-accounts`；`PATCH/DELETE /platform-accounts/:id` | admin | 创建、改标签/启停/替换凭据、软删除；普通响应永不返回账号或密码 |
-| `POST /platform-accounts/:id/credential` | admin,user | **专用凭据出口**：仅启用账号、有效 extension 会话可调用；返回解密后的 `{account,password}`，并设置 `Cache-Control: no-store`；后台页面不得调用 |
+| `GET /platform-accounts` | admin,user | 返回 `id,label,enabled,updatedAt`；不含明文凭据 |
+| `GET /platform-accounts/:id/credential-view` | admin,user（仅 `admin_ui` Cookie 会话） | 专用后台明文查看接口，返回解密后的 `{account,password}`，`Cache-Control: private, no-store`；extension Bearer 会话拒绝 |
+| `POST /platform-accounts`；`PATCH/DELETE /platform-accounts/:id` | admin | 创建、改标签/启停/替换凭据、软删除 |
+| `POST /platform-accounts/:id/credential` | admin,user | **自动化专用凭据出口**：仅启用账号、有效 extension 会话可调用；返回解密后的 `{account,password}`，并设置 `Cache-Control: no-store`；后台页面不得调用 |
+| `POST /import-batches` | admin,user（仅 `admin_ui` Cookie 会话） | multipart 上传 xlsx，私有保存并解析为受控批次；返回不含业务明文的批次元数据/校验摘要 |
+| `GET /import-batches` / `GET /import-batches/:id/content` | admin,user（仅 `admin_ui` Cookie 会话） | 所有登录后台用户可列出批次、查看/下载完整上传文件；内容响应 `Cache-Control: private, no-store`，不返回 object_key |
+| `GET /import-batches/:id/extension-data` | extension | 领取查询任务后读取该批次的执行数据；只返回该命令所需数据并使用 Bearer 会话，不提供后台 HTML/凭据查看能力 |
 | `GET /cases` / `GET /cases/:id` | admin,user | 按 `kind,status,platformAccountId,needsHuman,from,to` 过滤；游标分页，单页最多 200 条 |
 | `GET /cases/:id/screenshots` | admin,user | 只返回截图元数据和内容 API 地址，不返回对象键/桶名 |
 | `POST /cases/:id/screenshots` | admin,user | multipart 上传，需 `eventId,type,capturedAt,sha256,file`；单文件不超过 10 MiB，流式写私有桶 |
@@ -78,7 +83,9 @@ needsHuman, errorCode, sourceUpdatedAt
 |---|:---:|:---:|
 | 系统用户增删改查、启停、重置密码/角色 | ✓ | — |
 | 平台账号创建、修改、启停、替换凭据 | ✓ | — |
+| 查看平台账号与平台密码（同源后台明文查看） | ✓ | ✓ |
 | 启用的平台账号列表及插件按次取凭据 | ✓ | ✓ |
+| 上传、查看和下载完整导入模板（同源后台） | ✓ | ✓ |
 | 案件同步、案件/截图查看与下载 | ✓ | ✓ |
 | 报表导出记录上传/查看/下载/删除（user 仅本人） | ✓ | ✓ |
 
@@ -86,6 +93,7 @@ needsHuman, errorCode, sourceUpdatedAt
 - 平台凭据明文为 UTF-8 JSON `{account,password}`，使用 AES-256-GCM 加密：每次写入随机 96-bit IV，AAD 固定为 `platform_account:<id>:v1`，密文、IV、tag 分列保存。
 - 单主密钥由部署 secret `CREDENTIAL_MASTER_KEY` 注入（32 字节 base64），不进数据库、镜像、Compose 文件或仓库；缺失、长度错误或认证解密失败时拒绝启动/拒绝出密，不返回残缺明文。
 - 日志只记录 request ID、路由模板、状态码、耗时和脱敏主体 ID；禁止记录请求/响应体、查询参数中的业务值、凭据、截图、驳回原因。无 SSE 通道。
+- **后台明文查看例外**：根据已确认内部权限，`admin_ui` Cookie 会话的 admin、user 均可从专用 `credential-view` 与模板内容接口得到完整平台账号/密码及上传文件内容；这些响应一律 `Cache-Control: private, no-store`，不得通过 extension Bearer、普通列表、command payload、任务结果、客户端存储或日志暴露。
 - TLS 以下不提供服务；CORS 仅允许后台同源与配置的扩展 Origin。登录校验 Origin，其他 Cookie 写操作校验 Origin + CSRF token；Bearer 请求不接受 Cookie 降级认证。
 
 ## 5. 30 天保留与迁移

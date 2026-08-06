@@ -423,6 +423,7 @@ test('003 login command migration has reversible table, constraints, and indexes
       '002_add_cases_created_by',
       '003_login_commands',
       '004_report_exports',
+      '005_browser_commands',
     ]);
 
     const columns = await pool.query(`
@@ -494,6 +495,7 @@ test('003 login command migration has reversible table, constraints, and indexes
       )
     `));
 
+    assert.equal(await rollbackLastMigration(pool), '005_browser_commands');
     assert.equal(await rollbackLastMigration(pool), '004_report_exports');
     const afterReportExportRollback = await pool.query(`
       SELECT table_name
