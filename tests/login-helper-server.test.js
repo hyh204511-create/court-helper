@@ -48,11 +48,11 @@ let serverQueue = Promise.resolve();
 const STOP_TIMEOUT_MS = 2000;
 const FORCE_KILL_TIMEOUT_MS = 5000;
 
-function startServer(accountsPath, env = {}) {
+function startServer(accountsPath, env = {}, extraArgs = []) {
   const port = 20000 + Math.floor(Math.random() * 40001);
   const base = `http://127.0.0.1:${port}`;
   BASE = base;
-  const child = spawn("python", [SERVER, "--accounts", accountsPath, "--port", String(port)], {
+  const child = spawn("python", [SERVER, "--accounts", accountsPath, "--port", String(port), ...extraArgs], {
     cwd: ROOT,
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
@@ -333,7 +333,7 @@ test("waitForExit 在 exit 后移除监听器并清理超时定时器", async ()
   assert.deepEqual(clearedTimers, [timers[0]]);
 });
 
-async function withServer(accountsPath, callback, env = {}, dependencies = {}) {
+async function withServer(accountsPath, callback, env = {}, dependencies = {}, extraArgs = []) {
   const {
     startServer: startServerImpl = startServer,
     waitHealthy: waitHealthyImpl = waitHealthy,
@@ -345,7 +345,7 @@ async function withServer(accountsPath, callback, env = {}, dependencies = {}) {
   await previous;
   let server;
   try {
-    server = startServerImpl(accountsPath, env);
+    server = startServerImpl(accountsPath, env, extraArgs);
     assert.equal(await waitHealthyImpl(server), true, "本地服务未能启动");
     return await callback(server);
   } finally {
@@ -475,6 +475,14 @@ test("账号文件不存在时返回空数组", async () => {
     const response = await fetch(`${BASE}/accounts`);
     assert.deepEqual(await response.json(), { ok: true, accounts: [] });
   });
+});
+
+test("OCR-only 模式不提供 accounts 回退接口", async () => {
+  await withServer(ACCOUNTS_FILE, async () => {
+    const response = await fetch(`${BASE}/accounts`);
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { ok: false, error: "NOT_FOUND" });
+  }, {}, {}, ["--ocr-only"]);
 });
 
 test("OPTIONS 与 JSON 响应带 CORS 约定", async () => {

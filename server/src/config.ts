@@ -18,6 +18,9 @@ export interface ServerConfig {
     adminInitialPassword: string;
     sessionTtlSeconds: number;
   };
+  localLoginHelper: {
+    autoStart: boolean;
+  };
 }
 
 export type Environment = Record<string, string | undefined>;
@@ -48,6 +51,14 @@ function positiveInteger(env: Environment, name: string, fallback: number): numb
     throw new Error(`Invalid environment variable: ${name}`);
   }
   return value;
+}
+
+function optionalBoolean(env: Environment, name: string, fallback: boolean): boolean {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  throw new Error(`Invalid environment variable: ${name}`);
 }
 
 function origins(raw: string | undefined, name: string, requiredValue: boolean): string[] {
@@ -141,6 +152,9 @@ export function loadConfig(env: Environment = process.env): ServerConfig {
     auth: {
       adminInitialPassword,
       sessionTtlSeconds,
+    },
+    localLoginHelper: {
+      autoStart: optionalBoolean(env, 'LOCAL_LOGIN_HELPER_AUTOSTART', false),
     },
   };
 }

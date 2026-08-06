@@ -12,10 +12,12 @@ import { PgImportBatchRepository } from './import-batches/repository.ts';
 import { createStorageBackend } from './storage/index.ts';
 import { createPostgresHealthDependency } from './health.ts';
 import { runMigrations } from './db/migrator.ts';
+import { createLocalLoginHelper } from './local-login-helper.ts';
 
 const config = loadConfig();
 const pool = new Pool({ connectionString: config.databaseUrl });
 const storageBackend = createStorageBackend(config);
+const localLoginHelper = config.localLoginHelper.autoStart ? createLocalLoginHelper() : undefined;
 const app = buildApp({
   config,
   authRepository: new PgAuthRepository(pool),
@@ -27,6 +29,7 @@ const app = buildApp({
   reportExportRepository: new PgReportExportRepository(pool),
   importBatchRepository: new PgImportBatchRepository(pool),
   storageBackend,
+  localLoginHelper,
   dependencies: {
     database: createPostgresHealthDependency(pool),
     objectStorage: storageBackend,

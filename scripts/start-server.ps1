@@ -3,5 +3,6 @@
 # 本脚本先移除污染变量，再加载 server/.env 启动
 $ErrorActionPreference = 'Stop'
 Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
+$env:LOCAL_LOGIN_HELPER_AUTOSTART = 'true'
 Set-Location 'C:\Users\28368\Documents\Edge 浏览器插件\court-helper\server'
 node --env-file=.env dist\main.js

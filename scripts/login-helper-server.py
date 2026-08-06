@@ -73,6 +73,7 @@ def recognize(image):
 
 class LoginHelperHandler(BaseHTTPRequestHandler):
     accounts_path = DEFAULT_ACCOUNTS
+    accounts_enabled = True
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -99,7 +100,7 @@ class LoginHelperHandler(BaseHTTPRequestHandler):
         if path == "/health":
             self._json(200, {"ok": True})
             return
-        if path == "/accounts":
+        if path == "/accounts" and self.accounts_enabled:
             self._json(200, {"ok": True, "accounts": load_accounts(self.accounts_path)})
             return
         self._json(404, {"ok": False, "error": "NOT_FOUND"})
@@ -162,9 +163,11 @@ def main():
     parser = argparse.ArgumentParser(description="court-helper 本地账号服务")
     parser.add_argument("--accounts", default=DEFAULT_ACCOUNTS, help="账号文件路径")
     parser.add_argument("--port", type=int, default=8765, help="监听端口")
+    parser.add_argument("--ocr-only", action="store_true", help="仅提供健康检查和验证码识别")
     args = parser.parse_args()
 
     LoginHelperHandler.accounts_path = os.path.abspath(args.accounts)
+    LoginHelperHandler.accounts_enabled = not args.ocr_only
     server = ReusableThreadingHTTPServer((HOST, args.port), LoginHelperHandler)
     print(f"[login-helper] listening on {HOST}:{args.port}", flush=True)
     try:

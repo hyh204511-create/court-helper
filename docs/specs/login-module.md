@@ -136,3 +136,10 @@ popup「一键抓取」→ START_BATCH（列表页）→ 批量执行器（app-m
 5. 登录成功后一键抓取可在列表页启动批量查询。
 6. 全程无凭据写入 chrome.storage、日志或 git；accounts.txt 在 .gitignore。
 7. （v0.5）真实会话：自动登录的「点登录」「刷新验证码」由 chrome.debugger 注入真实事件（isTrusted=true）触发；扩展结束自动登录后 debugger 已 detach（扩展管理页无「正在调试」残留提示）。
+
+## 10. 本机 OCR 助手按后台登录启动（v0.6）
+
+- `scripts/start-server.ps1` 为本机启动唯一入口，并显式启用 `LOCAL_LOGIN_HELPER_AUTOSTART`。
+- 成功建立 `admin_ui` Cookie 会话后，服务器异步确保本机 `127.0.0.1:8765` OCR 助手可用：已健康时不重复启动；未运行时仅以固定脚本 `scripts/login-helper-server.py` 启动。
+- 启动失败不得影响后台登录结果，不向客户端返回进程细节、环境变量、账号或密码；扩展仍按既有 `SERVICE_UNAVAILABLE` / `NEEDS_HUMAN` 路径降级。
+- extension Bearer 登录、错误密码、被限流或被禁用账号均不得触发启动；服务关闭时仅停止本服务器进程自行启动的子进程。

@@ -34,6 +34,7 @@ interface RegisterAuthOptions {
   repository: AuthRepository;
   config: ServerConfig;
   prefix: string;
+  onAdminUiLogin?: () => Promise<void>;
 }
 
 function bodyOf(request: FastifyRequest): RequestBody {
@@ -166,6 +167,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: RegisterAuthOp
         path: '/',
         maxAge: config.auth.sessionTtlSeconds,
       });
+      void options.onAdminUiLogin?.().catch(() => {});
       return { ...publicUser(result.user), csrfToken: result.csrfToken };
     }
     return { ...publicUser(result.user), token: result.token };

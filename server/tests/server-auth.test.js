@@ -36,7 +36,7 @@ async function addUser(repository, {
   });
 }
 
-async function makeApp(repository = new MemoryAuthRepository(), adminPassword = ADMIN_PASSWORD) {
+async function makeApp(repository = new MemoryAuthRepository(), adminPassword = ADMIN_PASSWORD, localLoginHelper) {
   const app = buildApp({
     config: loadConfig(configEnv(adminPassword)),
     dependencies: {
@@ -44,10 +44,37 @@ async function makeApp(repository = new MemoryAuthRepository(), adminPassword = 
       objectStorage: { check: async () => true },
     },
     authRepository: repository,
+    ...(localLoginHelper ? { localLoginHelper } : {}),
   });
   await app.ready();
   return { app, repository };
 }
+
+test('successful admin UI login starts the local OCR helper without blocking authentication', async () => {
+  let starts = 0;
+  const { app } = await makeApp(new MemoryAuthRepository(), ADMIN_PASSWORD, {
+    ensureRunning: async () => { starts += 1; },
+    stop: async () => {},
+  });
+
+  try {
+    const admin = await loginAdmin(app);
+    assert.equal(admin.response.statusCode, 200);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(starts, 1);
+
+    const extension = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: { origin: 'chrome-extension://test-extension' },
+      payload: { username: 'admin', password: ADMIN_PASSWORD, clientType: 'extension' },
+    });
+    assert.equal(extension.statusCode, 200);
+    assert.equal(starts, 1);
+  } finally {
+    await app.close();
+  }
+});
 
 function cookieHeader(response) {
   const setCookie = response.headers['set-cookie'];

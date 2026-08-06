@@ -45,6 +45,7 @@ import {
 } from './retention/index.ts';
 import type { Clock } from './retention/policy.ts';
 import { registerAdminRoutes } from './admin/routes.ts';
+import type { LocalLoginHelper } from './local-login-helper.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -72,6 +73,7 @@ export interface BuildAppOptions {
     scheduleDaily?: ScheduleDaily;
     logger?: RetentionLogger;
   };
+  localLoginHelper?: LocalLoginHelper;
 }
 
 function registerCors(app: FastifyInstance, config: ServerConfig): void {
@@ -152,6 +154,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       prefix: '',
       repository: options.authRepository,
       service: authService,
+      onAdminUiLogin: options.localLoginHelper ? () => options.localLoginHelper!.ensureRunning() : undefined,
     });
     registerAdminRoutes(app, { authService });
     registerAuthRoutes(app, {
@@ -159,6 +162,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       prefix: '/api/v1',
       repository: options.authRepository,
       service: authService,
+      onAdminUiLogin: options.localLoginHelper ? () => options.localLoginHelper!.ensureRunning() : undefined,
     });
     if (options.platformAccountRepository) {
       const platformAccountService = new PlatformAccountService(options.platformAccountRepository, config);
@@ -309,6 +313,11 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       });
       app.addHook('onClose', async () => {
         await retentionScheduler.stop();
+      });
+    }
+    if (options.localLoginHelper) {
+      app.addHook('onClose', async () => {
+        await options.localLoginHelper!.stop();
       });
     }
   }
