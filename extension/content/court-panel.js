@@ -1,6 +1,6 @@
 // court-panel.js — 网页浮动面板（规格 docs/specs/panel-module.md）
-// 折叠式：默认右下角悬浮球，点击展开完整操作面板（Shadow DOM 隔离样式）。
-// - 登录全人工：面板只显示登录状态（脱敏账号），不做登录动作；
+// 折叠式：默认右下角悬浮球，点击展开状态面板（Shadow DOM 隔离样式）。
+// - 登录由后台统一命令驱动：面板只显示登录状态（脱敏账号），不触发登录；
 // - 状态禁猜：未知一律待人工，面板不猜测；
 // - 后台是唯一业务入口；面板降级为状态、进度与人工接管提示。
 
@@ -11,14 +11,6 @@ export function maskAccount(account) {
   if (s.length <= 1) return "*";
   if (s.length === 2) return `${s[0]}*`;
   return `${s[0]}***${s[s.length - 1]}`;
-}
-
-const EXECUTION_TAB_REQUIRED_MESSAGE = "请先在页面顶部切换到执行 tab";
-
-function queryErrorMessage(error) {
-  const code = typeof error === "string" ? error : error?.code ?? error?.message;
-  if (code === "EXECUTION_TAB_REQUIRED") return EXECUTION_TAB_REQUIRED_MESSAGE;
-  return `开始查询失败：${code || "请人工检查页面状态"}`;
 }
 
 const SHELL_HTML = `
@@ -44,15 +36,6 @@ const SHELL_HTML = `
     .collapse{width:26px;height:24px;background:#224159;border:1px solid #ffffff18;
       border-radius:6px;color:#dbeaf5;cursor:pointer}
     .body{min-height:0;overflow-y:auto;padding:12px}
-    .actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px}
-    .actions button{padding:9px 6px;border:1px solid #ffffff18;border-radius:6px;
-      color:#dbeaf5;background:#224159;cursor:pointer}
-    .actions button:hover{background:#2d526d}
-    .actions .primary{background:#1677b8}
-    .query-kind-row{display:flex;align-items:center;gap:8px;margin:-4px 0 12px;color:#8eacbf}
-    .query-kind{min-width:90px;padding:5px 7px;border:1px solid #ffffff22;border-radius:6px;
-      color:#dbeaf5;background:#224159}
-    .query-kind-hint{font-size:11px;color:#ffdca8}
     .notice{padding:8px 10px;margin-bottom:10px;border-left:3px solid #f0b35b;
       background:#f0b35b16;color:#ffdca8;font-size:12px}
     .notice.bad{border-color:#f17068;background:#f1706813;color:#ffc6c2}
@@ -70,10 +53,6 @@ const SHELL_HTML = `
       color:#dbeaf5;background:#224159;cursor:pointer}.btn-sync-retry:hover{background:#2d526d}
     .sync-conflicts{margin-top:8px;color:#ffdca8;font-size:12px}.sync-conflicts ul{display:grid;gap:3px;margin:4px 0 0 15px;color:#ffc6c2}
     .hidden{display:none!important}
-    .ctrl{display:flex;gap:8px}
-    .ctrl button{flex:1;padding:8px;border:1px solid #ffffff18;border-radius:6px;
-      color:#dbeaf5;background:#224159;cursor:pointer}
-    .ctrl button:hover{background:#2d526d}
     .foot{flex:none;padding:7px 12px;color:#6f8ea2;background:#0b1b27;
       border-top:1px solid #ffffff12;font-size:11px}
   </style>
@@ -104,7 +83,7 @@ const SHELL_HTML = `
  * 创建并挂载浮动面板。
  * @param {object} opts
  * @param {Document} opts.document 目标页面 document
- * @param {object} [opts.handlers] {onImport, onQuery, onExport, onPause, onResume, onSyncRetry}
+ * @param {object} [opts.handlers] {onSyncRetry}
  * @param {'open'|'closed'} [opts.shadowMode] 测试可传 'open' 以便断言；默认 'closed'
  * @returns {object} { host, setLogin, setProgress, setReady, setSyncStatus }
  */
@@ -132,12 +111,6 @@ export function createCourtPanel({ document, handlers = {}, shadowMode = "closed
   const syncConflicts = shadow.querySelector(".sync-conflicts");
   const syncConflictList = syncConflicts.querySelector("ul");
 
-  function showQueryError(error) {
-    notice.textContent = queryErrorMessage(error);
-    notice.classList.remove("hidden");
-    notice.classList.add("bad");
-  }
-
   const toggle = () => shell.classList.toggle("collapsed");
   fab.addEventListener("click", toggle);
   collapse.addEventListener("click", toggle);
@@ -163,9 +136,18 @@ export function createCourtPanel({ document, handlers = {}, shadowMode = "closed
   function setProgress({ done = 0, total = 0, groups = [] } = {}) {
     progressText.textContent = total ? `待处理: ${done}/${total}` : "待处理: -";
     bar.style.width = total ? `${Math.min(100, Math.round((done / total) * 100))}%` : "0%";
-    groupsEl.innerHTML = groups
-      .map((g) => `<div class="g"><span>${maskAccount(g.account)}</span><span>${g.count} 条</span></div>`)
-      .join("");
+    groupsEl.textContent = "";
+    for (const group of Array.isArray(groups) ? groups : []) {
+      const row = shadow.ownerDocument.createElement("div");
+      row.className = "g";
+      const account = shadow.ownerDocument.createElement("span");
+      account.textContent = maskAccount(group?.account);
+      const count = shadow.ownerDocument.createElement("span");
+      const numericCount = Number(group?.count);
+      count.textContent = `${Number.isFinite(numericCount) ? Math.max(0, numericCount) : 0} 条`;
+      row.append(account, count);
+      groupsEl.appendChild(row);
+    }
   }
 
   /** 同步状态只接收已脱敏的摘要，不在面板渲染凭据、截图或业务明文。 */

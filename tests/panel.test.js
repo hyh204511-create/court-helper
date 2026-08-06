@@ -106,6 +106,19 @@ test("进度渲染：done/total 与待处理分组文本", () => {
   assert.ok(text.includes("30"), "分组条数");
 });
 
+test("进度分组把异常状态值作为纯文本处理，不解析为 HTML", () => {
+  const { document, panel } = setup();
+  const host = document.getElementById("court-helper-panel-root");
+  panel.setProgress({
+    done: 0,
+    total: 1,
+    groups: [{ account: "synthetic-account", count: '1</span><img src=x data-injected="true">' }],
+  });
+
+  assert.equal(host.shadowRoot.querySelector('[data-injected="true"]'), null);
+  assert.match(host.shadowRoot.querySelector(".groups").textContent, /0 条/);
+});
+
 test("采集器未就绪：setReady(false) 显示提示，不猜测状态", () => {
   const { document, panel } = setup();
   const host = document.getElementById("court-helper-panel-root");
