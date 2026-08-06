@@ -41,7 +41,7 @@ interface QueryParams {
   cursor?: unknown;
 }
 
-const CREATE_FIELDS = new Set(['type', 'platformAccountId', 'clientBatchId', 'payload']);
+const CREATE_FIELDS = new Set(['type', 'platformAccountId', 'importBatchId', 'payload']);
 const CLAIM_FIELDS = new Set(['deviceId']);
 const RESULT_FIELDS = new Set([
   'deviceId',
@@ -151,7 +151,7 @@ function createInput(body: RequestBody, requestedBy: string): BrowserCommandCrea
   return {
     type: body.type as BrowserCommandType,
     platformAccountId: optionalNullableString(body, 'platformAccountId'),
-    clientBatchId: optionalNullableString(body, 'clientBatchId'),
+    importBatchId: optionalNullableString(body, 'importBatchId'),
     payload: body.payload as Record<string, unknown> | undefined,
     requestedBy,
   };

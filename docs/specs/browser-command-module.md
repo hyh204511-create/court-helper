@@ -52,7 +52,8 @@
 
 ### `QUERY_LI` / `QUERY_QZ`
 
-- 后台选择查询类型、目标平台账号和客户端批次引用，扩展领取后检查：法院标签存在、当前登录、账号匹配、路由合法。
+- 后台选择查询类型、目标平台账号和**已存在、未过期的 `importBatchId`**。服务端创建命令时将该 UUID 写入 `clientBatchId`；不得接受客户端自由字符串作为查询批次引用。
+- 批次绑定在命令创建时由服务器校验；后续 extension 读取批次执行数据时必须同时校验：命令处于 `executing`、`claimed_by` 与 claim token 匹配、命令的 `clientBatchId` 与请求批次一致且批次未过期。
 - `QUERY_LI` 允许网上立案列表与我的案件列表。
 - `QUERY_QZ` 当前页面可见行不存在执行类 `caseType` 时，必须回写 `EXECUTION_TAB_REQUIRED`，不得继续执行、不得自动切 tab。
 - 扩展继续复用既有 `START_BATCH`、`runBatch`、状态识别、截图、节流（3–8 秒/案、单批 50、重试 1）。

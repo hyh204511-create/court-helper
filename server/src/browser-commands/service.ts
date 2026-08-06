@@ -5,6 +5,7 @@ import {
   NotFoundError,
   ValidationError,
 } from '../errors.ts';
+import type { ImportBatchRepository } from '../import-batches/types.ts';
 import {
   BROWSER_COMMAND_RESULT_STATUSES,
   BROWSER_COMMAND_STATUSES,
@@ -18,7 +19,6 @@ import {
   type BrowserCommandResultStatus,
   type BrowserCommandStatus,
   type BrowserCommandType,
-  type NewBrowserCommand,
 } from './types.ts';
 
 export const BROWSER_COMMAND_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -47,10 +47,20 @@ export interface BrowserCommandCreateInput {
   id?: string;
   type: BrowserCommandType;
   platformAccountId?: string | null;
-  clientBatchId?: string | null;
+  importBatchId?: string | null;
   requestedBy: string;
   payload?: BrowserCommandJsonObject;
   expiresAt?: Date;
+}
+
+interface NormalizedBrowserCommandCreate {
+  id?: string;
+  type: BrowserCommandType;
+  platformAccountId: string | null;
+  importBatchId: string | null;
+  requestedBy: string;
+  payload: BrowserCommandJsonObject;
+  expiresAt: Date;
 }
 
 export interface BrowserCommandClaimResult {
@@ -147,7 +157,7 @@ function safePayload(value: unknown, type: BrowserCommandType): BrowserCommandJs
   return cloneJsonObject(value);
 }
 
-function normalizeCreate(input: BrowserCommandCreateInput): NewBrowserCommand {
+function normalizeCreate(input: BrowserCommandCreateInput): NormalizedBrowserCommandCreate {
   if (!BROWSER_COMMAND_TYPES.includes(input.type)) {
     throw new ValidationError([{ field: 'type', code: 'invalid_enum' }]);
   }
@@ -160,8 +170,13 @@ function normalizeCreate(input: BrowserCommandCreateInput): NewBrowserCommand {
     throw new ValidationError([{ field: 'platformAccountId', code: 'required' }]);
   }
 
-  const clientBatchId = input.clientBatchId ?? null;
-  if (clientBatchId !== null) assertNonEmptyString(clientBatchId, 'clientBatchId', 200);
+  const importBatchId = input.importBatchId ?? null;
+  const queryCommand = input.type === 'QUERY_LI' || input.type === 'QUERY_QZ';
+  if (queryCommand) {
+    assertUuid(importBatchId, 'importBatchId');
+  } else if (importBatchId !== null) {
+    throw new ValidationError([{ field: 'importBatchId', code: 'not_allowed_for_type' }]);
+  }
   const payload = safePayload(input.payload, input.type);
   const expiresAt = input.expiresAt ?? new Date(Date.now() + BROWSER_COMMAND_PENDING_TTL_MS);
   if (!(expiresAt instanceof Date) || !Number.isFinite(expiresAt.getTime())) {
@@ -172,7 +187,7 @@ function normalizeCreate(input: BrowserCommandCreateInput): NewBrowserCommand {
     id: input.id,
     type: input.type,
     platformAccountId,
-    clientBatchId,
+    importBatchId,
     requestedBy: input.requestedBy,
     payload,
     expiresAt: new Date(expiresAt),
@@ -294,10 +309,16 @@ export function decodeBrowserCommandCursor(value: string): { createdAt: Date; id
 
 export class BrowserCommandService {
   public readonly repository: BrowserCommandRepository;
+  private readonly importBatchRepository: ImportBatchRepository;
   private readonly now: () => Date;
 
-  constructor(repository: BrowserCommandRepository, options: BrowserCommandServiceOptions = {}) {
+  constructor(
+    repository: BrowserCommandRepository,
+    importBatchRepository: ImportBatchRepository,
+    options: BrowserCommandServiceOptions = {},
+  ) {
     this.repository = repository;
+    this.importBatchRepository = importBatchRepository;
     this.now = options.now ?? (() => new Date());
   }
 
@@ -308,12 +329,22 @@ export class BrowserCommandService {
       expiresAt: input.expiresAt ?? new Date(now.getTime() + BROWSER_COMMAND_PENDING_TTL_MS),
     });
     await this.repository.expireStale(now);
+    const { importBatchId, ...newCommand } = normalized;
+    let clientBatchId: string | null = null;
+    if (importBatchId !== null) {
+      const importBatch = await this.importBatchRepository.findById(importBatchId);
+      if (!importBatch) throw new NotFoundError('Import batch not found');
+      if (importBatch.expiresAt.getTime() <= now.getTime()) {
+        throw new ConflictError('Import batch expired', 'IMPORT_BATCH_EXPIRED');
+      }
+      clientBatchId = importBatch.id;
+    }
     if (normalized.platformAccountId !== null) {
       const duplicate = await this.repository.findActiveForAccount(normalized.platformAccountId, now);
       if (duplicate) throw new ConflictError('Browser command already pending', 'DUPLICATE_PENDING');
     }
     try {
-      return await this.repository.create(normalized);
+      return await this.repository.create({ ...newCommand, clientBatchId });
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new ConflictError('Browser command already pending', 'DUPLICATE_PENDING');

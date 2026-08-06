@@ -8,6 +8,7 @@ import { hashPassword } from '../src/auth/password.ts';
 import { MemoryAuthRepository } from '../src/auth/memory-repository.ts';
 import { MemoryPlatformAccountRepository } from '../src/platform-accounts/memory-repository.ts';
 import { runMigrations, rollbackLastMigration } from '../src/db/migrator.ts';
+import { MemoryImportBatchRepository } from '../src/import-batches/memory-repository.ts';
 
 const TEST_KEY = Buffer.alloc(32, 73).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
@@ -15,6 +16,8 @@ const USER_PASSWORD = 'User-pass-1';
 const ADMIN_ID = '00000000-0000-0000-0000-000000000001';
 const USER_ID = '00000000-0000-0000-0000-000000000002';
 const ACCOUNT_ID = '00000000-0000-0000-0000-000000000010';
+const IMPORT_BATCH_ID = '00000000-0000-0000-0000-000000000020';
+const EXPIRED_IMPORT_BATCH_ID = '00000000-0000-0000-0000-000000000021';
 
 function config() {
   return loadConfig({
@@ -60,6 +63,28 @@ function accountRecord(id = ACCOUNT_ID, label = 'synthetic-account', enabled = t
   };
 }
 
+function importBatchRecord(
+  id = IMPORT_BATCH_ID,
+  expiresAt = new Date('2026-09-05T10:00:00.000Z'),
+) {
+  const createdAt = new Date('2026-08-06T10:00:00.000Z');
+  return {
+    id,
+    fileName: 'synthetic-import.xlsx',
+    objectKey: `import-batches/${id}.xlsx`,
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    byteSize: 1024,
+    sha256: 'a'.repeat(64),
+    liRows: 1,
+    qzRows: 1,
+    skippedRows: 0,
+    createdBy: ADMIN_ID,
+    createdAt,
+    updatedAt: createdAt,
+    expiresAt: new Date(expiresAt),
+  };
+}
+
 async function authRepository() {
   return new MemoryAuthRepository([
     userRecord(ADMIN_ID, 'admin', 'admin', await hashPassword(ADMIN_PASSWORD)),
@@ -71,35 +96,49 @@ async function browserModule() {
   return import('../src/browser-commands/index.ts');
 }
 
-async function makeService(now = new Date('2026-08-06T10:00:00.000Z')) {
+async function makeService(
+  now = new Date('2026-08-06T10:00:00.000Z'),
+  importBatchRecords = [importBatchRecord()],
+) {
   const {
     BrowserCommandService,
     MemoryBrowserCommandRepository,
   } = await browserModule();
   const repository = new MemoryBrowserCommandRepository();
+  const importBatchRepository = new MemoryImportBatchRepository(importBatchRecords);
   let currentNow = new Date(now);
-  const service = new BrowserCommandService(repository, { now: () => new Date(currentNow) });
-  return { repository, service, setNow: (value) => { currentNow = new Date(value); } };
+  const service = new BrowserCommandService(repository, importBatchRepository, {
+    now: () => new Date(currentNow),
+  });
+  return {
+    repository,
+    importBatchRepository,
+    service,
+    setNow: (value) => { currentNow = new Date(value); },
+  };
 }
 
 function commandInput(type, overrides = {}) {
+  const queryCommand = type === 'QUERY_LI' || type === 'QUERY_QZ';
   return {
     type,
     platformAccountId: type === 'EXPORT_REPORT' ? null : ACCOUNT_ID,
-    clientBatchId: type === 'LOGIN' ? null : 'batch-safe-1',
+    ...(queryCommand ? { importBatchId: IMPORT_BATCH_ID } : {}),
     payload: type === 'LOGIN' ? {} : { batchId: 'batch-safe-1', kind: 'li' },
     requestedBy: ADMIN_ID,
     ...overrides,
   };
 }
 
-async function makeApp() {
+async function makeApp(options = {}) {
   const {
     MemoryBrowserCommandRepository,
   } = await browserModule();
   const auth = await authRepository();
   const platformAccounts = new MemoryPlatformAccountRepository([accountRecord()]);
   const browserCommands = new MemoryBrowserCommandRepository();
+  const importBatchRepository = options.importBatchRepository
+    ?? new MemoryImportBatchRepository([importBatchRecord()]);
   const app = buildApp({
     config: config(),
     dependencies: {
@@ -109,10 +148,11 @@ async function makeApp() {
     authRepository: auth,
     platformAccountRepository: platformAccounts,
     browserCommandRepository: browserCommands,
+    importBatchRepository,
     clock: () => new Date('2026-08-06T10:00:00.000Z'),
   });
   await app.ready();
-  return { app, browserCommands };
+  return { app, browserCommands, importBatchRepository };
 }
 
 function cookieHeader(response) {
@@ -153,7 +193,8 @@ function cookieHeaders(session) {
 }
 
 async function createCommand(app, session, prefix = '/api/v1', overrides = {}) {
-  const { requestedBy: _requestedBy, ...body } = { ...commandInput('QUERY_LI'), ...overrides };
+  const type = overrides.type ?? 'QUERY_LI';
+  const { requestedBy: _requestedBy, ...body } = { ...commandInput(type), ...overrides };
   return app.inject({
     method: 'POST',
     url: `${prefix}/browser-commands`,
@@ -251,7 +292,45 @@ test('browser command service accepts all four command types with safe payloads'
     assert.equal(command.type, type);
     assert.equal(command.status, 'pending');
     assert.deepEqual(command.payload, type === 'LOGIN' ? {} : { batchId: 'batch-safe-1', kind: 'li' });
+    assert.equal(command.clientBatchId, type === 'QUERY_LI' || type === 'QUERY_QZ'
+      ? IMPORT_BATCH_ID
+      : null);
   }
+});
+
+test('browser query commands bind only an existing, unexpired import batch', async () => {
+  const now = new Date('2026-08-06T10:00:00.000Z');
+  const { service } = await makeService(now, [
+    importBatchRecord(IMPORT_BATCH_ID, new Date('2026-08-06T10:01:00.000Z')),
+    importBatchRecord(EXPIRED_IMPORT_BATCH_ID, now),
+  ]);
+
+  const li = await service.create(commandInput('QUERY_LI'));
+  const qz = await service.create(commandInput('QUERY_QZ', { platformAccountId: randomUUID() }));
+  assert.equal(li.clientBatchId, IMPORT_BATCH_ID);
+  assert.equal(qz.clientBatchId, IMPORT_BATCH_ID);
+
+  await assert.rejects(
+    service.create(commandInput('QUERY_LI', {
+      platformAccountId: randomUUID(),
+      importBatchId: randomUUID(),
+    })),
+    (error) => error?.code === 'NOT_FOUND' && error?.statusCode === 404,
+  );
+  await assert.rejects(
+    service.create(commandInput('QUERY_LI', {
+      platformAccountId: randomUUID(),
+      importBatchId: EXPIRED_IMPORT_BATCH_ID,
+    })),
+    (error) => error?.code === 'IMPORT_BATCH_EXPIRED' && error?.statusCode === 409,
+  );
+  await assert.rejects(
+    service.create(commandInput('QUERY_QZ', {
+      platformAccountId: randomUUID(),
+      importBatchId: null,
+    })),
+    (error) => error?.code === 'VALIDATION_ERROR' && error?.statusCode === 400,
+  );
 });
 
 test('browser command creation rejects duplicate active platform-account work atomically', async () => {
@@ -414,6 +493,37 @@ test('browser command routes require authentication and register both REST prefi
     });
     assert.equal(bare.statusCode, 201);
     assert.equal(bare.json().command.type, 'EXPORT_REPORT');
+  } finally {
+    await app.close();
+  }
+});
+
+test('browser command routes bind query importBatchId and reject free clientBatchId', async () => {
+  const { app } = await makeApp();
+  try {
+    const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
+    const created = await createCommand(app, admin, '/api/v1', {
+      type: 'QUERY_LI',
+      platformAccountId: randomUUID(),
+      importBatchId: IMPORT_BATCH_ID,
+    });
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().command.clientBatchId, IMPORT_BATCH_ID);
+
+    const freeBatchId = await app.inject({
+      method: 'POST',
+      url: '/api/v1/browser-commands',
+      headers: cookieHeaders(admin),
+      payload: {
+        type: 'QUERY_QZ',
+        platformAccountId: randomUUID(),
+        clientBatchId: 'arbitrary-client-batch',
+        payload: { kind: 'qz' },
+      },
+    });
+    assert.equal(freeBatchId.statusCode, 400);
+    assert.equal(freeBatchId.json().error.code, 'VALIDATION_ERROR');
+    assert.equal(freeBatchId.body.includes('arbitrary-client-batch'), false);
   } finally {
     await app.close();
   }
@@ -626,7 +736,7 @@ test('postgres browser command repository persists safe JSON, claims atomically,
     const command = await repository.create({
       type: 'QUERY_LI',
       platformAccountId: ACCOUNT_ID,
-      clientBatchId: 'batch-safe-1',
+      clientBatchId: IMPORT_BATCH_ID,
       requestedBy: ADMIN_ID,
       payload: { batchId: 'batch-safe-1', kind: 'li' },
       expiresAt: new Date('2026-08-06T10:05:00.000Z'),
