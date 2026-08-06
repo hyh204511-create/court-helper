@@ -9,6 +9,8 @@ import { MemoryCaseRepository } from '../src/cases/memory-repository.ts';
 import { MemoryPlatformAccountRepository } from '../src/platform-accounts/memory-repository.ts';
 import { MemoryReportExportRepository } from '../src/report-exports/memory-repository.ts';
 import { REPORT_EXPORT_CONTENT_TYPE } from '../src/report-exports/types.ts';
+import { MemoryImportBatchRepository } from '../src/import-batches/memory-repository.ts';
+import { IMPORT_BATCH_CONTENT_TYPE } from '../src/import-batches/types.ts';
 import { MemoryScreenshotRepository } from '../src/screenshots/memory-repository.ts';
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
 import { RetentionScheduler, RetentionService } from '../src/retention/index.ts';
@@ -73,6 +75,25 @@ function reportExportRecord(id, createdAt, objectKey) {
     createdBy: WORKER_ID,
     createdAt: timestamp,
     updatedAt: timestamp,
+  };
+}
+
+function importBatchRecord(id, createdAt, expiresAt, objectKey) {
+  const created = new Date(createdAt);
+  return {
+    id,
+    fileName: `${id}.xlsx`,
+    objectKey,
+    contentType: IMPORT_BATCH_CONTENT_TYPE,
+    byteSize: 7,
+    sha256: createHash('sha256').update(id).digest('hex'),
+    liRows: 1,
+    qzRows: 1,
+    skippedRows: 0,
+    createdBy: WORKER_ID,
+    createdAt: created,
+    updatedAt: created,
+    expiresAt: new Date(expiresAt),
   };
 }
 
@@ -400,6 +421,108 @@ test('retention removes expired report exports after their storage objects, keep
   assert.equal(second.deletedReportExports, 1);
   assert.equal(await reportExports.findById(retry.id), null);
   assert.equal(await storage.exists(retry.objectKey), false);
+});
+
+test('retention deletes expired import batch objects before metadata, keeps the expiry boundary, and retries failed object deletion', async () => {
+  const expired = importBatchRecord(
+    'import-expired',
+    '2026-07-06T12:00:00.000Z',
+    '2026-08-05T12:00:00.000Z',
+    'import-batches/import-expired.xlsx',
+  );
+  const boundary = importBatchRecord(
+    'import-boundary',
+    '2026-07-07T12:00:00.000Z',
+    NOW.toISOString(),
+    'import-batches/import-boundary.xlsx',
+  );
+  const retry = importBatchRecord(
+    'import-retry',
+    '2026-07-05T12:00:00.000Z',
+    '2026-08-04T12:00:00.000Z',
+    'import-batches/import-retry.xlsx',
+  );
+  const importBatches = new MemoryImportBatchRepository([expired, boundary, retry]);
+  const storage = new MemoryStorageBackend();
+  await storage.put(expired.objectKey, Buffer.from('expired'), expired.contentType);
+  await storage.put(retry.objectKey, Buffer.from('retry'), retry.contentType);
+  const events = [];
+  const originalStorageDelete = storage.delete.bind(storage);
+  let failRetry = true;
+  storage.delete = async (key) => {
+    if (key === retry.objectKey && failRetry) throw new Error('synthetic storage outage');
+    events.push(`storage:${key}`);
+    await originalStorageDelete(key);
+  };
+  const originalImportBatchDelete = importBatches.delete.bind(importBatches);
+  importBatches.delete = async (id) => {
+    events.push(`record:${id}`);
+    await originalImportBatchDelete(id);
+  };
+  const service = new RetentionService({
+    authRepository: new MemoryAuthRepository(),
+    caseRepository: new MemoryCaseRepository(),
+    reportExportRepository: new MemoryReportExportRepository(),
+    importBatchRepository: importBatches,
+    screenshotRepository: new MemoryScreenshotRepository(),
+    storageBackend: storage,
+  }, { clock: () => new Date(NOW), logger: { warn() {} } });
+
+  const first = await service.cleanup();
+
+  assert.equal(first.deletedImportBatches, 1);
+  assert.equal(first.failedImportBatches, 0);
+  assert.equal(first.failedObjects, 1);
+  assert.deepEqual(events, [
+    `storage:${expired.objectKey}`,
+    `record:${expired.id}`,
+  ]);
+  assert.equal(await importBatches.findById(expired.id), null);
+  assert.ok(await importBatches.findById(boundary.id));
+  assert.ok(await importBatches.findById(retry.id));
+
+  failRetry = false;
+  const second = await service.cleanup();
+  assert.equal(second.deletedImportBatches, 1);
+  assert.equal(await importBatches.findById(retry.id), null);
+  assert.equal(await storage.exists(retry.objectKey), false);
+});
+
+test('retention keeps an expired import batch metadata record when its database delete fails and retries it later', async () => {
+  const batch = importBatchRecord(
+    'import-metadata-retry',
+    '2026-07-06T12:00:00.000Z',
+    '2026-08-05T12:00:00.000Z',
+    'import-batches/import-metadata-retry.xlsx',
+  );
+  const importBatches = new MemoryImportBatchRepository([batch]);
+  const storage = new MemoryStorageBackend();
+  await storage.put(batch.objectKey, Buffer.from('fixture'), batch.contentType);
+  let failDelete = true;
+  const originalDelete = importBatches.delete.bind(importBatches);
+  importBatches.delete = async (id) => {
+    if (failDelete) throw new Error('synthetic metadata outage');
+    await originalDelete(id);
+  };
+  const service = new RetentionService({
+    authRepository: new MemoryAuthRepository(),
+    caseRepository: new MemoryCaseRepository(),
+    reportExportRepository: new MemoryReportExportRepository(),
+    importBatchRepository: importBatches,
+    screenshotRepository: new MemoryScreenshotRepository(),
+    storageBackend: storage,
+  }, { clock: () => new Date(NOW), logger: { warn() {} } });
+
+  const first = await service.cleanup();
+  assert.equal(first.deletedObjects, 1);
+  assert.equal(first.failedImportBatches, 1);
+  assert.ok(await importBatches.findById(batch.id));
+  assert.equal(await storage.exists(batch.objectKey), false);
+
+  failDelete = false;
+  const second = await service.cleanup();
+  assert.equal(second.deletedImportBatches, 1);
+  assert.equal(await importBatches.findById(batch.id), null);
 });
 
 test('retention removes expired and revoked sessions but never users or platform accounts', async () => {

@@ -46,9 +46,10 @@
 | `GET /platform-accounts/:id/credential-view` | admin,user（仅 `admin_ui` Cookie 会话） | 专用后台明文查看接口，返回解密后的 `{account,password}`，`Cache-Control: private, no-store`；extension Bearer 会话拒绝 |
 | `POST /platform-accounts`；`PATCH/DELETE /platform-accounts/:id` | admin | 创建、改标签/启停/替换凭据、软删除 |
 | `POST /platform-accounts/:id/credential` | admin,user | **自动化专用凭据出口**：仅启用账号、有效 extension 会话可调用；返回解密后的 `{account,password}`，并设置 `Cache-Control: no-store`；后台页面不得调用 |
-| `POST /import-batches` | admin,user（仅 `admin_ui` Cookie 会话） | multipart 上传 xlsx，私有保存并解析为受控批次；返回不含业务明文的批次元数据/校验摘要 |
-| `GET /import-batches` / `GET /import-batches/:id/content` | admin,user（仅 `admin_ui` Cookie 会话） | 所有登录后台用户可列出批次、查看/下载完整上传文件；内容响应 `Cache-Control: private, no-store`，不返回 object_key |
-| `GET /import-batches/:id/extension-data` | extension | 领取查询任务后读取该批次的执行数据；只返回该命令所需数据并使用 Bearer 会话，不提供后台 HTML/凭据查看能力 |
+| `POST /import-batches` | admin,user（仅 `admin_ui` Cookie 会话） | multipart 上传 xlsx（`file`，≤ 20 MiB）；私有保存、按 excel-module 规则解析为受控批次；返回不含业务明文的批次元数据与 `{liRows,qzRows,skipped}` 校验摘要 |
+| `GET /import-batches` | admin,user（仅 `admin_ui` Cookie 会话） | 所有登录后台用户可分页列出批次元数据；不返回对象键、解析行、账号或密码 |
+| `GET /import-batches/:id/content` | admin,user（仅 `admin_ui` Cookie 会话） | 所有登录后台用户可下载完整上传文件；`Cache-Control: private, no-store`，不返回 object_key |
+| `GET /import-batches/:id/extension-data` | extension（暂不实现） | 后续仅已领取且仍有效的对应查询命令可读取该批次执行数据；不得按任意 batch UUID 读取，不提供后台 HTML/凭据查看能力 |
 | `GET /cases` / `GET /cases/:id` | admin,user | 按 `kind,status,platformAccountId,needsHuman,from,to` 过滤；游标分页，单页最多 200 条 |
 | `GET /cases/:id/screenshots` | admin,user | 只返回截图元数据和内容 API 地址，不返回对象键/桶名 |
 | `POST /cases/:id/screenshots` | admin,user | multipart 上传，需 `eventId,type,capturedAt,sha256,file`；单文件不超过 10 MiB，流式写私有桶 |

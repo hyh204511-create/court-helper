@@ -33,6 +33,9 @@ import type { ScreenshotRepository } from './screenshots/types.ts';
 import { registerReportExportRoutes } from './report-exports/routes.ts';
 import { MAX_REPORT_EXPORT_BYTES, ReportExportService } from './report-exports/service.ts';
 import type { ReportExportRepository } from './report-exports/types.ts';
+import { registerImportBatchRoutes } from './import-batches/routes.ts';
+import { ImportBatchService, MAX_IMPORT_BATCH_BYTES } from './import-batches/service.ts';
+import type { ImportBatchRepository } from './import-batches/types.ts';
 import type { StorageBackend } from './storage/types.ts';
 import {
   RetentionScheduler,
@@ -62,6 +65,7 @@ export interface BuildAppOptions {
   caseRepository?: CaseRepository;
   screenshotRepository?: ScreenshotRepository;
   reportExportRepository?: ReportExportRepository;
+  importBatchRepository?: ImportBatchRepository;
   storageBackend?: StorageBackend;
   clock?: Clock;
   retention?: {
@@ -96,7 +100,11 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     database: options.dependencies?.database ?? unavailableDependency,
     objectStorage: options.dependencies?.objectStorage ?? options.storageBackend ?? unavailableDependency,
   };
-  const maxMultipartFileBytes = Math.max(MAX_SCREENSHOT_BYTES, MAX_REPORT_EXPORT_BYTES);
+  const maxMultipartFileBytes = Math.max(
+    MAX_SCREENSHOT_BYTES,
+    MAX_REPORT_EXPORT_BYTES,
+    MAX_IMPORT_BATCH_BYTES,
+  );
   const app = fastify({
     logger: options.logger ?? false,
     bodyLimit: maxMultipartFileBytes + 1024 * 1024,
@@ -249,6 +257,19 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         service: reportExportService,
       });
     }
+    if (options.importBatchRepository && options.storageBackend) {
+      const importBatchService = new ImportBatchService(
+        options.importBatchRepository,
+        options.storageBackend,
+        clock,
+      );
+      registerImportBatchRoutes(app, {
+        authService,
+        config,
+        prefix: '/api/v1',
+        service: importBatchService,
+      });
+    }
 
     if (
       options.caseRepository
@@ -262,6 +283,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         authRepository: options.authRepository,
         caseRepository: options.caseRepository,
         reportExportRepository: options.reportExportRepository,
+        importBatchRepository: options.importBatchRepository,
         screenshotRepository: options.screenshotRepository,
         storageBackend: options.storageBackend,
       }, {

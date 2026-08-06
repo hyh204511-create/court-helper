@@ -41,7 +41,7 @@ test('versioned migrations create the required tables and constraints', async ()
     await runMigrations(pool);
 
     const names = await tableNames(pool);
-    for (const name of ['users', 'sessions', 'platform_accounts', 'cases', 'screenshots', 'login_commands', 'report_exports']) {
+    for (const name of ['users', 'sessions', 'platform_accounts', 'cases', 'screenshots', 'login_commands', 'report_exports', 'import_batches']) {
       assert.equal(names.has(name), true, `missing table ${name}`);
     }
 
@@ -53,6 +53,7 @@ test('versioned migrations create the required tables and constraints', async ()
       screenshots: ['id', 'case_id', 'type', 'object_key', 'content_type', 'byte_size', 'sha256', 'captured_at', 'created_at'],
       login_commands: ['id', 'platform_account_id', 'status', 'result_code', 'result_message', 'claimed_by', 'created_by', 'created_at', 'updated_at', 'expires_at'],
       report_exports: ['id', 'file_name', 'object_key', 'content_type', 'byte_size', 'sha256', 'created_by', 'created_at', 'updated_at'],
+      import_batches: ['id', 'file_name', 'object_key', 'content_type', 'byte_size', 'sha256', 'li_rows', 'qz_rows', 'skipped_rows', 'created_by', 'created_at', 'updated_at', 'expires_at'],
     };
 
     for (const [table, columns] of Object.entries(expectedColumns)) {
@@ -160,6 +161,86 @@ test('foreign keys, enum checks, and unique screenshot identity are enforced', a
   }
 });
 
+test('import batch migration enforces private object identity, bounds, and creator retention', async () => {
+  const { pool } = await database();
+
+  try {
+    await runMigrations(pool);
+    await pool.query(`
+      INSERT INTO users (id, username, password_hash, role)
+      VALUES ('00000000-0000-0000-0000-000000000001', 'admin', 'hash', 'admin')
+    `);
+    const valid = [
+      '00000000-0000-0000-0000-000000000301',
+      'fixture.xlsx',
+      'import-batches/00000000-0000-0000-0000-000000000301.xlsx',
+      'a'.repeat(64),
+      '00000000-0000-0000-0000-000000000001',
+    ];
+    await pool.query(`
+      INSERT INTO import_batches (
+        id, file_name, object_key, content_type, byte_size, sha256,
+        li_rows, qz_rows, skipped_rows, created_by, expires_at
+      )
+      VALUES ($1, $2, $3,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        1, $4, 0, 0, 0, $5, NOW() + INTERVAL '30 days')
+    `, valid);
+
+    await assert.rejects(pool.query(`
+      INSERT INTO import_batches (
+        id, file_name, object_key, content_type, byte_size, sha256,
+        li_rows, qz_rows, skipped_rows, created_by, expires_at
+      )
+      VALUES (
+        '00000000-0000-0000-0000-000000000302', 'fixture.xlsx', $1,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        1, $2, 0, 0, 0, $3, NOW() + INTERVAL '30 days'
+      )
+    `, [valid[2], valid[3], valid[4]]));
+    await assert.rejects(pool.query(`
+      INSERT INTO import_batches (
+        id, file_name, object_key, content_type, byte_size, sha256,
+        li_rows, qz_rows, skipped_rows, created_by, expires_at
+      )
+      VALUES (
+        '00000000-0000-0000-0000-000000000303', 'fixture.xlsx',
+        'import-batches/invalid.xlsx',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        0, $1, 0, 0, 0, $2, NOW() + INTERVAL '30 days'
+      )
+    `, [valid[3], valid[4]]));
+    await assert.rejects(pool.query(`
+      INSERT INTO import_batches (
+        id, file_name, object_key, content_type, byte_size, sha256,
+        li_rows, qz_rows, skipped_rows, created_by, expires_at
+      )
+      VALUES (
+        '00000000-0000-0000-0000-000000000304', 'fixture.xlsx',
+        'import-batches/invalid-content-type.xlsx', 'application/octet-stream',
+        1, $1, 0, 0, 0, $2, NOW() + INTERVAL '30 days'
+      )
+    `, [valid[3], valid[4]]));
+    await assert.rejects(pool.query(`
+      INSERT INTO import_batches (
+        id, file_name, object_key, content_type, byte_size, sha256,
+        li_rows, qz_rows, skipped_rows, created_by, expires_at
+      )
+      VALUES (
+        '00000000-0000-0000-0000-000000000305', 'fixture.xlsx',
+        'import-batches/invalid-summary.xlsx',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        1, $1, -1, 0, 0, $2, NOW() + INTERVAL '30 days'
+      )
+    `, [valid[3], valid[4]]));
+    await assert.rejects(pool.query(`
+      DELETE FROM users WHERE id = '00000000-0000-0000-0000-000000000001'
+    `));
+  } finally {
+    await close(pool);
+  }
+});
+
 test('running migrations twice is harmless and explicit rollback restores a clean state', async () => {
   const { pool } = await database();
 
@@ -167,7 +248,7 @@ test('running migrations twice is harmless and explicit rollback restores a clea
     await runMigrations(pool);
     await runMigrations(pool);
     const applied = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
-    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands']);
+    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands', '006_import_batches']);
 
     await rollbackLastMigration(pool);
     const afterRollback = await tableNames(pool);
@@ -175,9 +256,10 @@ test('running migrations twice is harmless and explicit rollback restores a clea
     assert.equal(afterRollback.has('screenshots'), true);
     assert.equal(afterRollback.has('login_commands'), true);
     assert.equal(afterRollback.has('report_exports'), true);
+    assert.equal(afterRollback.has('import_batches'), false);
     assert.equal((await columnNames(pool, 'cases')).has('created_by'), true);
     const appliedAfterRollback = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
-    assert.deepEqual(appliedAfterRollback.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports']);
+    assert.deepEqual(appliedAfterRollback.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands']);
 
     // pg-mem retains this primary-key relation after DROP TABLE; PostgreSQL removes it.
     await pool.query('DROP INDEX IF EXISTS browser_commands_pkey');
@@ -187,6 +269,7 @@ test('running migrations twice is harmless and explicit rollback restores a clea
     assert.equal(afterReapply.has('screenshots'), true);
     assert.equal(afterReapply.has('login_commands'), true);
     assert.equal(afterReapply.has('report_exports'), true);
+    assert.equal(afterReapply.has('import_batches'), true);
     assert.equal((await columnNames(pool, 'cases')).has('created_by'), true);
   } finally {
     await close(pool);

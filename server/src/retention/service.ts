@@ -9,6 +9,11 @@ import type {
   ReportExportRecord,
   ReportExportRepository,
 } from '../report-exports/types.ts';
+import type {
+  ImportBatchCursor,
+  ImportBatchRecord,
+  ImportBatchRepository,
+} from '../import-batches/types.ts';
 import type { ScreenshotRecord, ScreenshotRepository } from '../screenshots/types.ts';
 import type { StorageBackend } from '../storage/types.ts';
 import { retentionCutoff } from './policy.ts';
@@ -18,6 +23,7 @@ export interface RetentionDependencies {
   authRepository: AuthRepository;
   caseRepository: CaseRepository;
   reportExportRepository: ReportExportRepository;
+  importBatchRepository?: ImportBatchRepository;
   screenshotRepository: ScreenshotRepository;
   storageBackend: StorageBackend;
 }
@@ -33,11 +39,13 @@ export interface RetentionCleanupResult {
   deletedScreenshots: number;
   deletedObjects: number;
   deletedReportExports: number;
+  deletedImportBatches: number;
   deletedSessions: number;
   failedObjects: number;
   failedScreenshots: number;
   failedCases: number;
   failedReportExports: number;
+  failedImportBatches: number;
   failedSessions: number;
 }
 
@@ -70,11 +78,13 @@ function emptyResult(cutoff: Date): RetentionCleanupResult {
     deletedScreenshots: 0,
     deletedObjects: 0,
     deletedReportExports: 0,
+    deletedImportBatches: 0,
     deletedSessions: 0,
     failedObjects: 0,
     failedScreenshots: 0,
     failedCases: 0,
     failedReportExports: 0,
+    failedImportBatches: 0,
     failedSessions: 0,
   };
 }
@@ -99,6 +109,7 @@ export class RetentionService {
       && result.failedScreenshots === 0
       && result.failedCases === 0
       && result.failedReportExports === 0
+      && result.failedImportBatches === 0
       && result.failedSessions === 0
     ) return;
 
@@ -109,11 +120,13 @@ export class RetentionService {
       deletedScreenshots: result.deletedScreenshots,
       deletedObjects: result.deletedObjects,
       deletedReportExports: result.deletedReportExports,
+      deletedImportBatches: result.deletedImportBatches,
       deletedSessions: result.deletedSessions,
       failedObjects: result.failedObjects,
       failedScreenshots: result.failedScreenshots,
       failedCases: result.failedCases,
       failedReportExports: result.failedReportExports,
+      failedImportBatches: result.failedImportBatches,
       failedSessions: result.failedSessions,
     }, 'Retention cleanup incomplete');
   }
@@ -216,6 +229,61 @@ export class RetentionService {
     }
   }
 
+  private async deleteImportBatch(
+    importBatch: ImportBatchRecord,
+    result: RetentionCleanupResult,
+  ): Promise<void> {
+    const repository = this.dependencies.importBatchRepository;
+    if (!repository) return;
+    try {
+      await this.dependencies.storageBackend.delete(importBatch.objectKey);
+      result.deletedObjects += 1;
+    } catch (error) {
+      if (!isMissingObjectError(error)) {
+        result.failedObjects += 1;
+        return;
+      }
+    }
+
+    try {
+      await repository.delete(importBatch.id);
+      result.deletedImportBatches += 1;
+    } catch {
+      result.failedImportBatches += 1;
+    }
+  }
+
+  private async cleanupImportBatches(
+    now: Date,
+    result: RetentionCleanupResult,
+  ): Promise<void> {
+    const repository = this.dependencies.importBatchRepository;
+    if (!repository) return;
+
+    let cursor: ImportBatchCursor | undefined;
+    while (true) {
+      let page;
+      try {
+        page = await repository.list({
+          limit: RETENTION_BATCH_SIZE,
+          cursor,
+        });
+      } catch {
+        result.failedImportBatches += 1;
+        return;
+      }
+
+      for (const importBatch of page.items) {
+        if (importBatch.expiresAt.getTime() < now.getTime()) {
+          await this.deleteImportBatch(importBatch, result);
+        }
+      }
+
+      if (page.nextCursor === null) return;
+      cursor = page.nextCursor;
+    }
+  }
+
   async cleanup(): Promise<RetentionCleanupResult> {
     const now = new Date(this.clock());
     const result = emptyResult(retentionCutoff(now));
@@ -241,6 +309,7 @@ export class RetentionService {
     }
 
     await this.cleanupReportExports(result.cutoff, result);
+    await this.cleanupImportBatches(now, result);
 
     try {
       result.deletedSessions = await this.dependencies.authRepository.deleteExpiredOrRevokedSessions(now);
