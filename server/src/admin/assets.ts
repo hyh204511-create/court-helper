@@ -920,6 +920,117 @@ async function loadReportExports(append = false) {
   }
 }
 
+let browserCommandPollTimer = null;
+let browserControlVisible = true;
+
+function browserCommandStatusLabel(status) {
+  const labels = { pending: '等待中', executing: '执行中', succeeded: '成功', failed: '失败', expired: '已过期', manual_required: '待人工', cancelled: '已取消' };
+  return labels[status] || '未知状态';
+}
+
+function browserCommandProgressLabel(progress) {
+  if (progress === null || progress === undefined) return '—';
+  if (typeof progress === 'number') return String(Math.max(0, Math.min(100, progress))) + '%';
+  if (typeof progress === 'object') {
+    const value = progress.percent ?? progress.completed ?? progress.total;
+    return value === undefined ? '进行中' : String(value);
+  }
+  return '进行中';
+}
+
+async function loadBrowserControlAccounts() {
+  const select = $('#browser-command-account');
+  if (!select) return;
+  try {
+    const result = await api('/platform-accounts');
+    clear(select);
+    const empty = element('option', '不选择'); empty.value = ''; select.appendChild(empty);
+    (result.platformAccounts || []).filter((account) => account.enabled !== false).forEach((account) => {
+      const option = element('option', account.label || '未命名');
+      option.value = account.id;
+      select.appendChild(option);
+    });
+  } catch (error) { setMessage($('[data-browser-command-message]'), errorMessage(error)); }
+}
+
+async function loadImportBatches() {
+  const target = $('#import-batch-rows');
+  const select = $('#browser-command-batch');
+  if (!target || !select) return;
+  try {
+    const result = await api('/import-batches?limit=100');
+    clear(target); clear(select);
+    const empty = element('option', '不选择'); empty.value = ''; select.appendChild(empty);
+    (result.importBatches || []).forEach((batch) => {
+      const option = element('option', batch.fileName + '（立案 ' + batch.liRows + ' / 强执 ' + batch.qzRows + '）');
+      option.value = batch.id; select.appendChild(option);
+      const row = element('tr');
+      row.append(element('td', batch.fileName), element('td', batch.liRows), element('td', batch.qzRows), element('td', batch.skippedRows), element('td', dateLabel(batch.createdAt)));
+      target.appendChild(row);
+    });
+    if (!target.firstChild) { const row = element('tr'); const cell = element('td', '暂无导入批次'); cell.colSpan = 5; row.appendChild(cell); target.appendChild(row); }
+  } catch (error) { setMessage($('[data-import-batch-message]'), errorMessage(error)); }
+}
+
+async function loadBrowserCommands() {
+  const target = $('#browser-command-rows');
+  const message = $('[data-browser-command-status]');
+  if (!target || !browserControlVisible) return;
+  try {
+    const result = await api('/browser-commands?limit=100');
+    clear(target);
+    (result.commands || []).forEach((command) => {
+      const row = element('tr'); row.dataset.id = command.id; row.dataset.type = command.type; row.dataset.account = command.platformAccountId || ''; row.dataset.batch = command.clientBatchId || '';
+      row.append(element('td', command.type), element('td', browserCommandStatusLabel(command.status), 'status-pill'), element('td', browserCommandProgressLabel(command.progress)), element('td', [command.resultCode, command.resultSummary].filter(Boolean).join(' / ') || '—'), element('td', dateLabel(command.createdAt)));
+      const actions = element('td', null, 'row-actions');
+      if (['pending', 'executing'].includes(command.status)) actions.append(actionButton('取消', 'cancel-browser-command', command.id, 'small-button danger'));
+      if (['failed', 'manual_required', 'expired'].includes(command.status)) actions.append(actionButton('重试', 'retry-browser-command', command.id));
+      row.appendChild(actions); target.appendChild(row);
+    });
+    if (!target.firstChild) { const row = element('tr'); const cell = element('td', '暂无浏览器任务'); cell.colSpan = 6; row.appendChild(cell); target.appendChild(row); }
+    setMessage(message, '已更新 ' + (result.commands?.length || 0) + ' 条任务', 'success');
+  } catch (error) { setMessage(message, errorMessage(error)); }
+}
+
+function startBrowserCommandPolling() {
+  if (browserCommandPollTimer) window.clearInterval(browserCommandPollTimer);
+  browserCommandPollTimer = window.setInterval(() => { if (browserControlVisible) void loadBrowserCommands(); }, 3000);
+  void loadBrowserCommands();
+}
+
+function initBrowserControl() {
+  const commandForm = $('#browser-command-form');
+  const importForm = $('#import-batch-form');
+  const type = $('#browser-command-type');
+  const account = $('#browser-command-account');
+  const batch = $('#browser-command-batch');
+  document.addEventListener('visibilitychange', () => { browserControlVisible = document.visibilityState === 'visible'; if (browserControlVisible) void loadBrowserCommands(); });
+  type?.addEventListener('change', () => { account.required = type.value === 'LOGIN' || type.value.startsWith('QUERY_'); batch.required = type.value.startsWith('QUERY_'); });
+  type?.dispatchEvent(new Event('change'));
+  commandForm?.addEventListener('submit', async (event) => {
+    event.preventDefault(); const selectedType = type.value; const platformAccountId = selectedType === 'EXPORT_REPORT' ? null : (account.value || null); const importBatchId = selectedType.startsWith('QUERY_') ? (batch.value || null) : null;
+    if ((selectedType === 'LOGIN' || selectedType.startsWith('QUERY_')) && !platformAccountId) { setMessage($('[data-browser-command-message]'), '请选择平台账号'); return; }
+    if (selectedType.startsWith('QUERY_') && !importBatchId) { setMessage($('[data-browser-command-message]'), '查询任务必须选择导入批次'); return; }
+    setFormBusy(commandForm, true);
+    try { await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: selectedType, platformAccountId, importBatchId }) }); setMessage($('[data-browser-command-message]'), '任务已创建', 'success'); await loadBrowserCommands(); }
+    catch (error) { setMessage($('[data-browser-command-message]'), errorMessage(error)); } finally { setFormBusy(commandForm, false); }
+  });
+  importForm?.addEventListener('submit', async (event) => {
+    event.preventDefault(); const file = $('#import-batch-file')?.files?.[0]; if (!file) return;
+    const formData = new FormData(); formData.append('file', file); const headers = new Headers(); if (csrfToken) headers.set('X-CSRF-Token', csrfToken);
+    setFormBusy(importForm, true);
+    try { const response = await fetch(API_BASE + '/import-batches', { method: 'POST', body: formData, headers, credentials: 'same-origin' }); const body = await response.json().catch(() => null); if (!response.ok) throw new ApiError(response.status, body?.error?.code, body?.error?.requestId); importForm.reset(); setMessage($('[data-import-batch-message]'), '批次已上传', 'success'); await loadImportBatches(); }
+    catch (error) { setMessage($('[data-import-batch-message]'), errorMessage(error)); } finally { setFormBusy(importForm, false); }
+  });
+  $('#browser-command-refresh')?.addEventListener('click', () => { void loadBrowserCommands(); void loadImportBatches(); });
+  $('#browser-command-rows')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-action]'); if (!button) return; const id = button.dataset.id;
+    try { button.disabled = true; if (button.dataset.action === 'cancel-browser-command') await api('/browser-commands/' + encodeURIComponent(id) + '/cancel', { method: 'POST', body: '{}' }); else if (button.dataset.action === 'retry-browser-command') { const row = button.closest('tr'); await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: row.dataset.type, platformAccountId: row.dataset.account || null, importBatchId: row.dataset.batch || null }) }); } await loadBrowserCommands(); }
+    catch (error) { setMessage($('[data-browser-command-status]'), errorMessage(error)); } finally { button.disabled = false; }
+  });
+  void loadBrowserControlAccounts(); void loadImportBatches(); startBrowserCommandPolling();
+}
+
 function initReportExports() {
   const list = $('#report-export-rows');
   const message = $('[data-report-export-message]');
@@ -1039,6 +1150,7 @@ async function initPage() {
     else if (page === 'users') initUsers();
     else if (page === 'platform-accounts') initPlatformAccounts();
     else if (page === 'report-exports') initReportExports();
+    else if (page === 'browser-control') initBrowserControl();
     else if (page === 'case-detail') void loadCaseDetail();
   } catch (error) {
     setMessage($('[data-page-status]'), errorMessage(error));

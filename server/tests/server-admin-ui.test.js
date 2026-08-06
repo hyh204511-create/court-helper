@@ -205,6 +205,24 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
     assert.match(adminCases.body, /\/admin\/users/);
     assert.match(adminCases.body, /\/admin\/platform-accounts/);
 
+    const browserControl = await app.inject({
+      method: 'GET',
+      url: '/admin/browser-control',
+      headers: { cookie: admin.cookie },
+    });
+    assert.equal(browserControl.statusCode, 200);
+    assert.match(browserControl.body, /data-page="browser-control"/);
+    assert.match(browserControl.body, /id="browser-command-form"/);
+    assert.match(browserControl.body, /id="import-batch-form"/);
+    assert.match(browserControl.body, /id="browser-command-rows"/);
+    assert.match(browserControl.body, /浏览器连接/);
+    assert.match(browserControl.body, /法院标签页/);
+    assert.match(browserControl.body, /未确认/);
+    const browserControlScript = await app.inject({ method: 'GET', url: '/admin/assets/admin.js' });
+    assert.match(browserControlScript.body, /\/browser-commands/);
+    assert.match(browserControlScript.body, /\/import-batches/);
+    assert.match(browserControlScript.body, /visibilitychange/);
+
     const workerCases = await app.inject({
       method: 'GET',
       url: '/admin/cases',
@@ -214,6 +232,14 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
     assert.match(workerCases.body, /data-page="cases"/);
     assert.doesNotMatch(workerCases.body, /\/admin\/users/);
     assert.doesNotMatch(workerCases.body, /\/admin\/platform-accounts/);
+
+    const workerBrowserControl = await app.inject({
+      method: 'GET',
+      url: '/admin/browser-control',
+      headers: { cookie: worker.cookie },
+    });
+    assert.equal(workerBrowserControl.statusCode, 200);
+    assert.match(workerBrowserControl.body, /data-page="browser-control"/);
 
     for (const route of ['/admin/users', '/admin/platform-accounts']) {
       const denied = await app.inject({ method: 'GET', url: route, headers: { cookie: worker.cookie } });

@@ -1,4 +1,4 @@
-export type AdminPage = 'login' | 'users' | 'platform-accounts' | 'cases' | 'case-detail' | 'report-exports' | 'forbidden';
+export type AdminPage = 'login' | 'users' | 'platform-accounts' | 'cases' | 'case-detail' | 'report-exports' | 'browser-control' | 'forbidden';
 export type AdminRole = 'admin' | 'user';
 
 function escapeHtml(value: string): string {
@@ -15,11 +15,13 @@ function navFor(role: AdminRole, page: AdminPage): string {
     return `<nav class="nav" aria-label="主导航">
       <a href="/admin/cases"${page === 'cases' || page === 'case-detail' ? ' aria-current="page"' : ''}>案件台账</a>
       <a href="/admin/report-exports"${page === 'report-exports' ? ' aria-current="page"' : ''}>报表导出</a>
+      <a href="/admin/browser-control"${page === 'browser-control' ? ' aria-current="page"' : ''}>浏览器控制</a>
     </nav>`;
   }
   return `<nav class="nav" aria-label="主导航">
     <a href="/admin/cases"${page === 'cases' || page === 'case-detail' ? ' aria-current="page"' : ''}>案件台账</a>
     <a href="/admin/report-exports"${page === 'report-exports' ? ' aria-current="page"' : ''}>报表导出</a>
+    <a href="/admin/browser-control"${page === 'browser-control' ? ' aria-current="page"' : ''}>浏览器控制</a>
     <a href="/admin/users"${page === 'users' ? ' aria-current="page"' : ''}>系统用户</a>
     <a href="/admin/platform-accounts"${page === 'platform-accounts' ? ' aria-current="page"' : ''}>平台账号</a>
   </nav>`;
@@ -208,6 +210,33 @@ function reportExportsPage(role: AdminRole): string {
     </section>`);
 }
 
+function browserControlPage(role: AdminRole): string {
+  return layout('browser-control', role, '浏览器控制', `
+    <header class="page-head"><div><p class="eyebrow">Browser / Commands</p><h2>浏览器控制</h2><p>从后台创建浏览器任务，由扩展在已打开的法院标签页执行。页面隐藏时自动暂停轮询。</p></div></header>
+    <section class="panel" aria-labelledby="browser-runtime-title"><div class="panel-head"><div><h3 id="browser-runtime-title">扩展运行状态</h3><p>仅按扩展最近回写推断；没有可靠回执时保持“未确认”。</p></div></div><div class="panel-body detail-grid"><dl class="detail-item"><dt>浏览器连接</dt><dd id="browser-connection-status">未确认</dd></dl><dl class="detail-item"><dt>法院标签页</dt><dd id="court-tab-status">未确认</dd></dl><dl class="detail-item"><dt>登录状态 / 当前账号</dt><dd id="court-login-status">未确认</dd></dl></div></section>
+    <section class="panel" aria-labelledby="browser-command-title">
+      <div class="panel-head"><div><h3 id="browser-command-title">创建浏览器任务</h3><p>任务参数仅包含非敏感引用；登录凭据不会进入命令负载。</p></div></div>
+      <div class="panel-body">
+        <form id="browser-command-form">
+          <div class="field-grid">
+            <div class="field"><label for="browser-command-type">任务类型</label><select id="browser-command-type"><option value="LOGIN">远程登录</option><option value="QUERY_LI">开始立案查询</option><option value="QUERY_QZ">开始强执查询</option><option value="EXPORT_REPORT">导出报表</option></select></div>
+            <div class="field"><label for="browser-command-account">平台账号</label><select id="browser-command-account"><option value="">加载中…</option></select></div>
+            <div class="field"><label for="browser-command-batch">导入批次（查询必选）</label><select id="browser-command-batch"><option value="">不选择</option></select></div>
+          </div>
+          <div class="form-actions"><button class="primary" type="submit">创建任务</button><button class="secondary" id="browser-command-refresh" type="button">立即刷新</button></div>
+        </form><p class="message" data-browser-command-message aria-live="polite"></p>
+      </div>
+    </section>
+    <section class="panel" aria-labelledby="import-batch-title">
+      <div class="panel-head"><div><h3 id="import-batch-title">导入查询批次</h3><p>上传 xlsx 后选择批次绑定查询任务。服务端仅返回批次摘要。</p></div></div>
+      <div class="panel-body"><form id="import-batch-form" enctype="multipart/form-data"><div class="field"><label for="import-batch-file">Excel 模板</label><input id="import-batch-file" name="file" type="file" accept=".xlsx" required></div><div class="form-actions"><button class="primary" type="submit">上传批次</button></div></form><p class="message" data-import-batch-message aria-live="polite"></p><div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>立案行</th><th>强执行</th><th>跳过</th><th>创建时间</th></tr></thead><tbody id="import-batch-rows"></tbody></table></div></div>
+    </section>
+    <section class="panel" aria-labelledby="browser-command-list-title">
+      <div class="panel-head"><div><h3 id="browser-command-list-title">任务列表</h3><p>状态、进度与错误码来自扩展回写；未知状态显示为待人工处理。</p></div></div>
+      <div class="panel-body"><div class="case-status"><span data-browser-command-status class="message muted" aria-live="polite">准备读取</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>类型</th><th>状态</th><th>进度</th><th>结果</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="browser-command-rows"></tbody></table></div></div>
+    </section>`);
+}
+
 function forbiddenPage(): string {
   return `<!doctype html>
 <html lang="zh-CN">
@@ -236,5 +265,6 @@ export function renderAdminPage(page: AdminPage, role: AdminRole, caseId?: strin
   if (page === 'platform-accounts') return platformAccountsPage();
   if (page === 'cases') return casesPage(role);
   if (page === 'report-exports') return reportExportsPage(role);
+  if (page === 'browser-control') return browserControlPage(role);
   return caseDetailPage(role, caseId ?? '');
 }
