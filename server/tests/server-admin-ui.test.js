@@ -373,21 +373,26 @@ test('browser control renders full session and creator names, separates LOGIN, a
       const taskTypes = [...dom.window.document.querySelector('#browser-command-type').options].map((option) => option.value);
       assert.deepEqual(taskTypes, ['QUERY_LI', 'QUERY_QZ', 'EXPORT_REPORT']);
 
-      if (session.role === 'admin') {
-        await waitFor(() => dom.window.document.querySelector('#platform-login-account').value === ACCOUNT_ID);
-        dom.window.document.querySelector('#platform-login-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
-        await waitFor(() => requests.some((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands'));
-        const loginRequest = requests.find((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands');
-        assert.deepEqual(JSON.parse(String(loginRequest.body)), { type: 'LOGIN', platformAccountId: ACCOUNT_ID });
+      await waitFor(() => dom.window.document.querySelector('#platform-login-account').value === ACCOUNT_ID);
+      dom.window.document.querySelector('#platform-login-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+      await waitFor(() => requests.some((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands'));
+      const loginRequest = requests.find((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands');
+      assert.deepEqual(JSON.parse(String(loginRequest.body)), { type: 'LOGIN', platformAccountId: ACCOUNT_ID });
 
-        await waitFor(() => dom.window.document.querySelector('#platform-credential-show').disabled === false);
-        dom.window.document.querySelector('#platform-credential-show').click();
-        await waitFor(() => dom.window.document.querySelector('#platform-credential-password').textContent === 'synthetic-view-password');
-        assert.equal(dom.window.document.querySelector('#platform-credential-account').textContent, 'synthetic-view-account');
-        dom.window.document.querySelector('#platform-credential-hide').click();
-        assert.equal(dom.window.document.querySelector('#platform-credential-account').textContent, '');
-        assert.equal(dom.window.document.querySelector('#platform-credential-password').textContent, '');
-      }
+      await waitFor(() => dom.window.document.querySelector('#platform-credential-show').disabled === false);
+      dom.window.document.querySelector('#platform-credential-show').click();
+      await waitFor(() => dom.window.document.querySelector('#platform-credential-password').textContent === 'synthetic-view-password');
+      assert.equal(dom.window.document.querySelector('#platform-credential-account').textContent, 'synthetic-view-account');
+
+      dom.window.document.querySelector('#platform-login-account').dispatchEvent(new dom.window.Event('change'));
+      assert.equal(dom.window.document.querySelector('#platform-credential-account').textContent, '');
+      assert.equal(dom.window.document.querySelector('#platform-credential-password').textContent, '');
+
+      dom.window.document.querySelector('#platform-credential-show').click();
+      await waitFor(() => dom.window.document.querySelector('#platform-credential-password').textContent === 'synthetic-view-password');
+      dom.window.dispatchEvent(new dom.window.Event('pagehide'));
+      assert.equal(dom.window.document.querySelector('#platform-credential-account').textContent, '');
+      assert.equal(dom.window.document.querySelector('#platform-credential-password').textContent, '');
 
       } finally {
         dom.window.close();
