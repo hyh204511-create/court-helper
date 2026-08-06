@@ -516,7 +516,7 @@ test('003 login command migration has reversible table, constraints, and indexes
   }
 });
 
-test('legacy platform remote-login entry creates a unified browser command and shows duplicate guidance', async () => {
+test('platform page removes the legacy remote-login entry while browser control owns unified LOGIN', async () => {
   const { app } = await makeApp();
   try {
     const admin = await loginAdmin(app);
@@ -526,14 +526,23 @@ test('legacy platform remote-login entry creates a unified browser command and s
       headers: { cookie: admin.cookie },
     });
     assert.equal(page.statusCode, 200);
-    assert.match(page.body, /登录指令/);
+    assert.doesNotMatch(page.body, /远程登录|登录指令/);
     assert.doesNotMatch(page.body, /secret_ciphertext|secretCiphertext|court-pass/);
+
+    const browserControl = await app.inject({
+      method: 'GET',
+      url: '/admin/browser-control',
+      headers: { cookie: admin.cookie },
+    });
+    assert.equal(browserControl.statusCode, 200);
+    assert.match(browserControl.body, /id="platform-login-form"/);
+    assert.match(browserControl.body, /一键登录/);
 
     const script = await app.inject({ method: 'GET', url: '/admin/assets/admin.js' });
     assert.equal(script.statusCode, 200);
-    assert.match(script.body, /远程登录/);
     assert.match(script.body, /browser-commands/);
     assert.match(script.body, /已有进行中的统一登录任务/);
+    assert.doesNotMatch(script.body, /远程登录|loadLoginCommands/);
     assert.doesNotMatch(script.body, /api\('\/login-commands',\s*\{/);
     assert.doesNotMatch(script.body, /secretCiphertext|secret_ciphertext|court-pass/);
   } finally {
