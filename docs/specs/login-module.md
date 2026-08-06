@@ -1,30 +1,29 @@
 # 规格：login-module（登录状态、账号识别与自动登录）
 
-> 版本：0.5 ｜ 状态：实现中 ｜ 依据：计划 §Phase 2、需求确认（2026-08-04 用户拍板「升级规则：全面自动登录」）、Phase 9 服务器上线（2026-08-05 用户拍板「自动登录凭据从服务器取」）、真实会话验收（2026-08-05 实测）
+> 版本：0.8 ｜ 状态：已确认、待实现 ｜ 依据：计划 §Phase 2、自动登录真实会话验收、Phase 11 控制台唯一入口决策
 > v0.2 变更：登录全人工 → 登录自动化（可选）；新增自动登录范围、本地服务、验证码识别流程。
 > v0.3 变更：**自动登录凭据来源改为服务器**（`GET /platform-accounts` 列表 + `POST /platform-accounts/:id/credential` 取明文）；验证码 OCR 仍走本地 8765 服务（ddddocr）；本地 `accounts.txt` 降级为可选回退。
 > v0.4 变更：**本地服务支持 `--port` 参数**（默认 8765，测试用独立随机端口避免与既有实例冲突）；补充测试环境隔离说明（8765 残留实例历史坑）。
 > v0.5 变更：**真实输入驱动**——2026-08-05 真实会话实测确认：平台（uni-app H5）**只响应 `isTrusted=true` 的真实用户事件**，JS 合成 `click()`（isTrusted=false）被静默忽略 → 自动登录「点登录按钮」「点击验证码刷新」均不触发（表单可填、提交不执行）。修复：扩展经 **`chrome.debugger` API** 向平台页注入**真实输入事件**（`Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`），由 service worker 统一驱动；debugger 不可用时回退「待人工」。
+> v0.8 变更：自动登录入口迁移到 `/admin/browser-control` 的“平台账号与自动登录”区域；“一键登录”创建统一 `LOGIN` 命令。删除 Popup 登录/抓取流程；独立 Options/Setup 只保留服务配置和设备配对。
 
 ## 1. 目标
 
-登录**可选自动化**：默认全人工（操作人员手动输入账号/密码/验证码）。启用自动化后，由本地服务
-（`scripts/login-helper-server.py`，仅监听 127.0.0.1）+ 本地账号文件（`accounts.txt`，gitignore）驱动：
-插件在登录页自动填写账号/密码/验证码并提交，支持多账号切换登录；登录后一键抓取（复用 app-module 批量执行器）。
+登录**可选自动化**：默认全人工（操作人员手动输入账号/密码/验证码）。启用自动化后，后台控制台选择服务器平台账号并创建 `LOGIN` 命令；扩展领取命令后从受控凭据出口取账号密码，本地服务（`scripts/login-helper-server.py`，仅监听 127.0.0.1）只负责 OCR，插件在登录页自动填写账号/密码/验证码并提交。登录后的查询由独立 `QUERY_LI` / `QUERY_QZ` 命令驱动。
 **凭据不进插件 storage、不进 git/vault；页面只模拟人工操作（填表单+点按钮），不直接调平台登录 API。**
 
 ## 2. 范围
 
 | 功能 | 说明 |
 |---|---|
-| 登录页检测 | 当前 URL hash 匹配 `#/pagesGrxx/pc/login*` → 判定未登录，通知 popup 显示「未登录」 |
-| 登录成功检测 | hash 离开 login 且 出现用户区标志元素 → 判定已登录，通知 popup 解锁查询功能 |
+| 登录页检测 | 当前 URL hash 匹配 `#/pagesGrxx/pc/login*` → 判定未登录，回写命令/状态型浮动面板 |
+| 登录成功检测 | hash 离开 login 且出现用户区标志元素 → 判定已登录，回写命令成功并更新状态 |
 | 当前账号识别 | 从页面用户区读取当前登录账号文本（脱敏处理），与模板「账号」列（C 列）匹配 |
-| 会话失效检测 | 平台接口返回 401/会话过期，或页面被跳回 login 路由 → 批量任务暂停，popup 提示 |
+| 会话失效检测 | 平台接口返回 401/会话过期，或页面被跳回 login 路由 → 批量任务暂停，命令回写/浮动面板提示 |
 | 自动登录 | 登录页路由 + 密码登录方式下：填账号/密码 → 读验证码图（dataURL）→ 本地服务 OCR → 填验证码 → **真实点击「登录」（chrome.debugger 注入 isTrusted 事件）**→ 等待结果；**凭据来自服务器平台账号**（`GET /platform-accounts` → 选择 → `POST /platform-accounts/:id/credential` 取明文，仅 extension 会话可调） |
 | 验证码识别 | 本地服务 `POST /ocr` 调 ddddocr（可选依赖）；失败/识别失败 → 刷新验证码重试 1 次 → 仍败标记待人工 |
-| 多账号管理 | `accounts.txt`（gitignore）每行 `账号 密码`（首个空白分割，密码可含空格；`#` 注释行跳过）；popup 账号下拉切换登录；平台为单会话，不做并行登录 |
-| 一键抓取 | 登录成功后平台默认跳 `#/pagesWsla/pc/list/index`（已确认）→ popup「一键抓取」= 对当前账号发起 START_BATCH（立案） |
+| 多账号管理 | 控制台只列出服务器启用平台账号；一次 `LOGIN` 命令绑定一个 `platformAccountId`。`accounts.txt` 只保留为本地 helper 的非默认兼容输入，不提供 UI；平台为单会话，不做并行登录 |
+| 登录后查询 | 登录成功后平台默认跳 `#/pagesWsla/pc/list/index`（已确认）→ 后台另行创建 `QUERY_LI` / `QUERY_QZ`，SW 向 content 发起既有 START_BATCH |
 | 状态持久化 | 登录状态与当前账号保存在 chrome.storage.local（仅会话信息，无凭据） |
 
 ## 3. 范围外（不做）
@@ -55,11 +54,10 @@
 ## 5. 自动登录流程（v0.2 新增，v0.3 凭据源改服务器）
 
 ```text
-popup「一键登录」→ 读取服务器配置（地址/账号，chrome.storage.local 仅存非凭据配置）
-→ extension 通道登录服务器（clientType=extension，取 bearer token，token 仅内存不落 storage）
-→ GET /platform-accounts（admin,user 均可见启用项；只返回 id,label,enabled）
-→ popup 账号下拉 = 平台账号 label 列表
-→ 选中账号 → POST /platform-accounts/:id/credential（extension 会话）→ 取明文 {account,password}（仅内存）
+后台控制台账号下拉选择启用平台账号 → 点击“一键登录”
+→ POST /browser-commands 创建统一 LOGIN（payload 不含凭据）
+→ 已配对 extension Bearer 的 SW 轮询并领取命令
+→ POST /platform-accounts/:id/credential（extension 会话）→ 取明文 {account,password}（仅内存）
 → content AUTO_LOGIN 消息（仅登录页路由执行）
 → 确保「密码登录」方式（必要时真实点击 passwordTab，见 §5.1）
 → 填账号/密码
@@ -83,8 +81,8 @@ popup「一键登录」→ 读取服务器配置（地址/账号，chrome.storag
 - **失败回退**：`attach` 失败 / sendCommand 报错 / 无 tab → 返回「待人工」（提示用户手动操作），**不做**合成点击兜底（对平台无效且掩盖问题）。
 - **坐标注意**：页面有缩放（devicePixelRatio≠1）时 getBoundingClientRect 已是 CSS 像素，CDP Input 坐标同用 CSS 像素，无需换算（已实测一致）。
 
-- 服务器不可达（登录/列表/取凭据失败）→ popup 提示服务器连接信息，不进入自动登录。
-- 凭据明文只在内存流转：服务器响应 → popup → AUTO_LOGIN 消息 → content 填表，任何环节不写 storage。
+- 服务器不可达（轮询/领取/取凭据失败）→ 命令保持稳定失败/待人工状态，不进入自动登录。
+- 凭据明文只在内存流转：服务器响应 → SW → AUTO_LOGIN 消息 → content 填表，任何环节不写 storage。
 - 验证码图刷新：点击 `captchaImage`（页面行为，src 更新后重新读取），不 fetch 平台 API。
 - 本地服务（8765）仅用于 `/ocr` 验证码识别；`/accounts` 作为无服务器时的可选回退（默认关闭）。
 - 重试全程遵守节流（间隔 3–8s）；失败标记待人工，禁止循环重试。
@@ -104,11 +102,10 @@ popup「一键登录」→ 读取服务器配置（地址/账号，chrome.storag
 ```
 content script（平台页，document_start 注入）
   → 路由变化/元素出现 → 状态变更消息
-  → service worker 汇总 → chrome.storage.local 更新
-  → popup 查询显示「未登录 / 已登录(账号xxx)」
-popup「一键登录」→ AUTO_LOGIN {account, password, serviceUrl} → content 执行自动登录
+  → service worker 汇总 → chrome.storage.local 更新 → 状态型浮动面板显示脱敏状态
+后台“一键登录”→ LOGIN command → SW 取凭据 → AUTO_LOGIN {account, password, serviceUrl} → content 执行自动登录
 content 需真实点击（登录按钮/验证码刷新/passwordTab 切换）→ CLICK_REQUEST {x, y} → SW 从 sender.tab.id 获取 tab → 经 chrome.debugger 注入 → 回执
-popup「一键抓取」→ START_BATCH（列表页）→ 批量执行器（app-module）
+后台 QUERY command → START_BATCH（列表页）→ 批量执行器（app-module）
 批量任务执行器（app-module）在收到会话失效事件时暂停队列。
 ```
 
@@ -129,11 +126,11 @@ popup「一键抓取」→ START_BATCH（列表页）→ 批量执行器（app-m
 
 ## 9. 验收标准
 
-1. 未登录时 popup 显示引导提示，查询/批量按钮禁用。
-2. 手动登录后 popup 自动解锁并显示脱敏账号（如 `3503****52X`）。
-3. 会话失效时批量任务暂停、popup 提示。
-4. 自动登录：服务在线 + 服务器平台账号有凭据 → 一键登录成功（真实会话复核）；失败重试 1 次后明确提示待人工。
-5. 登录成功后一键抓取可在列表页启动批量查询。
+1. 未登录时控制台命令状态/浮动面板明确提示人工登录或可用的一键登录，不伪造已登录。
+2. 手动登录后状态链路显示脱敏平台账号（如 `3503****52X`）。
+3. 会话失效时批量任务暂停，命令回写和浮动面板提示。
+4. 自动登录：服务在线 + 服务器平台账号有凭据 → 控制台一键登录创建 LOGIN 并成功执行（真实会话复核）；失败重试 1 次后明确提示待人工。
+5. 登录成功后 QUERY_LI/QUERY_QZ 可在合规列表页启动批量查询。
 6. 全程无凭据写入 chrome.storage、日志或 git；accounts.txt 在 .gitignore。
 7. （v0.5）真实会话：自动登录的「点登录」「刷新验证码」由 chrome.debugger 注入真实事件（isTrusted=true）触发；扩展结束自动登录后 debugger 已 detach（扩展管理页无「正在调试」残留提示）。
 
@@ -146,10 +143,10 @@ popup「一键抓取」→ START_BATCH（列表页）→ 批量执行器（app-m
 
 ## 11. 后台绑定的扩展授权（v0.7）
 
-- 管理员成功登录后台后，OCR helper 的按需启动保持不变；扩展服务器身份改为管理员显式批准的一次性设备配对，不再由 popup 提交服务器用户名或密码。
+- 管理员成功登录后台后，OCR helper 的按需启动保持不变；扩展服务器身份改为管理员显式批准的一次性设备配对，不再由扩展页面提交服务器用户名或密码。
 - 扩展生成 `deviceId` 与高熵 `exchangeSecret`，从配置的 extension Origin 发起 pending pairing；管理员仅在 `/admin/browser-control` 对核对码批准。兑换后的 30 天 opaque Bearer session 绑定设备，仅保存在 `chrome.storage.local`，并可由后台撤销。
 - 管理员创建的 extension session 可执行业务操作，但不能管理用户：`/users*` 必须要求 `admin_ui` Cookie、管理员角色、受信 Origin 与 CSRF。extension Origin 不构成认证，也不得换取 Cookie。
-- popup 在最终移除前必须提供“后台服务器地址”配置，不提供服务器用户名、密码或 token 输入。当前本机验收只接受 `http://127.0.0.1:3000`；点击“请求后台授权”时由 SW 原子保存规范化地址并创建一次配对。空地址、凭据、query、fragment 或非根路径均不得发起请求。
+- 独立 Options/Setup 页面提供“后台服务器地址”配置，不提供服务器用户名、密码或 token 输入。当前本机验收只接受 `http://127.0.0.1:3000`；点击“请求后台授权”时由 SW 原子保存规范化地址并创建一次配对。空地址、凭据、query、fragment 或非根路径均不得发起请求。
 - 地址变更必须清除旧设备 token、待兑换 pairing 和设备标识，再按新地址重新经管理员批准；保存地址本身不得自动新建 pairing，避免与用户点击请求产生并发重复。
-- 地址切换必须使旧地址的在途创建/兑换响应失效，禁止旧 token 或 pairing 在新地址配置后回写；popup 查询授权状态时必须从持久化设备状态恢复，不能依赖 MV3 Service Worker 尚未休眠。
-- popup 在真实端到端验收前只保留授权状态和降级提示；不得再展示或传递服务器密码。最终删除 popup 仍以后端统一命令的真实验收门槛为准。
+- 地址切换必须使旧地址的在途创建/兑换响应失效，禁止旧 token 或 pairing 在新地址配置后回写；Options/Setup 查询授权状态时必须从持久化设备状态恢复，不能依赖 MV3 Service Worker 尚未休眠。
+- Popup 必须删除；Options/Setup 只保留授权状态和降级提示，不得展示或传递服务器密码，也不得承载登录、导入、查询或导出按钮。

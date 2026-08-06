@@ -1,6 +1,7 @@
 # 规格：browser-command-module（后台唯一业务入口与扩展执行代理）
 
-> 版本：0.1 ｜ 状态：已确认、待实现 ｜ 依据：用户明确要求“popup 全部功能转到后台并移除”；现有 login-command-bridge、server-module、app-module、panel-module、report-export-module
+> 版本：0.2 ｜ 状态：已确认、待实现 ｜ 依据：用户明确要求“popup 全部功能转到后台并移除”；Phase 11 控制台唯一入口决策；现有 login-command-bridge、server-module、app-module、panel-module、report-export-module
+> v0.2 变更：固定 `/admin/browser-control` 为唯一业务入口；拆分控制台“一键登录”与通用任务区；补充完整名称/凭据查看权限；定义扩展 action 与独立 Options/Setup 路由；要求删除 Popup 源码、产物和测试。
 
 ## 1. 目标与最终职责
 
@@ -15,7 +16,9 @@
 → 后台展示进度/结果
 ```
 
-- popup 不再作为业务入口；最终从 manifest 移除 `action.default_popup`，popup 文件及专用调用链删除或迁移后归档。
+- popup 不再作为业务入口；从 manifest 移除 `action.default_popup`，删除 `extension/popup/` 全部源码、popup 构建产物和 popup 专用测试，不保留归档副本或第二套兼容业务 UI。
+- 后台业务入口固定为 `/admin/browser-control`；`/`、`/admin` 和后台登录成功后都重定向到该页。
+- 扩展提供独立 Options/Setup 页面，且只负责服务器地址、设备配对、六位核对码和授权状态；不得承载登录、导入、查询、导出或本地数据检索。
 - 法院页面浮动面板仅保留实时状态、进度和人工接管提示，不保留第二套完整导入/查询/导出业务入口。
 - 后台不能直接调用法院登录 API，不能直接读取法院 DOM；所有平台动作必须由扩展在真实标签页完成。
 
@@ -100,14 +103,18 @@
 
 - 浏览器连接状态：由扩展心跳/最近回写推断；未知必须显示“未确认”，不得伪造已连接。
 - 法院标签状态、登录态、脱敏当前账号。
-- 平台账号选择、`远程登录`、`开始立案查询`、`开始强执查询`、`导出报表`。
-- 当前任务与历史任务：状态、进度、失败码、待人工原因、取消/重试。
+- **平台账号与自动登录**：只列出启用平台账号；选择账号后，“一键登录”只创建统一 `LOGIN` 命令。平台账号管理页不得再提供“远程登录”按钮或登录指令列表。
+- **通用任务区**：只保留 `开始立案查询`、`开始强执查询`、`导出报表`，不得混入 `LOGIN` 选项。
+- 当前任务与历史任务：状态、进度、失败码、待人工原因、取消/重试，并显示完整任务创建者用户名；页面同时显示当前后台会话的完整用户名，不做掩码。
+- **平台凭据按需查看**：admin、user 的同源 `admin_ui` Cookie 会话均可查看选中平台账号的完整账号和密码；明文只用 `textContent` 渲染，关闭/切换账号/离开页面立即清空。
 - **模板上传与明文查看**：后台上传真实 xlsx，服务器私有保存并解析为受控批次；所有已登录后台用户均可查看完整文件内容，且可查看平台账号和平台密码。批次列表/创建响应仅返回 `{id,fileName,byteSize,sha256,createdAt,updatedAt,expiresAt,liRows,qzRows,skipped}`，不得返回解析行、账号或密码；明文仅在同源后台 Cookie 会话的专用查看/下载 API 中返回，响应 `Cache-Control: private, no-store`。每个文件最多 20 MiB，解析仅接受无宏 xlsx 的 ZIP 容器；强执表头/必填行/状态规则以 excel-module 为准。不得写入 `browser_commands.payload`、任务结果、客户端日志、服务日志或页面持久化状态；extension Bearer 会话无权访问明文查看 API。
 - 报表导出记录继续使用既有 `/admin/report-exports`；业务入口从后台控制台发起。
 
 ## 7. 扩展与页面边界
 
 - Service Worker 统一轮询 `browser_commands`；可暂时兼容旧 `login_commands`，完成迁移后再删除兼容层。
+- manifest `action` 不配置 `default_popup`。点击扩展图标时：本机服务器地址已配置且设备授权仍有效 → 新标签打开 `http://127.0.0.1:3000/admin/browser-control`；未配置、配对中、授权过期或已撤销 → 打开独立 Options/Setup 页面。
+- Options/Setup 只允许规范化的 `http://127.0.0.1:3000` 根地址；保持 host 权限 `http://127.0.0.1:3000/*`，不得增加 `<all_urls>`。
 - content script 只接受来自扩展消息路由的已校验动作；不接受网页脚本直接创建任务。
 - 浮动面板不得显示完整账号、案号、当事人、身份证号、密码、驳回原因；只显示脱敏状态、进度和稳定错误码。
 - Chrome 重启、扩展重载、SW 休眠、法院标签关闭时，后台显示未连接/待人工，不伪造成功。
@@ -118,16 +125,16 @@
 
 - server：迁移可重复、角色隔离、重复创建、领取/claimant、回写幂等、过期/取消、UUID/cursor 校验、payload 敏感字段拒绝。
 - extension：无法院标签、未登录、账号不匹配、LOGIN、QUERY_LI、QUERY_QZ 执行 tab 门禁、EXPORT_REPORT、claimant 回写、SW 配置重建。
-- admin：控制台加载、按钮创建指令、任务轮询、隐藏页退避、错误/取消/重试、安全显示。
-- manifest：无 `default_popup`；不存在 popup 业务引用；扩展仍能注入法院页面和运行 SW。
+- admin：`/`、`/admin`、登录成功入口跳转；控制台独立一键登录；通用任务区无 LOGIN；完整当前用户名/创建者名称；两种角色凭据按需查看；跨域、未登录和 extension Bearer 拒绝；无缓存响应；任务轮询、隐藏页退避、错误/取消/重试、安全显示。
+- manifest：无 `default_popup`；不存在 popup 源码、构建入口、产物和测试；已授权 action 打开控制台，未授权 action 打开 Options/Setup；扩展仍能注入法院页面和运行 SW。
 
 ### 真实验收
 
-1. 后台点击远程登录，真实法院登录页完成既有 OCR + trusted click 并回写结果。
+1. 后台控制台点击“一键登录”，真实法院登录页完成既有 OCR + trusted click 并回写结果。
 2. 后台创建立案查询，真实页面执行并回写结果/截图。
 3. 后台创建强执查询，非执行 tab 返回 `EXECUTION_TAB_REQUIRED`，执行 tab 才执行。
 4. 后台发起导出，后台记录出现且下载 SHA256 与扩展生成文件一致。
-5. popup 已移除；扩展 action、后台、法院页面链路正常。
+5. popup 已移除；已授权 action 打开控制台，未授权 action 打开 Options/Setup；后台、法院页面链路正常。
 6. 服务器严格使用 `courthelper` 库，`assistant` 库无任何 court-helper 表/序列/迁移对象。
 
 ## 9. 范围外
@@ -145,7 +152,7 @@
 - 配对成功的扩展取得不透明、设备绑定的 Bearer 会话；除用户管理外，可调用现有资源归属、claimant 与 payload 校验允许的全部业务 API。
 - **用户管理除外**：每个 `/users*` 端点必须要求管理员 `admin_ui` Cookie、同源请求与 CSRF。即使令牌来自管理员配对的扩展 Bearer 也必须返回 `403 FORBIDDEN`。
 - `/admin/*` HTML 及设备管理仍是后台 Cookie 路由；扩展不得取得管理员 Cookie。扩展 Origin/ID 仅是发起配对的条件，而不是授权凭据。
-- popup 必须提供可编辑的“服务器地址”输入框；当前本机验收仅接受并规范化为 `http://127.0.0.1:3000`，在用户点击“请求后台授权”时将地址交给 SW 原子保存后再发起配对。非法地址不得发起网络请求或生成待批准设备。
+- 独立 Options/Setup 页面必须提供可编辑的“服务器地址”输入框；当前本机验收仅接受并规范化为 `http://127.0.0.1:3000`，在用户点击“请求后台授权”时将地址交给 SW 原子保存后再发起配对。非法地址不得发起网络请求或生成待批准设备。
 - 地址变更或停用必须使旧统一轮询的在途网络/内容执行失效；旧轮询返回 `401` 时不得清除新地址已配对设备的 token、不得向旧服务器回写结果。
 
 ### 10.2 一次性配对合约

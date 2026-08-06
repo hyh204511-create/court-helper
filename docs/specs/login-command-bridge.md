@@ -1,6 +1,7 @@
 # 规格：login-command-bridge（后端管理系统远程一键登录）
 
-> 版本：0.1 ｜ 状态：待实现 ｜ 依据：用户决策（2026-08-05「要，做指令桥接：后端管理系统能选账号发起一键登录」）、login-module v0.5（trusted click 链路已验收）
+> 版本：0.2 ｜ 状态：兼容保留、业务入口已迁移 ｜ 依据：既有远程登录桥接、Phase 11 控制台唯一入口决策
+> v0.2 变更：平台账号页“远程登录”和登录指令 UI 删除；新业务入口只在 `/admin/browser-control` 创建统一 `LOGIN` browser command。旧 `login_commands` 表/API/执行器只按 browser-command-module 的兼容窗口保留。
 > 前置依赖：login-module v0.5（chrome.debugger 真实点击）、server-module Phase 9（平台账号/凭据/管理 UI）
 
 ## 1. 目标
@@ -13,7 +14,7 @@
 
 | 功能 | 说明 |
 |---|---|
-| 创建登录指令 | 管理 UI：平台账号行「远程登录」按钮 → `POST /login-commands`（admin 权限；同账号存在未过期 pending/executing 指令时返回 409） |
+| 创建登录指令 | 兼容 API `POST /login-commands` 暂时保留但无管理 UI 入口；新请求必须由控制台“一键登录”创建 `LOGIN` browser command |
 | 领取指令 | 扩展 SW 轮询 `GET /login-commands?status=pending`（extension 会话）→ 服务器返回最早一条并标记 `executing`（租约 60s，超时未回执 → 可被重新领取） |
 | 执行登录 | 扩展 SW 收到指令 → 复用 AUTO_LOGIN 链路（取凭据 → 找法院登录页 tab → content 执行 trusted click 登录） |
 | 回写结果 | `POST /login-commands/:id/result`（extension 会话，校验领取人）→ `success` 或 `failed{code}`；管理 UI 展示状态 |
@@ -60,7 +61,7 @@ CREATE INDEX IF NOT EXISTS login_commands_status_idx ON login_commands (status, 
 
 ## 6. 扩展 SW 轮询契约（extension/sw/login-command-poll.js）
 
-- **启用条件**：storage 存在服务器配置（`serverUrl`/`serverUsername`）+ **远程登录已启用**（storage `remoteLoginEnabled: true`，由 popup「启用远程登录」开关写入；启用时用户需输入服务器密码获取 extension token，**token 存 storage.local 带 `expiresAt`（TTL 8h）**；token 过期/失效 → 清 token、轮询暂停 + popup 提示重新启用）。远程登录账号必须是服务器 `admin` 角色，因为扩展执行指令时需要经 `POST /platform-accounts/:id/credential` 取凭据，该路由保持 admin 权限。
+- **启用条件**：仅在迁移兼容窗口内使用已配对扩展设备的 `serverUrl`、opaque token 与 `remoteLoginEnabled`；不再存在 Popup 开关、服务器用户名/密码登录或 8 小时旧 token 配置入口。新统一轮询以 browser-command-module 为准。
 - **轮询间隔**：3s（`setInterval`，SW 存活时快轮询）；另用 `chrome.alarms` 每 1 分钟兜底唤醒并执行一次检查。
 - **执行流程**：
   1. `GET /login-commands?status=pending`（Bearer token）；
@@ -69,20 +70,20 @@ CREATE INDEX IF NOT EXISTS login_commands_status_idx ON login_commands (status, 
   4. 发 `AUTO_LOGIN` 给 content（复用 login-module 消息契约：account/password/serviceUrl）；
   5. content 回执 → `POST /login-commands/:id/result` 回写（成功 → success；NEEDS_HUMAN/FORM_NOT_READY → failed + code）。
 - **单飞**：SW 同时只执行一条指令（in-flight 标记），执行期间轮询暂停。
-- **与 popup 并发**：popup 手动登录进行中（AUTO_LOGIN 已在 content 执行）时，指令领取后回写 `failed{code: BUSY}`（content 单飞由 login-auto 的 activeLogin 保证，SW 在发消息前查不到 activeLogin 状态，故用内容回执判定；实际以 content 返回为准，若返回 FORM_NOT_READY 且页面已登录路由则原样回写）。
+- **与统一命令并发**：content 的 `activeLogin` 继续保证 AUTO_LOGIN 单飞；旧兼容指令与新 `LOGIN` 同时到达时，后到者回写稳定 `BUSY`/待人工，不得并发填表。
 - **已登录处理**：领取指令后先 PING content 查 `state`——`logged-in` → 直接回写 `success`（幂等，不重复执行）；`login` → 执行 AUTO_LOGIN。
 
-## 7. 管理 UI 交互
+## 7. 管理 UI 迁移
 
-- 平台账号列表每行新增「远程登录」按钮（enabled 账号可点）→ 点击后行内状态变「指令已创建」→ 轮询该指令状态（2s，≤60s）显示：执行中 / 成功（绿）/ 失败（红 + code）。
-- 账号详情页或新「登录指令」区：最近 100 条指令表（账号 label、状态、结果、时间）。
-- 文案不含凭据；失败只显示 code 与脱敏 message。
+- `/admin/platform-accounts` 不得出现“远程登录”按钮或“登录指令”列表。
+- `/admin/browser-control` 的“平台账号与自动登录”区域选择启用账号并创建统一 `LOGIN`；状态只在统一 browser command 列表展示。
+- 文案不含凭据；失败只显示稳定 code 与脱敏 message。
 
 ## 8. 安全
 
 - 指令**不携带凭据**；凭据仍走 `POST /platform-accounts/:id/credential`（extension 会话，内存流转，`Cache-Control: no-store`）。
-- 远程登录部署约束：扩展侧配置的服务器账号必须具备 `admin` 角色；普通 `user` 角色可领取/回写指令，但无法读取平台账号凭据，登录会失败并提示检查服务器账号角色。
-- 服务器登录 token 存 storage 是**用户显式启用**后的选择（TTL 8h），popup 提供「停用远程登录」即清除 token；平台账号密码永不落 storage。
+- 扩展凭据来源改为后台批准的设备会话；不再配置服务器账号角色。配对 token 可调用自动化凭据出口，但不得调用后台 `credential-view`。
+- 配对 token 按扩展设备授权规格存 storage；Options/Setup 可重新请求授权，但不提供“停用远程登录”业务开关。平台账号密码永不落 storage。
 - `claimed_by` 存脱敏标识（如 `dev-<8位hex>`），不回显完整会话信息。
 - 管理 UI 创建/查看指令：admin 权限 + CSRF；extension 领取/回写：extension 会话 + claimed_by 归属校验。
 
@@ -91,17 +92,17 @@ CREATE INDEX IF NOT EXISTS login_commands_status_idx ON login_commands (status, 
 - 服务器（node --test）：
   - repository/service：创建、同账号 pending 去重 409、领取原子性（并发两笔只成功一笔）、租约超时回退、过期标记、回写成功/失败、非领取人回写 403。
   - routes：权限矩阵（admin 创建/列表、extension 领取/回写）、CSRF、401/403。
-  - UI 冒烟：页面含「远程登录」按钮（DOM 断言）。
+  - UI 冒烟：平台账号页不含“远程登录”与登录指令区；控制台含独立“一键登录”并创建统一 LOGIN。
 - 扩展（node --test，mock chrome.tabs/chrome.storage/fetch）：
   - poll：无指令 → 不发 AUTO_LOGIN；有指令 + 登录页 tab → 取凭据 → AUTO_LOGIN → 回写 success；无 tab → NO_TAB 回写；content 返回 NEEDS_HUMAN → failed 回写；已登录 → 幂等 success；单飞（执行中不重复领取）。
   - token 管理：过期 → 暂停轮询；停用开关 → 清 token。
 - 迁移：003 up/down 可往返。
-- 真实验收（闸门）：管理 UI 点「远程登录」→ 本机 Chrome 自动登录成功 → UI 显示成功。
+- 真实验收（闸门）：控制台点“一键登录”→ 本机 Edge 自动登录成功 → 统一任务 UI 显示成功。
 
 ## 10. 验收标准
 
-1. 管理 UI 对启用账号发起远程登录 → 本机浏览器自动登录成功 → UI 状态 success。
+1. 控制台对启用账号发起统一 LOGIN → 本机浏览器自动登录成功 → UI 状态 success。
 2. 同账号重复发起 → 409 提示已有未完成指令。
 3. 无浏览器 tab/未登录页 → failed(NO_TAB) 展示。
-4. 停用远程登录 → 轮询停止、token 清除、popup 明示。
+4. 设备撤销/授权过期 → 统一轮询停止；扩展 action 与 Options/Setup 明确回到未授权状态。
 5. 全程无凭据落 storage/git/vault；指令表不含账号密码。
