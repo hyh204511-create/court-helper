@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { assertCookieWrite, authenticateRequest } from '../auth/routes.ts';
 import { AuthService } from '../auth/service.ts';
 import type { ServerConfig } from '../config.ts';
+import type { BrowserCommandService } from '../browser-commands/service.ts';
 import {
   ForbiddenError,
   NotFoundError,
@@ -25,6 +26,7 @@ interface RegisterImportBatchOptions {
   authService: AuthService;
   config: ServerConfig;
   prefix: string;
+  browserCommandService?: BrowserCommandService;
 }
 
 interface MultipartFileData {
@@ -36,6 +38,9 @@ interface MultipartFileData {
 interface QueryParams {
   cursor?: unknown;
   limit?: unknown;
+  commandId?: unknown;
+  deviceId?: unknown;
+  claimToken?: unknown;
 }
 
 function route(prefix: string, path: string): string {
@@ -145,8 +150,12 @@ export function registerImportBatchRoutes(
   app: FastifyInstance,
   options: RegisterImportBatchOptions,
 ): void {
-  const { authService, config, prefix, service } = options;
+  const { authService, browserCommandService, config, prefix, service } = options;
   const protectedPreHandler = async (request: FastifyRequest) => requireAdminUiCookie(request, authService);
+  const extensionPreHandler = async (request: FastifyRequest) => {
+    await authenticateRequest(request, authService);
+    if (request.auth?.session.clientType !== 'extension') throw new ForbiddenError();
+  };
 
   app.post(route(prefix, '/import-batches'), { preHandler: protectedPreHandler }, async (request, reply) => {
     assertCookieWrite(request, authService, config);
@@ -178,4 +187,25 @@ export function registerImportBatchRoutes(
       .header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(importBatch.fileName)}`);
     return reply.send(stream);
   });
+
+  if (browserCommandService) {
+    app.get(route(prefix, '/import-batches/:id/extension-data'), { preHandler: extensionPreHandler }, async (request, reply) => {
+      const id = importBatchId(request);
+      const query = queryOf(request);
+      const headers = request.headers as Record<string, unknown>;
+      const commandId = typeof headers['x-browser-command-id'] === 'string' ? headers['x-browser-command-id'] : query.commandId;
+      const deviceId = typeof headers['x-browser-command-device'] === 'string' ? headers['x-browser-command-device'] : query.deviceId;
+      const claimToken = typeof headers['x-browser-command-claim'] === 'string' ? headers['x-browser-command-claim'] : query.claimToken;
+      if (typeof commandId !== 'string' || typeof deviceId !== 'string' || typeof claimToken !== 'string') {
+        throw new ValidationError([{ field: 'claim', code: 'required' }]);
+      }
+      await browserCommandService.authorizeExecutionData(commandId, id, deviceId, claimToken);
+      const result = await service.readExecutionData(id);
+      reply.header('cache-control', 'private, no-store');
+      return {
+        importBatchId: id,
+        rows: result.rows,
+      };
+    });
+  }
 }

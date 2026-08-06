@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 
 import {
   AppError,
+  ConflictError,
   DependencyUnavailableError,
   NotFoundError,
   PayloadTooLargeError,
@@ -46,6 +47,19 @@ export interface ImportBatchSummary {
   skippedRows: number;
 }
 
+export interface ImportBatchExecutionRow {
+  kind: 'li' | 'qz';
+  account: string;
+  plaintiff: string;
+  defendant: string;
+  status: string;
+  filedTime: string | null;
+  caseNumber: string | null;
+  rejectTime: string | null;
+  rejectReason: string | null;
+  queryTime: string | null;
+}
+
 function validation(code: string): ValidationError {
   return new ValidationError([{ field: 'file', code }]);
 }
@@ -85,6 +99,14 @@ async function storageDeleteCall(operation: () => Promise<void>): Promise<void> 
     if (error instanceof AppError) throw error;
     throw new DependencyUnavailableError();
   }
+}
+
+async function readStream(stream: NodeJS.ReadableStream): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream as AsyncIterable<Buffer | Uint8Array | string>) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
 }
 
 function fallbackFileName(now: Date): string {
@@ -305,6 +327,54 @@ export class ImportBatchService {
     const stream = await storageCall(() => this.storage.get(importBatch.objectKey));
     if (!stream) throw new NotFoundError('Import batch not found');
     return { importBatch, stream };
+  }
+
+  async readExecutionData(id: string): Promise<{ importBatch: ImportBatchRecord; rows: ImportBatchExecutionRow[] }> {
+    const importBatch = await this.get(id, { userId: 'extension' });
+    if (importBatch.expiresAt.getTime() <= this.clock().getTime()) {
+      throw new ConflictError('Import batch expired', 'IMPORT_BATCH_EXPIRED');
+    }
+    const stream = await storageCall(() => this.storage.get(importBatch.objectKey));
+    if (!stream) throw new NotFoundError('Import batch not found');
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await readStream(stream) as unknown as Parameters<typeof workbook.xlsx.load>[0], {
+      ignoreNodes: ['drawing', 'picture', 'legacyDrawing', 'legacyDrawingHF'],
+    });
+    const sheet = workbook.getWorksheet('Sheet1');
+    if (!sheet) throw validation('sheet_required');
+    const qzHeader = enforcementHeaderRow(sheet);
+    if (qzHeader === null) throw validation('enforcement_header_required');
+    const rows: ImportBatchExecutionRow[] = [];
+    const collect = (start: number, end: number, kind: 'li' | 'qz') => {
+      for (let row = start; row <= end; row += 1) {
+        const plaintiff = cellText(sheet.getCell(row, 1).value);
+        const account = cellText(sheet.getCell(row, 3).value);
+        if (!plaintiff && !account) continue;
+        if (!plaintiff || !account) continue;
+        const date = (column: number) => {
+          const value = sheet.getCell(row, column).value;
+          if (value instanceof Date) return value.toISOString().slice(0, 10);
+          const text = cellText(value);
+          const match = /^(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})日?$/.exec(text);
+          return match ? `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}` : null;
+        };
+        rows.push({
+          kind,
+          account,
+          plaintiff,
+          defendant: cellText(sheet.getCell(row, 2).value),
+          status: cellText(sheet.getCell(row, 5).value) || 'UNKNOWN',
+          filedTime: date(6),
+          caseNumber: cellText(sheet.getCell(row, 7).value) || null,
+          rejectTime: date(9),
+          rejectReason: cellText(sheet.getCell(row, 10).value) || null,
+          queryTime: date(12),
+        });
+      }
+    };
+    collect(2, qzHeader - 1, 'li');
+    collect(qzHeader + 1, sheet.rowCount, 'qz');
+    return { importBatch, rows };
   }
 }
 

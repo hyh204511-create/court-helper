@@ -206,6 +206,11 @@ export function registerBrowserCommandRoutes(
     };
   });
 
+  app.get(route(prefix, '/browser-commands/next'), { preHandler: extensionPreHandler }, async () => {
+    const page = await service.list({ status: 'pending', limit: 1 });
+    return { command: page.items[0] ? publicBrowserCommand(page.items[0]) : null };
+  });
+
   app.get(route(prefix, '/browser-commands/:id'), { preHandler: readPreHandler }, async (request) => {
     const context = contextOf(request);
     const requestedBy = context.user.role === 'admin' ? undefined : context.user.id;

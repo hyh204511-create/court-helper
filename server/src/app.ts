@@ -190,8 +190,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         service: loginCommandService,
       });
     }
+    let browserCommandService: BrowserCommandService | undefined;
     if (options.browserCommandRepository && options.importBatchRepository) {
-      const browserCommandService = new BrowserCommandService(
+      browserCommandService = new BrowserCommandService(
         options.browserCommandRepository,
         options.importBatchRepository,
         { now: clock },
@@ -272,6 +273,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         config,
         prefix: '/api/v1',
         service: importBatchService,
+        browserCommandService,
       });
     }
 

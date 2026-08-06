@@ -68,6 +68,11 @@ export interface BrowserCommandClaimResult {
   claimToken: string | null;
 }
 
+export interface BrowserCommandExecutionAccess {
+  command: BrowserCommandRecord;
+  importBatchId: string;
+}
+
 export interface BrowserCommandResultRequest {
   deviceId: unknown;
   claimToken: unknown;
@@ -445,6 +450,35 @@ export class BrowserCommandService {
 
   async complete(id: string, input: BrowserCommandResultRequest): Promise<BrowserCommandRecord> {
     return this.writeResult(id, input);
+  }
+
+  async authorizeExecutionData(
+    commandId: string,
+    importBatchId: string,
+    deviceId: string,
+    claimToken: string,
+  ): Promise<BrowserCommandExecutionAccess> {
+    assertUuid(commandId, 'commandId');
+    assertUuid(importBatchId, 'importBatchId');
+    assertNonEmptyString(deviceId, 'deviceId', 200);
+    assertNonEmptyString(claimToken, 'claimToken', 512);
+    const command = await this.get(commandId);
+    const claimHash = hashToken(claimToken);
+    if (
+      command.status !== 'executing'
+      || command.claimedBy !== deviceId
+      || command.claimTokenHash !== claimHash
+      || command.clientBatchId !== importBatchId
+      || !['QUERY_LI', 'QUERY_QZ'].includes(command.type)
+    ) {
+      throw new ForbiddenError('Browser command lease is not valid');
+    }
+    const batch = await this.importBatchRepository.findById(importBatchId);
+    if (!batch) throw new NotFoundError('Import batch not found');
+    if (batch.expiresAt.getTime() <= this.now().getTime()) {
+      throw new ConflictError('Import batch expired', 'IMPORT_BATCH_EXPIRED');
+    }
+    return { command, importBatchId };
   }
 
   async cancel(id: string, requestedBy: string): Promise<BrowserCommandRecord> {

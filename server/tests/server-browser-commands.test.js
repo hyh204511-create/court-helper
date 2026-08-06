@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { newDb } from 'pg-mem';
 
 import { buildApp, loadConfig } from '../src/app.ts';
@@ -9,6 +10,7 @@ import { MemoryAuthRepository } from '../src/auth/memory-repository.ts';
 import { MemoryPlatformAccountRepository } from '../src/platform-accounts/memory-repository.ts';
 import { runMigrations, rollbackLastMigration } from '../src/db/migrator.ts';
 import { MemoryImportBatchRepository } from '../src/import-batches/memory-repository.ts';
+import { MemoryStorageBackend } from '../src/storage/memory.ts';
 
 const TEST_KEY = Buffer.alloc(32, 73).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
@@ -139,6 +141,12 @@ async function makeApp(options = {}) {
   const browserCommands = new MemoryBrowserCommandRepository();
   const importBatchRepository = options.importBatchRepository
     ?? new MemoryImportBatchRepository([importBatchRecord()]);
+  const storageBackend = new MemoryStorageBackend();
+  await storageBackend.put(
+    `import-batches/${IMPORT_BATCH_ID}.xlsx`,
+    readFileSync(new URL('../../tests/fixtures/立案与强执查询表-脱敏模板.xlsx', import.meta.url)),
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  );
   const app = buildApp({
     config: config(),
     dependencies: {
@@ -149,6 +157,7 @@ async function makeApp(options = {}) {
     platformAccountRepository: platformAccounts,
     browserCommandRepository: browserCommands,
     importBatchRepository,
+    storageBackend,
     clock: () => new Date('2026-08-06T10:00:00.000Z'),
   });
   await app.ready();
@@ -208,6 +217,71 @@ async function postgres() {
   const pg = db.adapters.createPg();
   return { db, pool: new pg.Pool() };
 }
+
+test('extension pending feed and execution-data lease authorization are claimant bound', async () => {
+  const { app } = await makeApp();
+  const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
+  const extensionToken = await loginExtension(app);
+  const created = await createCommand(app, admin, '/api/v1', {
+    type: 'QUERY_LI',
+    importBatchId: IMPORT_BATCH_ID,
+    payload: {},
+  });
+  assert.equal(created.statusCode, 201);
+  const commandId = created.json().command.id;
+
+  const next = await app.inject({
+    method: 'GET',
+    url: '/api/v1/browser-commands/next',
+    headers: { authorization: `Bearer ${extensionToken}`, origin: 'chrome-extension://test-extension' },
+  });
+  assert.equal(next.statusCode, 200);
+  assert.equal(next.json().command.id, commandId);
+
+  const claim = await app.inject({
+    method: 'POST',
+    url: `/api/v1/browser-commands/${commandId}/claim`,
+    headers: { authorization: `Bearer ${extensionToken}`, origin: 'chrome-extension://test-extension' },
+    payload: { deviceId: 'device-bound-test' },
+  });
+  assert.equal(claim.statusCode, 200);
+  const { claimToken } = claim.json();
+  const executionData = await app.inject({
+    method: 'GET',
+    url: `/api/v1/import-batches/${IMPORT_BATCH_ID}/extension-data?commandId=${commandId}&deviceId=device-bound-test&claimToken=${encodeURIComponent(claimToken)}`,
+    headers: { authorization: `Bearer ${extensionToken}`, origin: 'chrome-extension://test-extension' },
+  });
+  assert.equal(executionData.statusCode, 200);
+  assert.match(executionData.headers['cache-control'], /no-store/);
+  assert.ok(executionData.json().rows.length > 0);
+  assert.equal(executionData.json().rows.some((row) => Object.hasOwn(row, 'password')), false);
+
+  const stranger = await app.inject({
+    method: 'GET',
+    url: `/api/v1/import-batches/${IMPORT_BATCH_ID}/extension-data?commandId=${commandId}&deviceId=other-device&claimToken=${encodeURIComponent(claimToken)}`,
+    headers: { authorization: `Bearer ${extensionToken}`, origin: 'chrome-extension://test-extension' },
+  });
+  assert.equal(stranger.statusCode, 403);
+  const { BrowserCommandService } = await browserModule();
+  assert.equal(typeof BrowserCommandService, 'function');
+  const { service } = await makeService();
+  const unitCommand = await service.create(commandInput('QUERY_LI', { payload: {} }));
+  const unitClaim = await service.claim(unitCommand.id, 'device-bound-test');
+  await assert.doesNotReject(() => service.authorizeExecutionData(
+    unitCommand.id,
+    IMPORT_BATCH_ID,
+    'device-bound-test',
+    unitClaim.claimToken,
+  ));
+  await assert.rejects(() => service.authorizeExecutionData(
+    unitCommand.id,
+    IMPORT_BATCH_ID,
+    'other-device',
+    unitClaim.claimToken,
+  ), /lease is not valid/i);
+  assert.equal(typeof claimToken, 'string');
+  await app.close();
+});
 
 test('005 browser command migration creates a reversible secure queue and keeps login_commands', async () => {
   const { pool } = await postgres();
