@@ -82,7 +82,7 @@ function invoke(listener, message) {
   } };
 }
 
-test("popup 配对状态请求会从持久化的设备授权状态恢复", async () => {
+test("Options/Setup 配对状态请求会从持久化的设备授权状态恢复", async () => {
   const loaded = await loadWorker({
     storageData: {
       serverUrl: "http://127.0.0.1:3000",

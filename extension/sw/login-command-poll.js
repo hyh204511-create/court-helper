@@ -285,7 +285,7 @@ export function createLoginCommandPoller({
   }
 
   async function enable() {
-    // The old flow traded a password supplied to the popup for an extension token.
+    // The retired password-based flow traded a server password for an extension token.
     // Tokens are now minted only through explicit administrator device pairing.
     return { ok: false, reason: "PAIRING_REQUIRED" };
   }

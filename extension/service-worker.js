@@ -4,14 +4,10 @@ import { createRemoteClient } from "./data/remote-client.js";
 import { createSyncCoordinator } from "./data/sync-coordinator.js";
 import { createDebuggerDriver } from "./sw/debugger-driver.js";
 import {
-  DISABLE_REMOTE_LOGIN,
-  ENABLE_REMOTE_LOGIN,
-  REMOTE_LOGIN_STATUS_REQUEST,
-} from "./sw/login-command-poll.js";
-import {
   BROWSER_COMMAND_ALARM_NAME,
   createBrowserCommandPoller,
 } from "./sw/browser-command-poll.js";
+import { routeExtensionAction } from "./sw/action-router.js";
 import {
   EXTENSION_PAIRING_ALARM_NAME,
   EXTENSION_PAIRING_REQUEST,
@@ -211,6 +207,12 @@ if (globalThis.chrome?.runtime?.onInstalled?.addListener) {
   });
 }
 
+if (globalThis.chrome?.action?.onClicked?.addListener) {
+  chrome.action.onClicked.addListener(() => {
+    routeExtensionAction().catch(() => chrome.runtime.openOptionsPage?.());
+  });
+}
+
 if (globalThis.chrome?.alarms?.onAlarm?.addListener) {
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm?.name === BROWSER_COMMAND_ALARM_NAME) browserCommandPoller.pollOnce().catch(() => {});
@@ -302,28 +304,6 @@ function handleSyncRetry(sendResponse) {
   return true;
 }
 
-function handleRemoteLoginMessage(message, sendResponse) {
-  if (message?.type === ENABLE_REMOTE_LOGIN) {
-    sendResponse({ ok: false, reason: "PAIRING_REQUIRED" });
-    return false;
-  }
-  if (message?.type === DISABLE_REMOTE_LOGIN) {
-    extensionPairer.disable()
-      .then(() => {
-        browserCommandPoller.stop();
-        return { ok: true, status: "stopped", enabled: false };
-      })
-      .then((response) => sendResponse({ ...response, status: "stopped", enabled: false }))
-      .catch(() => sendResponse({ ok: false, status: "stopped", enabled: false }));
-    return true;
-  }
-  if (message?.type === REMOTE_LOGIN_STATUS_REQUEST) {
-    sendResponse({ ok: true, ...extensionPairer.getStatus() });
-    return false;
-  }
-  return false;
-}
-
 function handleExtensionPairingMessage(message, sendResponse) {
   if (message?.type === EXTENSION_PAIRING_STATUS_REQUEST) {
     extensionPairer.resume()
@@ -345,9 +325,7 @@ if (globalThis.chrome?.runtime?.onMessage?.addListener) {
     if (debuggerDriver.canHandle(message)) {
       return debuggerDriver.handleMessage(message, sender, sendResponse);
     }
-    if (message?.type !== ENABLE_REMOTE_LOGIN && message?.type !== DISABLE_REMOTE_LOGIN) {
-      wakeBrowserCommandPoller({ immediate: true });
-    }
+    wakeBrowserCommandPoller({ immediate: true });
     // AUTO_LOGIN 只在 content script 处理，service worker 不接收、不转发、不持久化。
     if (message?.type === "AUTO_LOGIN") return false;
     if (handleExtensionPairingMessage(message, sendResponse)) return true;
@@ -366,9 +344,6 @@ if (globalThis.chrome?.runtime?.onMessage?.addListener) {
       handleExportUpload(message)
         .then((response) => sendResponse(response))
         .catch(() => sendResponse({ ok: false, code: "REMOTE_ERROR" }));
-      return true;
-    }
-    if (handleRemoteLoginMessage(message, sendResponse)) {
       return true;
     }
     const response = handleMessage(message);

@@ -276,7 +276,7 @@ export function observeLoginState({ root = document, view = window, refresh = re
   return disconnect;
 }
 
-/** 面板导入：文件 → 解析 → 入库（同 popup 逻辑，toast 展示摘要） */
+/** 历史面板导入执行器：文件 → 解析 → 入库；统一命令迁移后仅保留底层兼容能力。 */
 async function handlePanelImport(file) {
   const buffer = await file.arrayBuffer();
   const result = await importXlsx(buffer);
@@ -362,7 +362,7 @@ function initPanel() {
   window.addEventListener("hashchange", refreshPanelLogin);
 }
 
-// —— 页面内进度提示（轻量，不依赖 popup 打开） ——
+// —— 页面内状态型浮动面板进度提示 ——
 let _toastTimer = null;
 function showToast(text, ms = 4000) {
   let el = document.getElementById("court-helper-toast");

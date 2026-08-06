@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>连接后台 · 法院查询助手</title>
+    <link rel="stylesheet" href="setup.css">
+    <script type="module" src="setup.js" defer></script>
+  </head>
+  <body>
+    <main class="setup-shell">
+      <section class="registry-card" aria-labelledby="setup-title">
+        <div class="registry-mark" aria-hidden="true"><span>CH</span></div>
+        <div class="registry-copy">
+          <p class="eyebrow">Court Helper / Device Registry</p>
+          <h1 id="setup-title">连接内部控制台</h1>
+          <p class="lede">配置本机后台地址并发起一次性设备配对。授权完成后，扩展图标将直接打开统一控制台。</p>
+        </div>
+
+        <form id="setup-form" class="setup-form">
+          <label for="server-url">后台服务地址</label>
+          <div class="address-row">
+            <input id="server-url" name="serverUrl" type="url" inputmode="url" autocomplete="url" required spellcheck="false">
+            <button id="request-authorization" type="submit">请求后台授权</button>
+          </div>
+          <p class="boundary-note">仅允许本机 <code>127.0.0.1:3000</code>，不接收用户名、密码或访问令牌。</p>
+        </form>
+
+        <section class="authorization" aria-labelledby="authorization-title">
+          <div>
+            <p class="eyebrow">Pairing Status</p>
+            <h2 id="authorization-title">设备授权状态</h2>
+            <p id="authorization-status" data-state="loading" aria-live="polite">正在读取授权状态…</p>
+          </div>
+          <output id="verification-code" aria-label="六位核对码" hidden></output>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

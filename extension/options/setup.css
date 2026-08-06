@@ -1,0 +1,183 @@
+:root {
+  color: #18252f;
+  background: #e9e4da;
+  font-family: "Noto Serif SC", "Songti SC", Georgia, serif;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    linear-gradient(90deg, rgba(16, 42, 67, .035) 1px, transparent 1px) 0 0 / 28px 28px,
+    linear-gradient(rgba(16, 42, 67, .035) 1px, transparent 1px) 0 0 / 28px 28px,
+    radial-gradient(circle at 12% 8%, rgba(185, 128, 48, .2), transparent 34rem),
+    #e9e4da;
+}
+
+.setup-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: clamp(24px, 7vw, 88px);
+}
+
+.registry-card {
+  position: relative;
+  width: min(860px, 100%);
+  overflow: hidden;
+  border: 1px solid rgba(16, 42, 67, .22);
+  background: rgba(255, 253, 248, .94);
+  box-shadow: 0 30px 80px rgba(9, 28, 46, .16);
+}
+
+.registry-card::before {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 7px;
+  background: linear-gradient(90deg, #102a43 0 72%, #b98030 72%);
+  content: "";
+}
+
+.registry-mark {
+  position: absolute;
+  top: 42px;
+  right: 46px;
+  width: 82px;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(185, 128, 48, .7);
+  border-radius: 50%;
+  color: #b98030;
+  font: 700 21px/1 Georgia, serif;
+  letter-spacing: .14em;
+}
+
+.registry-mark::after {
+  position: absolute;
+  inset: 7px;
+  border: 1px solid rgba(185, 128, 48, .35);
+  border-radius: inherit;
+  content: "";
+}
+
+.registry-copy,
+.setup-form,
+.authorization { padding-inline: clamp(28px, 7vw, 74px); }
+
+.registry-copy { padding-top: 72px; padding-bottom: 38px; max-width: 700px; }
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: #9a6927;
+  font: 700 11px/1.2 "Segoe UI", sans-serif;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+}
+
+h1, h2 { margin: 0; color: #102a43; font-weight: 650; letter-spacing: -.025em; }
+h1 { max-width: 540px; font-size: clamp(34px, 6vw, 58px); line-height: 1.08; }
+h2 { font-size: 22px; }
+
+.lede {
+  max-width: 610px;
+  margin: 22px 0 0;
+  color: #56636c;
+  font: 400 16px/1.8 "Noto Sans SC", "Microsoft YaHei", sans-serif;
+}
+
+.setup-form {
+  padding-top: 30px;
+  padding-bottom: 34px;
+  border-block: 1px solid #ded7ca;
+  background: #f7f3eb;
+}
+
+.setup-form label {
+  display: block;
+  margin-bottom: 10px;
+  color: #243746;
+  font: 700 13px/1.2 "Noto Sans SC", "Microsoft YaHei", sans-serif;
+}
+
+.address-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+
+input, button { font: 600 14px/1.2 "Noto Sans SC", "Microsoft YaHei", sans-serif; }
+
+input {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid #b9b2a5;
+  border-radius: 2px;
+  color: #102a43;
+  background: #fffdf8;
+}
+
+input[aria-invalid="true"] { border-color: #a9423a; box-shadow: 0 0 0 3px rgba(169, 66, 58, .12); }
+
+button {
+  padding: 14px 22px;
+  border: 1px solid #102a43;
+  border-radius: 2px;
+  color: #fffdf8;
+  background: #102a43;
+  cursor: pointer;
+  transition: transform .16s ease, background .16s ease;
+}
+
+button:hover { transform: translateY(-1px); background: #173c5d; }
+button:disabled { cursor: wait; opacity: .55; transform: none; }
+button:focus-visible, input:focus-visible { outline: 3px solid rgba(185, 128, 48, .38); outline-offset: 3px; }
+
+.boundary-note {
+  margin: 12px 0 0;
+  color: #6a706f;
+  font: 400 12px/1.6 "Noto Sans SC", "Microsoft YaHei", sans-serif;
+}
+
+code { color: #7f571f; font-family: Consolas, monospace; }
+
+.authorization {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 30px;
+  padding-top: 34px;
+  padding-bottom: 44px;
+}
+
+#authorization-status {
+  margin: 10px 0 0;
+  color: #56636c;
+  font: 500 14px/1.6 "Noto Sans SC", "Microsoft YaHei", sans-serif;
+}
+
+#authorization-status[data-state="authorized"] { color: #27634f; }
+#authorization-status[data-state="rejected"], #authorization-status[data-state="invalid"] { color: #943b35; }
+
+#verification-code {
+  min-width: 180px;
+  padding: 18px 20px;
+  border: 1px solid #b98030;
+  color: #102a43;
+  background: #f3dfb5;
+  font: 700 clamp(25px, 4vw, 38px)/1 Georgia, serif;
+  letter-spacing: .22em;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .registry-mark { position: relative; top: auto; right: auto; margin: 52px 28px 0 auto; }
+  .registry-copy { padding-top: 24px; }
+  .address-row, .authorization { grid-template-columns: 1fr; }
+  button { width: 100%; }
+  #verification-code { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; transition: none !important; }
+}

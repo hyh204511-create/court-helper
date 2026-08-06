@@ -1,4 +1,4 @@
-// 消息路由纯逻辑（可单测；service-worker 与 popup 共用）
+// 消息路由纯逻辑（可单测；service-worker 与 content 执行链共用）
 export const VERSION = "0.1.0";
 const LOGIN_STATES = new Set(["login", "logged-in", "session-expired", "unknown"]);
 const SYNC_STATES = new Set(["disabled", "idle", "syncing", "online", "offline", "paused", "error"]);
