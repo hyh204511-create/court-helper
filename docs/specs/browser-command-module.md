@@ -1,0 +1,136 @@
+# 规格：browser-command-module（后台唯一业务入口与扩展执行代理）
+
+> 版本：0.1 ｜ 状态：已确认、待实现 ｜ 依据：用户明确要求“popup 全部功能转到后台并移除”；现有 login-command-bridge、server-module、app-module、panel-module、report-export-module
+
+## 1. 目标与最终职责
+
+本模块把法院抓取业务入口统一到同源后台管理页，移除 popup 业务界面。后台只负责创建任务、展示状态和下载结果；浏览器扩展只负责在用户已打开的真实法院标签页执行页面动作。
+
+```text
+后台管理页（唯一业务入口）
+→ browser_commands 指令
+→ 扩展 Service Worker 轮询/领取
+→ 真实法院标签页 content script 执行
+→ 扩展回写稳定结果
+→ 后台展示进度/结果
+```
+
+- popup 不再作为业务入口；最终从 manifest 移除 `action.default_popup`，popup 文件及专用调用链删除或迁移后归档。
+- 法院页面浮动面板仅保留实时状态、进度和人工接管提示，不保留第二套完整导入/查询/导出业务入口。
+- 后台不能直接调用法院登录 API，不能直接读取法院 DOM；所有平台动作必须由扩展在真实标签页完成。
+
+## 2. 业务指令模型
+
+新增 PostgreSQL 表 `browser_commands`（迁移 005）：
+
+| 字段 | 约束/含义 |
+|---|---|
+| `id` | UUID 主键 |
+| `type` | `LOGIN` / `QUERY_LI` / `QUERY_QZ` / `EXPORT_REPORT` |
+| `status` | `pending` / `executing` / `succeeded` / `failed` / `expired` / `manual_required` / `cancelled` |
+| `platform_account_id` | 可空 FK `platform_accounts(id)`；查询/登录任务引用目标平台账号 |
+| `client_batch_id` | 可空，扩展本地批次/模板基线的稳定标识 |
+| `requested_by` | FK `users(id)` |
+| `claimed_by` | 扩展 device id，非空时只允许该设备回写 |
+| `claim_token_hash` | 只存摘要，不存明文领取令牌 |
+| `payload` | JSON；仅允许任务类型所需的非敏感参数，不得含密码、验证码、完整案号、当事人明文或截图 |
+| `result_code` | 稳定枚举，如 `SUCCESS`、`NO_COURT_TAB`、`SESSION_EXPIRED`、`EXECUTION_TAB_REQUIRED`、`SELECTOR_CHANGED`、`NEEDS_HUMAN` |
+| `result_summary` | 可安全展示的短摘要，不含平台响应正文或业务明文 |
+| `created_at/updated_at/expires_at` | `timestamptz` |
+
+- 同一平台账号同时最多一个 `pending`/`executing` 活动任务；重复创建返回 `409 DUPLICATE_PENDING`。
+- 领取与回写必须幂等；错误 claimant 回写返回 `403 FORBIDDEN`，已完成任务重复回写返回原终态。
+- 旧 `login_commands` 在迁移期间保留兼容；本模块不直接删除旧表。
+
+## 3. 指令类型契约
+
+### `LOGIN`
+
+- 后台只提交 `platformAccountId`。
+- 扩展领取后：检查法院登录页标签 → 取平台凭据 → content 执行既有 `AUTO_LOGIN` → OCR/可信点击链路不变 → 回写成功或稳定失败码。
+- 密码只在服务器凭据出口到扩展运行时内存链路流转，不进入 command payload、storage、日志或后台 HTML。
+
+### `QUERY_LI` / `QUERY_QZ`
+
+- 后台选择查询类型、目标平台账号和客户端批次引用，扩展领取后检查：法院标签存在、当前登录、账号匹配、路由合法。
+- `QUERY_LI` 允许网上立案列表与我的案件列表。
+- `QUERY_QZ` 当前页面可见行不存在执行类 `caseType` 时，必须回写 `EXECUTION_TAB_REQUIRED`，不得继续执行、不得自动切 tab。
+- 扩展继续复用既有 `START_BATCH`、`runBatch`、状态识别、截图、节流（3–8 秒/案、单批 50、重试 1）。
+- 查询结果经既有 sync/outbox 上传；未知状态保持 `UNKNOWN + needsHuman=true`。
+
+### `EXPORT_REPORT`
+
+- 扩展从 IndexedDB 读取既有 `cases`/`enforcementCases`，复用 `xlsx-io.js` 生成工作簿。
+- 保持本地下载；随后复用 `EXPORT_UPLOAD` base64 交接上传服务器，后台 `report_exports` 记录可再次下载。
+- 服务器不生成 Excel，不接收密码列以外的未授权真实模板数据；报表文件按 report-export-module 保护。
+
+## 4. REST 契约（`/api/v1`）
+
+除健康检查和登录外均需有效会话：
+
+| 方法 | 路径 | 角色 | 契约 |
+|---|---|---|---|
+| `POST` | `/browser-commands` | admin,user | 创建任务；类型/参数严格校验；返回 `{command}`；同账号活动任务返回 409 |
+| `GET` | `/browser-commands` | admin,user | 后台列表；admin 全部，user 仅本人创建；支持 `status/type/limit/cursor` |
+| `GET` | `/browser-commands/:id` | admin,user | 详情；user 仅本人，否则 404 |
+| `POST` | `/browser-commands/:id/claim` | extension | `{deviceId}` 领取；返回一次性 claim token（只在响应出现，不落库） |
+| `POST` | `/browser-commands/:id/result` | extension | `{deviceId,claimToken,status,resultCode,resultSummary,progress}`；必须 claimant；敏感字段拒绝 |
+| `POST` | `/browser-commands/:id/cancel` | admin,user | 创建者可取消 pending/executing；已终态幂等返回 |
+
+- 路径 UUID 与 cursor UUID 在路由边界校验；非法输入返回稳定 400/404，不触发数据库 cast 错误。
+- 响应不含密码、验证码、token 原文、对象键、平台原始响应或完整业务明文。
+- 后台轮询 3–5 秒；页面隐藏时停止/退避；旧数据不能标成最新。
+
+## 5. 权限矩阵
+
+| 能力 | admin | user | extension |
+|---|:---:|:---:|:---:|
+| 创建 LOGIN/QUERY/EXPORT | ✓ | ✓ | — |
+| 查看本人任务 | ✓ | ✓ | — |
+| 查看全部任务 | ✓ | — | — |
+| 领取/回写任务 | — | — | 有效 extension 会话 + claimant |
+| 取消本人任务 | ✓ | ✓ | — |
+| 取平台凭据 | 按既有 credential 契约 | 按既有 credential 契约 | 仅有效 extension 会话 |
+
+## 6. 后台页面
+
+新增或合并 `/admin/browser-control`：
+
+- 浏览器连接状态：由扩展心跳/最近回写推断；未知必须显示“未确认”，不得伪造已连接。
+- 法院标签状态、登录态、脱敏当前账号。
+- 平台账号选择、`远程登录`、`开始立案查询`、`开始强执查询`、`导出报表`。
+- 当前任务与历史任务：状态、进度、失败码、待人工原因、取消/重试。
+- 导入模板：优先由扩展本地读取真实文件，后台只创建批次引用和显示脱敏摘要；禁止未经规格批准把真实模板明文写入服务器。
+- 报表导出记录继续使用既有 `/admin/report-exports`；业务入口从后台控制台发起。
+
+## 7. 扩展与页面边界
+
+- Service Worker 统一轮询 `browser_commands`；可暂时兼容旧 `login_commands`，完成迁移后再删除兼容层。
+- content script 只接受来自扩展消息路由的已校验动作；不接受网页脚本直接创建任务。
+- 浮动面板不得显示完整账号、案号、当事人、身份证号、密码、驳回原因；只显示脱敏状态、进度和稳定错误码。
+- Chrome 重启、扩展重载、SW 休眠、法院标签关闭时，后台显示未连接/待人工，不伪造成功。
+
+## 8. 测试与验收门槛
+
+### 自动测试
+
+- server：迁移可重复、角色隔离、重复创建、领取/claimant、回写幂等、过期/取消、UUID/cursor 校验、payload 敏感字段拒绝。
+- extension：无法院标签、未登录、账号不匹配、LOGIN、QUERY_LI、QUERY_QZ 执行 tab 门禁、EXPORT_REPORT、claimant 回写、SW 配置重建。
+- admin：控制台加载、按钮创建指令、任务轮询、隐藏页退避、错误/取消/重试、安全显示。
+- manifest：无 `default_popup`；不存在 popup 业务引用；扩展仍能注入法院页面和运行 SW。
+
+### 真实验收
+
+1. 后台点击远程登录，真实法院登录页完成既有 OCR + trusted click 并回写结果。
+2. 后台创建立案查询，真实页面执行并回写结果/截图。
+3. 后台创建强执查询，非执行 tab 返回 `EXECUTION_TAB_REQUIRED`，执行 tab 才执行。
+4. 后台发起导出，后台记录出现且下载 SHA256 与扩展生成文件一致。
+5. popup 已移除；扩展 action、后台、法院页面链路正常。
+6. 服务器严格使用 `courthelper` 库，`assistant` 库无任何 court-helper 表/序列/迁移对象。
+
+## 9. 范围外
+
+- 不做后台直接调用法院平台 API。
+- 不做多浏览器、多租户、SSE/WebSocket、无限重试、离线伪成功。
+- 不在本模块中删除旧 `login_commands` 表；待 browser_commands 真实验收和兼容窗口结束后另立迁移任务。
+- 不把真实模板、密码、截图、案号或当事人明文写入 Vault/Git/日志。
