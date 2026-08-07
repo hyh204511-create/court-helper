@@ -281,7 +281,6 @@ async function handleExportUpload(message) {
       blob: new Blob([bytes], { type: message?.mime || XLSX_MIME }),
       fileName: message?.fileName,
       sha256: message?.sha256,
-      clientExportId: message?.clientExportId,
     });
     return {
       ok: true,

@@ -112,6 +112,23 @@ test("AUTO_LOGIN 非登录路由先拒绝，不触碰 DOM/fetch，且不回传 p
   cleanup(dom);
 });
 
+test("EXPORT_REPORT 在非允许列表路由先拒绝，不下载或上传", async () => {
+  const { dom, chrome, listener } = await loadContent({ hash: "#/pagesWsla/pc/history/list/index" });
+  let sent = 0;
+  chrome.runtime.sendMessage = async () => { sent += 1; return { ok: true }; };
+  try {
+    const result = await dispatch(listener, {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "EXPORT_REPORT",
+    });
+    assert.equal(result.returnValue, true);
+    assert.deepEqual(result.response, { ok: false, error: "PAGE_NOT_LIST" });
+    assert.equal(sent, 0);
+  } finally {
+    cleanup(dom);
+  }
+});
+
 test("AUTO_LOGIN 登录路由异步响应成功，并只执行页面表单操作", async () => {
   const { dom, chrome, listener } = await loadContent({
     hash: "#/pagesGrxx/pc/login/index",

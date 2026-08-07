@@ -35,7 +35,7 @@ interface QueryParams {
   limit?: unknown;
 }
 
-const FIELD_NAMES = new Set(['sha256', 'clientExportId']);
+const FIELD_NAMES = new Set(['sha256']);
 
 function route(prefix: string, path: string): string {
   return `${prefix}${path}`;

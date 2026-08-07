@@ -1,5 +1,5 @@
 import { createRemoteClient } from "../data/remote-client.js";
-import { isLoginRoute } from "../content/login-detector.js";
+import { isCourtListRoute, isLoginRoute } from "../content/login-detector.js";
 
 export const BROWSER_COMMAND_ALARM_NAME = "browser-command-poll";
 export const BROWSER_COMMAND_ALARM_PERIOD_MINUTES = 1;
@@ -23,7 +23,7 @@ function courtTab(tabs, commandType) {
     try {
       const url = new URL(tab.url);
       if (url.hostname !== "zxfw.court.gov.cn") return false;
-      return commandType === "LOGIN" ? isLoginRoute(url.hash) : !isLoginRoute(url.hash);
+      return commandType === "LOGIN" ? isLoginRoute(url.hash) : isCourtListRoute(url.hash);
     } catch {
       return false;
     }
@@ -31,6 +31,16 @@ function courtTab(tabs, commandType) {
 }
 
 function resultFor(response) {
+  if (response?.status === "uploaded") {
+    return { status: "succeeded", resultCode: "SUCCESS", resultSummary: "报表已上传服务器" };
+  }
+  if (response?.status === "not_configured") {
+    return { status: "manual_required", resultCode: "NOT_CONFIGURED", resultSummary: "本地文件已保存，服务器未配置" };
+  }
+  if (response?.status === "failed") {
+    const code = /^[A-Z][A-Z0-9_]{0,63}$/.test(response?.code ?? "") ? response.code : "UPLOAD_FAILED";
+    return { status: "manual_required", resultCode: code, resultSummary: "本地文件已保存，上传失败" };
+  }
   if (response?.ok === true) {
     return { status: "succeeded", resultCode: "SUCCESS", resultSummary: "任务已完成" };
   }

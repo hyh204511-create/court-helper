@@ -6,6 +6,10 @@
 import { SELECTORS } from "./selectors.js";
 
 const LOGIN_STATES = new Set(["login", "logged-in", "session-expired", "unknown"]);
+const COURT_LIST_ROUTES = new Set([
+  "#/pagesWsla/pc/list/index",
+  "#/pages/pc/case-list/index",
+]);
 
 /** 账号脱敏：保留最小可辨识前后片段，不返回完整身份证/统一社会信用代码。 */
 export function maskAccount(account) {
@@ -32,6 +36,12 @@ export function isLoginRoute(hash = "") {
   const value = typeof hash === "string" ? hash : "";
   const prefix = SELECTORS.route.login;
   return value === prefix || value.startsWith(`${prefix}/`) || value.startsWith(`${prefix}?`);
+}
+
+/** 仅允许规格列出的两条法院案件列表路由；忽略其 query 参数。 */
+export function isCourtListRoute(hash = "") {
+  const value = typeof hash === "string" ? hash : "";
+  return COURT_LIST_ROUTES.has(value.split("?", 1)[0]);
 }
 
 /**

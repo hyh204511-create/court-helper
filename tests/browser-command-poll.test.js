@@ -96,6 +96,82 @@ test("browser command poller reports NO_COURT_TAB without dispatching content", 
   assert.equal(resultBody.status, "failed");
 });
 
+test("report command rejects detail and similarly named routes before content execution", async () => {
+  const command = { id: "00000000-0000-4000-8000-000000000405", type: "EXPORT_REPORT" };
+  const chromeApi = chromeMock(async () => assert.fail("content must not be called"));
+  chromeApi.tabs.query = async () => [
+    { id: 7, url: "https://zxfw.court.gov.cn/#/pagesWsla/pc/history/list/index" },
+    { id: 8, url: "https://zxfw.court.gov.cn/#/pagesWsla/pc/detail/index" },
+  ];
+  let resultBody;
+  const fetchImpl = async (url, init = {}) => {
+    if (String(url).endsWith("/browser-commands/next")) return response({ command });
+    if (String(url).endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim" });
+    if (String(url).endsWith(`/browser-commands/${command.id}/result`)) {
+      resultBody = JSON.parse(init.body);
+      return response({ command: { status: "failed" } });
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+
+  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl }).pollOnce();
+  assert.equal(result.error, "NO_COURT_TAB");
+  assert.equal(resultBody.resultCode, "NO_COURT_TAB");
+  assert.equal(resultBody.status, "failed");
+});
+
+test("报表命令回写区分服务器上传成功、未配置与失败", async () => {
+  const reportResponses = [
+    {
+      contentResponse: { status: "uploaded", exportId: "export-1" },
+      expectedResult: { status: "succeeded", resultCode: "SUCCESS", resultSummary: "报表已上传服务器" },
+    },
+    {
+      contentResponse: { status: "not_configured", code: "NOT_CONFIGURED" },
+      expectedResult: { status: "manual_required", resultCode: "NOT_CONFIGURED", resultSummary: "本地文件已保存，服务器未配置" },
+    },
+    {
+      contentResponse: { status: "failed", code: "NETWORK_UNAVAILABLE" },
+      expectedResult: { status: "manual_required", resultCode: "NETWORK_UNAVAILABLE", resultSummary: "本地文件已保存，上传失败" },
+    },
+  ];
+
+  for (const { contentResponse, expectedResult } of reportResponses) {
+    const command = {
+      id: "00000000-0000-4000-8000-000000000404",
+      type: "EXPORT_REPORT",
+    };
+    let resultBody;
+    const chromeApi = chromeMock(async (_tabId, message) => {
+      assert.deepEqual(message, {
+        type: "BROWSER_COMMAND_EXECUTE",
+        commandType: "EXPORT_REPORT",
+      });
+      return contentResponse;
+    });
+    const fetchImpl = async (url, init = {}) => {
+      if (String(url).endsWith("/browser-commands/next")) return response({ command });
+      if (String(url).endsWith(`/browser-commands/${command.id}/claim`)) {
+        return response({ command, claimToken: "claim-report" });
+      }
+      if (String(url).endsWith(`/browser-commands/${command.id}/result`)) {
+        resultBody = JSON.parse(init.body);
+        return response({ command: { status: "succeeded" } });
+      }
+      throw new Error(`unexpected ${url}`);
+    };
+
+    const result = await createBrowserCommandPoller({ chromeApi, fetchImpl }).pollOnce();
+    assert.equal(result.commandId, command.id, contentResponse.status);
+    assert.deepEqual(resultBody, {
+      deviceId: "device-test",
+      claimToken: "claim-report",
+      ...expectedResult,
+      progress: null,
+    }, contentResponse.status);
+  }
+});
+
 test("browser command polling depends on a valid device token, not the legacy remote-login switch", async () => {
   const chromeApi = chromeMock(async () => ({ ok: true }));
   const stored = await chromeApi.storage.local.get();

@@ -17,6 +17,7 @@ import {
   detectLoginState,
   detectLoginStateWhenStable,
   getCurrentAccount,
+  isCourtListRoute,
   isLoginRoute,
 } from "./login-detector.js";
 import { doAutoLogin } from "./login-auto.js";
@@ -31,7 +32,7 @@ import * as db from "../data/db.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const isDetailPage = () => location.hash.includes("wsla/detail");
-const isListPage = () => location.hash.includes("list/index");
+const isListPage = () => isCourtListRoute(location.hash);
 
 // —— 网页浮动面板（panel-module 规格） ——
 let _panel = null;
@@ -595,6 +596,7 @@ async function executeBrowserCommand(message) {
     return startBatch(kind);
   }
   if (message.commandType === "EXPORT_REPORT") {
+    ensureListReady();
     return handlePanelExport();
   }
   return { ok: false, error: "UNSUPPORTED_COMMAND" };

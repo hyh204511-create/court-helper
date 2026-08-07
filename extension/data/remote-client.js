@@ -207,18 +207,14 @@ export function createRemoteClient(options = {}) {
     });
   }
 
-  async function uploadReportExport({ blob, fileName, sha256, clientExportId } = {}) {
+  async function uploadReportExport({ blob, fileName, sha256 } = {}) {
     if (!blob) throw new TypeError("report export blob required");
     const form = new FormData();
     form.set("sha256", String(sha256 ?? ""));
-    if (clientExportId !== undefined && clientExportId !== null && String(clientExportId) !== "") {
-      form.set("clientExportId", String(clientExportId));
-    }
     form.set("file", blob, String(fileName || "report.xlsx"));
     return request("/report-exports", {
       method: "POST",
       body: form,
-      idempotencyKey: clientExportId,
     });
   }
 

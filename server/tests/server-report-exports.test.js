@@ -239,6 +239,12 @@ test('report export validation rejects malformed multipart files and oversized p
     assert.equal(invalidHash.statusCode, 400);
     assert.equal(invalidHash.json().error.details[0].code, 'sha256_invalid');
 
+    const legacyClientExportId = await upload(app, token, uploadPayload(XLSX_FIXTURE, {
+      clientExportId: 'client-export-1',
+    }));
+    assert.equal(legacyClientExportId.statusCode, 400);
+    assert.equal(legacyClientExportId.json().error.details[0].code, 'unknown_field');
+
     const missingFile = await upload(app, token, multipart({ sha256: 'a'.repeat(64) }));
     assert.equal(missingFile.statusCode, 400);
     assert.equal(missingFile.json().error.details[0].code, 'file_required');
