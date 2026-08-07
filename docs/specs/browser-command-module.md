@@ -1,7 +1,8 @@
 # 规格：browser-command-module（后台唯一业务入口与扩展执行代理）
 
-> 版本：0.2 ｜ 状态：已确认、待实现 ｜ 依据：用户明确要求“popup 全部功能转到后台并移除”；Phase 11 控制台唯一入口决策；现有 login-command-bridge、server-module、app-module、panel-module、report-export-module
+> 版本：0.3 ｜ 状态：已确认、待实现 ｜ 依据：用户明确要求“popup 全部功能转到后台并移除”；Phase 11 控制台唯一入口决策；现有 login-command-bridge、server-module、app-module、panel-module、report-export-module
 > v0.2 变更：固定 `/admin/browser-control` 为唯一业务入口；拆分控制台“一键登录”与通用任务区；补充完整名称/凭据查看权限；定义扩展 action 与独立 Options/Setup 路由；要求删除 Popup 源码、产物和测试。
+> v0.3 变更：补充已授权 MV3 Service Worker 冷启动时的命令轮询恢复契约，避免后台命令在扩展重载或 Worker 回收后无限停留 `pending`。
 
 ## 1. 目标与最终职责
 
@@ -118,6 +119,8 @@
 ## 7. 扩展与页面边界
 
 - Service Worker 统一轮询 `browser_commands`；可暂时兼容旧 `login_commands`，完成迁移后再删除兼容层。
+- **冷启动轮询恢复**：每次 Service Worker 模块加载时，均须先注册/恢复 `browser-command-poll` alarm，并立即尝试一次命令领取；不得只依赖浏览器 `onStartup`、扩展 `onInstalled`、storage 变更或内容脚本消息。已配置、未过期的设备 Bearer 令牌必须在 Worker 被回收后继续领取 `pending` 命令；未配置、过期或撤销的令牌不得发送领取请求、不得伪造任务终态。
+- 冷启动恢复仅复用既有 `GET /browser-commands/next`、claim 和结果回写契约；不增加心跳接口、SSE/WebSocket、无限重试或后台直接操作法院页面。领取后仍须经过既有法院路由、内容脚本和账号绑定门禁。
 - manifest `action` 不配置 `default_popup`。点击扩展图标时：本机服务器地址已配置且设备授权仍有效 → 新标签打开 `http://127.0.0.1:3000/admin/browser-control`；未配置、配对中、授权过期或已撤销 → 打开独立 Options/Setup 页面。
 - Options/Setup 只允许规范化的 `http://127.0.0.1:3000` 根地址；保持 host 权限 `http://127.0.0.1:3000/*`，不得增加 `<all_urls>`。
 - content script 只接受来自扩展消息路由的已校验动作；不接受网页脚本直接创建任务。
@@ -130,6 +133,7 @@
 
 - server：迁移可重复、角色隔离、重复创建、领取/claimant、回写幂等、过期/取消、UUID/cursor 校验、payload 敏感字段拒绝。
 - extension：无法院标签、未登录、账号不匹配、LOGIN、QUERY_LI、QUERY_QZ 执行 tab 门禁、EXPORT_REPORT、claimant 回写、SW 配置重建。
+- extension：模拟已授权配置下的 Service Worker 冷启动（不触发 `onStartup` 或 `onInstalled`）时，必须立即请求 `/browser-commands/next` 并领取可执行命令；缺少/过期令牌时不得发起该请求。
 - admin：`/`、`/admin`、登录成功入口跳转；控制台独立一键登录；通用任务区无 LOGIN；完整当前用户名/创建者名称；两种角色凭据按需查看；跨域、未登录和 extension Bearer 拒绝；无缓存响应；任务轮询、隐藏页退避、错误/取消/重试、安全显示。
 - manifest：无 `default_popup`；不存在 popup 源码、构建入口、产物和测试；已授权 action 打开控制台，未授权 action 打开 Options/Setup；扩展仍能注入法院页面和运行 SW。
 
