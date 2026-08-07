@@ -6,6 +6,19 @@ export interface LocalLoginHelper {
   stop(): Promise<void>;
 }
 
+/**
+ * Bind OCR helper availability to the backend lifecycle without making OCR a
+ * prerequisite for the administrative service itself to listen.
+ */
+export async function startBoundLocalLoginHelper(helper: LocalLoginHelper | undefined): Promise<void> {
+  try {
+    await helper?.ensureRunning();
+  } catch {
+    // The caller keeps the backend available; login automation will degrade
+    // through its existing SERVICE_UNAVAILABLE / NEEDS_HUMAN path.
+  }
+}
+
 interface LocalLoginHelperOptions {
   helperPath?: string;
   pythonCommand?: string;

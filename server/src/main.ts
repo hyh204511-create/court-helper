@@ -13,6 +13,7 @@ import { createStorageBackend } from './storage/index.ts';
 import { createPostgresHealthDependency } from './health.ts';
 import { runMigrations } from './db/migrator.ts';
 import { createLocalLoginHelper } from './local-login-helper.ts';
+import { startBoundBackend } from './backend-startup.ts';
 
 const config = loadConfig();
 const pool = new Pool({ connectionString: config.databaseUrl });
@@ -44,22 +45,24 @@ const shutdown = async () => {
 process.once('SIGINT', () => void shutdown());
 process.once('SIGTERM', () => void shutdown());
 
-let migrationsReady = false;
 try {
-  await runMigrations(pool);
-  migrationsReady = true;
+  await startBoundBackend({
+    migrate: async () => {
+      await runMigrations(pool);
+    },
+    listen: async () => {
+      await app.listen({ host: '127.0.0.1', port: config.port });
+    },
+    helper: localLoginHelper,
+  });
 } catch {
   console.error(
-    'Database migration failed before server startup. Check DATABASE_URL, database reachability, credentials, and migration permissions.',
+    'Backend startup failed. Check database configuration, reachability, migration permissions, and port availability.',
   );
   try {
     await pool.end();
   } catch {
-    // Preserve the actionable migration failure message.
+    // Preserve the actionable startup failure message.
   }
   process.exitCode = 1;
-}
-
-if (migrationsReady) {
-  await app.listen({ host: '127.0.0.1', port: config.port });
 }

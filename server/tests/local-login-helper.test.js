@@ -2,7 +2,90 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 
-import { createLocalLoginHelper } from '../src/local-login-helper.ts';
+import { createLocalLoginHelper, startBoundLocalLoginHelper } from '../src/local-login-helper.ts';
+import { startBoundBackend } from '../src/backend-startup.ts';
+
+test('backend startup migrates, listens, then detaches OCR startup', async () => {
+  const events = [];
+  let helperStarts = 0;
+  let releaseHelper;
+  const started = startBoundBackend({
+    migrate: async () => { events.push('migrate'); },
+    listen: async () => { events.push('listen'); },
+    helper: {
+      ensureRunning: async () => {
+        helperStarts += 1;
+        events.push('helper');
+        await new Promise((resolve) => { releaseHelper = resolve; });
+      },
+      stop: async () => {},
+    },
+  });
+
+  await started;
+  assert.deepEqual(events, ['migrate', 'listen', 'helper']);
+  assert.equal(helperStarts, 1);
+  releaseHelper();
+});
+
+test('backend startup does not start OCR when migrations or listening fail', async () => {
+  let helperStarts = 0;
+  const helper = {
+    ensureRunning: async () => { helperStarts += 1; },
+    stop: async () => {},
+  };
+
+  await assert.rejects(
+    startBoundBackend({
+      migrate: async () => { throw new Error('migration failed'); },
+      listen: async () => {},
+      helper,
+    }),
+    /migration failed/,
+  );
+  assert.equal(helperStarts, 0);
+
+  await assert.rejects(
+    startBoundBackend({
+      migrate: async () => {},
+      listen: async () => { throw new Error('listen failed'); },
+      helper,
+    }),
+    /listen failed/,
+  );
+  assert.equal(helperStarts, 0);
+});
+
+test('OCR startup rejection does not block a listening backend', async () => {
+  await startBoundBackend({
+    migrate: async () => {},
+    listen: async () => {},
+    helper: {
+      ensureRunning: async () => { throw new Error('python unavailable'); },
+      stop: async () => {},
+    },
+  });
+});
+
+test('backend startup starts the bound OCR helper before any admin UI login', async () => {
+  let starts = 0;
+  await startBoundLocalLoginHelper({
+    ensureRunning: async () => { starts += 1; },
+    stop: async () => {},
+  });
+  assert.equal(starts, 1);
+});
+
+test('backend startup without an OCR helper remains supported', async () => {
+  await startBoundLocalLoginHelper(undefined);
+});
+
+test('OCR startup failure does not prevent the backend from listening', async () => {
+  await startBoundLocalLoginHelper({
+    ensureRunning: async () => { throw new Error('python unavailable'); },
+    stop: async () => {},
+  });
+});
 
 test('local login helper leaves a healthy OCR service alone', async () => {
   let spawns = 0;

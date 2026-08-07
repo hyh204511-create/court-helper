@@ -134,12 +134,12 @@ content 需真实点击（登录按钮/验证码刷新/passwordTab 切换）→ 
 6. 全程无凭据写入 chrome.storage、日志或 git；accounts.txt 在 .gitignore。
 7. （v0.5）真实会话：自动登录的「点登录」「刷新验证码」由 chrome.debugger 注入真实事件（isTrusted=true）触发；扩展结束自动登录后 debugger 已 detach（扩展管理页无「正在调试」残留提示）。
 
-## 10. 本机 OCR 助手按后台登录启动（v0.6）
+## 10. 本机 OCR 助手绑定后台服务生命周期（v0.9）
 
 - `scripts/start-server.ps1` 为本机启动唯一入口，并显式启用 `LOCAL_LOGIN_HELPER_AUTOSTART`。
-- 成功建立 `admin_ui` Cookie 会话后，服务器异步确保本机 `127.0.0.1:8765` OCR 助手可用：已健康时不重复启动；未运行时仅以固定脚本 `scripts/login-helper-server.py` 启动。
-- 启动失败不得影响后台登录结果，不向客户端返回进程细节、环境变量、账号或密码；扩展仍按既有 `SERVICE_UNAVAILABLE` / `NEEDS_HUMAN` 路径降级。
-- extension Bearer 登录、错误密码、被限流或被禁用账号均不得触发启动；服务关闭时仅停止本服务器进程自行启动的子进程。
+- 后台完成迁移并开始监听 `127.0.0.1:3000` 后，立即异步确保本机 `127.0.0.1:8765` OCR 助手可用，且不等待健康探测或 Python 启动完成；不再依赖首次 `admin_ui` 登录。已健康的外部实例不重复启动，未运行时只启动固定脚本 `scripts/login-helper-server.py --ocr-only`。
+- OCR 启动失败不得阻断后台监听或暴露进程细节、环境变量、账号或密码；扩展仍按既有 `SERVICE_UNAVAILABLE` / `NEEDS_HUMAN` 路径降级。
+- 后台关闭时，仅停止本后台进程自行启动的 OCR 子进程；健康检查发现的外部实例不得被停止。后续成功的 `admin_ui` 登录只作幂等健康兜底，不改变该生命周期归属。
 
 ## 11. 后台绑定的扩展授权（v0.7）
 

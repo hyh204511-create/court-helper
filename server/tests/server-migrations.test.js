@@ -295,7 +295,7 @@ test('running migrations twice is harmless and explicit rollback restores a clea
   }
 });
 
-test('startup runs migrations before listening and exposes an offline migration command', async () => {
+test('startup delegates migration and listening to the bound backend bootstrap and exposes an offline migration command', async () => {
   const mainSource = await readFile(new URL('../src/main.ts', import.meta.url), 'utf8');
   const packageJson = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
 
@@ -304,6 +304,7 @@ test('startup runs migrations before listening and exposes an offline migration 
   const listenCall = mainSource.indexOf('await app.listen');
   assert.ok(migrationCall >= 0, 'main must run migrations');
   assert.ok(listenCall > migrationCall, 'main must migrate before listening');
-  assert.match(mainSource, /Database migration failed before server startup/);
-  assert.match(mainSource, /Check DATABASE_URL/);
+  assert.match(mainSource, /await startBoundBackend\(/);
+  assert.match(mainSource, /Backend startup failed/);
+  assert.match(mainSource, /database configuration/);
 });
