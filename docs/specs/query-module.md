@@ -89,7 +89,7 @@
 ## 5. 截图触发
 
 - 需要截图的场景：成功图片（立案成功/强执成功）、驳回图片（驳回/待补充材料）。
-- 时机：对应状态页面稳定后，由 content 请求 Service Worker 对消息发送方所在窗口执行 `captureVisibleTab`；**截图前先确认目标信息已渲染**（详情时间/原因可见），不得截取任意非发送方窗口。
+- 时机：对应状态页面稳定后，由 content script 使用 `captureElement` 截取已确认的案件行或审核区域；**截图前先确认目标信息已渲染**（详情时间/原因可见）。后台自动任务不得依赖需要用户手势临时授权的 `activeTab/captureVisibleTab`，也不得为截图附加 `chrome.debugger`，避免与浏览器验收控制争用调试会话；禁止截取整页或任意非目标区域。
 - 截图归属：立案成功 → H 列；驳回 → K 列；强执成功 → H 列（强执表块）。
 - 文字事实与截图独立提交：已精确读取的状态、审核时间和审核意见必须先保留；截图失败仅标记 `SCREENSHOT_CAPTURE_FAILED + needsHuman=true`，不得降级为 `UNKNOWN`、不得清空时间/原因。驳回图片必须沿 `rejectImage` 传播，禁止误写 `successImage`。
 
