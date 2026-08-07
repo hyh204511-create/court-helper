@@ -12,14 +12,27 @@ function makeResponse(body, status = 200) {
   };
 }
 
-async function loadWorker({ storageData = {}, fetchImpl = async () => makeResponse({}) } = {}) {
+async function waitFor(predicate, { attempts = 50 } = {}) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error("condition was not met before timeout");
+}
+
+async function loadWorker({ storageData = {}, fetchImpl = async () => makeResponse({}), tabs = [] } = {}) {
   const runtimeListeners = [];
   const storageListeners = [];
   const fetches = [];
+  const alarmCreates = [];
+  const intervals = new Map();
+  let nextIntervalId = 1;
   const previous = {
     self: globalThis.self,
     chrome: globalThis.chrome,
     fetch: globalThis.fetch,
+    setInterval: globalThis.setInterval,
+    clearInterval: globalThis.clearInterval,
   };
   globalThis.self = {
     addEventListener() {},
@@ -30,20 +43,42 @@ async function loadWorker({ storageData = {}, fetchImpl = async () => makeRespon
     fetches.push({ url, init });
     return fetchImpl(url, init);
   };
+  globalThis.setInterval = (callback, delay) => {
+    const id = nextIntervalId;
+    nextIntervalId += 1;
+    intervals.set(id, { callback, delay });
+    return id;
+  };
+  globalThis.clearInterval = (id) => intervals.delete(id);
   globalThis.chrome = {
     runtime: {
       onMessage: { addListener(listener) { runtimeListeners.push(listener); } },
       sendMessage() {},
     },
     storage: {
-      local: { get: async () => storageData },
+      local: {
+        get: async () => storageData,
+        set: async (values) => Object.assign(storageData, values),
+        remove: async (keys) => {
+          for (const key of (Array.isArray(keys) ? keys : [keys])) delete storageData[key];
+        },
+      },
       onChanged: { addListener(listener) { storageListeners.push(listener); } },
+    },
+    alarms: {
+      create(name, options) { alarmCreates.push({ name, options }); },
+      clear() {},
+      onAlarm: { addListener() {} },
+    },
+    tabs: {
+      query: async () => tabs,
+      sendMessage: async () => ({ ok: true }),
     },
   };
 
   try {
     const worker = await import(`../extension/service-worker.js?export-upload-test=${importSequence++}`);
-    return { worker, runtimeListener: runtimeListeners.at(-1), fetches, storageData, notifyStorageChange(changes) {
+    return { worker, runtimeListener: runtimeListeners.at(-1), fetches, alarmCreates, intervals, storageData, notifyStorageChange(changes) {
       for (const [key, change] of Object.entries(changes)) {
         if (!Object.hasOwn(change ?? {}, "newValue")) continue;
         if (change.newValue === undefined) delete storageData[key];
@@ -58,6 +93,10 @@ async function loadWorker({ storageData = {}, fetchImpl = async () => makeRespon
       else globalThis.chrome = previous.chrome;
       if (previous.fetch === undefined) delete globalThis.fetch;
       else globalThis.fetch = previous.fetch;
+      if (previous.setInterval === undefined) delete globalThis.setInterval;
+      else globalThis.setInterval = previous.setInterval;
+      if (previous.clearInterval === undefined) delete globalThis.clearInterval;
+      else globalThis.clearInterval = previous.clearInterval;
     } };
   } catch (error) {
     if (previous.self === undefined) delete globalThis.self;
@@ -66,6 +105,10 @@ async function loadWorker({ storageData = {}, fetchImpl = async () => makeRespon
     else globalThis.chrome = previous.chrome;
     if (previous.fetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = previous.fetch;
+    if (previous.setInterval === undefined) delete globalThis.setInterval;
+    else globalThis.setInterval = previous.setInterval;
+    if (previous.clearInterval === undefined) delete globalThis.clearInterval;
+    else globalThis.clearInterval = previous.clearInterval;
     throw error;
   }
 }
@@ -81,6 +124,66 @@ function invoke(listener, message) {
     return response;
   } };
 }
+
+test("已授权 Worker 冷启动无需 onStartup 事件也会领取待执行命令", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000501",
+    type: "EXPORT_REPORT",
+  };
+  let resultBody;
+  const loaded = await loadWorker({
+    storageData: {
+      serverUrl: "http://127.0.0.1:3000",
+      token: "opaque-device-token",
+      expiresAt: Date.now() + 60_000,
+      browserCommandDeviceId: "00000000-0000-4000-8000-000000000001",
+    },
+    tabs: [],
+    fetchImpl: async (url, init = {}) => {
+      const value = String(url);
+      if (value.endsWith("/health")) return makeResponse({ ok: true });
+      if (value.endsWith("/platform-accounts")) return makeResponse({ platformAccounts: [] });
+      if (value.includes("/sync/changes")) return makeResponse({ cases: [], nextCursor: 0 });
+      if (value.endsWith("/browser-commands/next")) return makeResponse({ command });
+      if (value.endsWith(`/browser-commands/${command.id}/claim`)) {
+        return makeResponse({ command, claimToken: "claim-once" });
+      }
+      if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+        resultBody = JSON.parse(init.body);
+        return makeResponse({ command: { status: "failed" } });
+      }
+      throw new Error(`unexpected url: ${value}`);
+    },
+  });
+  try {
+    await waitFor(() => loaded.fetches.some(({ url }) => String(url).endsWith(`/browser-commands/${command.id}/result`)));
+    assert.ok(loaded.alarmCreates.some(({ name, options }) => (
+      name === "browser-command-poll" && options?.periodInMinutes === 1
+    )));
+    assert.ok(loaded.fetches.some(({ url }) => String(url).endsWith("/browser-commands/next")));
+    assert.ok(loaded.fetches.some(({ url }) => String(url).endsWith(`/browser-commands/${command.id}/claim`)));
+    assert.deepEqual(resultBody, {
+      deviceId: "00000000-0000-4000-8000-000000000001",
+      claimToken: "claim-once",
+      status: "failed",
+      resultCode: "NO_COURT_TAB",
+      resultSummary: "任务执行失败",
+      progress: null,
+    });
+  } finally {
+    loaded.cleanup();
+  }
+});
+
+test("未配对的 Worker 冷启动不得请求后台命令", async () => {
+  const loaded = await loadWorker();
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(loaded.fetches.length, 0);
+  } finally {
+    loaded.cleanup();
+  }
+});
 
 test("Options/Setup 配对状态请求会从持久化的设备授权状态恢复", async () => {
   const loaded = await loadWorker({
