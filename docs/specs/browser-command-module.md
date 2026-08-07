@@ -56,6 +56,8 @@
 ### `QUERY_LI` / `QUERY_QZ`
 
 - 后台选择查询类型、目标平台账号和**已存在、未过期的 `importBatchId`**。服务端创建命令时将该 UUID 写入 `clientBatchId`；不得接受客户端自由字符串作为查询批次引用。
+- `QUERY_LI` 仅可绑定 `liRows > 0` 的批次，`QUERY_QZ` 仅可绑定 `qzRows > 0` 的批次。批次缺少当前查询类型的可执行行时，创建 API 必须返回 `400 VALIDATION_ERROR`，其详情为 `{ field: "importBatchId", code: "no_rows_for_query_type" }`；不得创建会在扩展端必然返回 `NO_CASES` 的任务，也不得在错误中返回业务行内容。
+- 后台的创建与历史查询任务重试都必须用已加载的批次摘要作前置提示；若当前查询类型没有可执行行，前端不得发送创建请求，须提示用户选择或上传含有效行的批次。服务端校验仍是最终防线。
 - 批次绑定在命令创建时由服务器校验；后续 extension 读取批次执行数据时必须同时校验：命令处于 `executing`、`claimed_by` 与 claim token 匹配、命令的 `clientBatchId` 与请求批次一致且批次未过期。
 - `QUERY_LI` 允许网上立案列表与我的案件列表。
 - `QUERY_QZ` 当前页面可见行不存在执行类 `caseType` 时，必须回写 `EXECUTION_TAB_REQUIRED`，不得继续执行、不得自动切 tab。

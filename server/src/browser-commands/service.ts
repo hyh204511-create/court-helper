@@ -342,6 +342,14 @@ export class BrowserCommandService {
       if (importBatch.expiresAt.getTime() <= now.getTime()) {
         throw new ConflictError('Import batch expired', 'IMPORT_BATCH_EXPIRED');
       }
+      const executableRows = normalized.type === 'QUERY_LI'
+        ? importBatch.liRows
+        : normalized.type === 'QUERY_QZ'
+          ? importBatch.qzRows
+          : null;
+      if (executableRows !== null && executableRows < 1) {
+        throw new ValidationError([{ field: 'importBatchId', code: 'no_rows_for_query_type' }]);
+      }
       clientBatchId = importBatch.id;
     }
     if (normalized.platformAccountId !== null) {

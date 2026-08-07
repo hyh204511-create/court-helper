@@ -446,6 +446,44 @@ test('browser query commands bind only an existing, unexpired import batch', asy
   );
 });
 
+test('browser query commands reject batches without rows for the selected query type', async () => {
+  for (const [type, rowField] of [['QUERY_LI', 'liRows'], ['QUERY_QZ', 'qzRows']]) {
+    const emptyForType = importBatchRecord();
+    emptyForType[rowField] = 0;
+    const { service, repository } = await makeService(undefined, [emptyForType]);
+
+    await assert.rejects(
+      service.create(commandInput(type, { platformAccountId: randomUUID() })),
+      (error) => error?.code === 'VALIDATION_ERROR'
+        && error?.statusCode === 400
+        && JSON.stringify(error?.details) === JSON.stringify([{ field: 'importBatchId', code: 'no_rows_for_query_type' }]),
+    );
+    assert.equal((await repository.list({ limit: 10 })).items.length, 0);
+  }
+});
+
+test('browser command API rejects query batches without executable rows before creating a command', async () => {
+  const emptyLiBatch = importBatchRecord();
+  emptyLiBatch.liRows = 0;
+  const importBatchRepository = new MemoryImportBatchRepository([emptyLiBatch]);
+  const { app, browserCommands } = await makeApp({ importBatchRepository });
+  try {
+    const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
+    const response = await createCommand(app, admin, '/api/v1', {
+      type: 'QUERY_LI',
+      platformAccountId: randomUUID(),
+      importBatchId: IMPORT_BATCH_ID,
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error.code, 'VALIDATION_ERROR');
+    assert.deepEqual(response.json().error.details, [{ field: 'importBatchId', code: 'no_rows_for_query_type' }]);
+    assert.equal((await browserCommands.list({ limit: 10 })).items.length, 0);
+  } finally {
+    await app.close();
+  }
+});
+
 test('browser command creation rejects duplicate active platform-account work atomically', async () => {
   const { service } = await makeService();
   const results = await Promise.allSettled([
