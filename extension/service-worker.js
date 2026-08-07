@@ -328,6 +328,22 @@ if (globalThis.chrome?.runtime?.onMessage?.addListener) {
       return debuggerDriver.handleMessage(message, sender, sendResponse);
     }
     wakeBrowserCommandPoller({ immediate: true });
+    if (message?.type === "CASE_SPACE_OPEN" || message?.type === "CASE_SPACE_ADOPTED") {
+      const tabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : null;
+      const phase = message.type === "CASE_SPACE_ADOPTED" ? "adopted" : "opening";
+      chrome.storage?.session?.set?.({
+        caseSpaceHandoff: {
+          uid: typeof message.uid === "string" ? message.uid : null,
+          kind: message.kind === "qz" ? "qz" : "li",
+          sourceTabId: phase === "opening" ? tabId : undefined,
+          detailTabId: phase === "adopted" ? tabId : undefined,
+          phase,
+          at: Date.now(),
+        },
+      });
+      sendResponse({ ok: true, phase, tabId });
+      return false;
+    }
     // AUTO_LOGIN 只在 content script 处理，service worker 不接收、不转发、不持久化。
     if (message?.type === "AUTO_LOGIN") return false;
     if (handleExtensionPairingMessage(message, sendResponse)) return true;

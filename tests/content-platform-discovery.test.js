@@ -207,6 +207,44 @@ async function dispatch(listener, message) {
   return response;
 }
 
+test("QUERY_LI 优先调用结构化 layy API；API 与 DOM 签名不一致时转人工", async () => {
+  await db.resetDb();
+  const nativeFetch = globalThis.fetch;
+  const nativeSetTimeout = globalThis.setTimeout;
+  const calls = [];
+  globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, delay >= 250 ? 0 : delay, ...args);
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    const body = String(url).includes("/count")
+      ? { data: 1 }
+      : { data: [{ layyid: "SYNTHETIC-API-ID", zt: "11800007-4", ajmc: "DIFFERENT API TITLE", sqrsj: "2026-01-01" }] };
+    return {
+      status: 200,
+      url: String(url),
+      headers: { get: () => "application/json" },
+      async json() { return body; },
+    };
+  };
+  const { dom, chrome } = await loadContent();
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_LI",
+      queryMode: "platform_discovery",
+      platformAccountId: "00000000-0000-4000-8000-000000000099",
+    });
+    assert.ok(calls.length >= 1, "QUERY_LI must call structured API before DOM fallback");
+    assert.ok(calls.some(({ url }) => url.includes("/layy")));
+    assert.equal(response.ok, false);
+    assert.equal(response.error === "UNKNOWN" || response.error === "API_DOM_MISMATCH", true);
+  } finally {
+    globalThis.fetch = nativeFetch;
+    globalThis.setTimeout = nativeSetTimeout;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
 function cleanup(dom) {
   dom.window.close();
   delete globalThis.window;

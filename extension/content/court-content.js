@@ -32,6 +32,7 @@ import { buildExportWorkbook } from "../data/xlsx-io.js";
 import { exportUploadMessage, exportWorkbookToServer } from "../data/export-uploader.js";
 import { buildPlatformDiscoveryRecords, selectDiscoveredListRow } from "../data/platform-discovery.js";
 import { selectMyCaseEvidence } from "../data/platform-evidence.js";
+import { fetchLayyPages } from "./query-api.js";
 import * as db from "../data/db.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -429,6 +430,11 @@ export async function runDetailCapture({ capture = captureElement } = {}) {
   const { pendingDetail } = await chrome.storage.session.get("pendingDetail");
   if (!pendingDetail?.uid) return false;
   const { uid, kind } = pendingDetail;
+  try {
+    chrome.runtime.sendMessage({ type: "CASE_SPACE_ADOPTED", uid, kind });
+  } catch {
+    // Storage/IndexedDB remains the authoritative handoff.
+  }
   const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
   const ok = await waitFor(
     () => document.querySelectorAll(SELECTORS.detail.formItem).length >= 2,
@@ -481,6 +487,11 @@ export async function runDetailCapture({ capture = captureElement } = {}) {
 /** 触发详情采集：登记待办 → 点击「案件空间」打开新标签 */
 async function triggerDetailCapture({ uid, kind, target }) {
   await chrome.storage.session.set({ pendingDetail: { uid, kind, at: Date.now() } });
+  try {
+    chrome.runtime.sendMessage({ type: "CASE_SPACE_OPEN", uid, kind });
+  } catch {
+    // Fire-and-forget notification; failure does not cancel evidence capture.
+  }
   const btn = target.querySelector(SELECTORS.list.spaceBtn);
   if (btn) {
     btn.click();
@@ -814,6 +825,25 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
   }
   const rows = collectListRows(document);
   if (!rows.length) throw new Error("NO_VISIBLE_CASES");
+  // In the real page, the API count is the authoritative page-size guard.
+  // JSDOM fixtures intentionally do not expose window.fetch and keep their
+  // deterministic DOM-only path.
+  const structuredFetch = typeof window?.fetch === "function"
+    ? window.fetch.bind(window)
+    : (typeof globalThis.fetch === "function" && globalThis.fetch.name !== "fetch" ? globalThis.fetch : null);
+  if (structuredFetch) {
+    const apiResult = await fetchLayyPages({
+      filters: { cxtj: "", kssj: "", jssj: "", zt: "", ajlb: "sp", sfid: "", sqrsf: "" },
+      pageSize: 50,
+      expectedFields: ["layyid", "zt", "ajmc", "sqrsj"],
+      fetchImpl: structuredFetch,
+    });
+    if (!apiResult.ok) throw new Error(apiResult.code ?? "UNKNOWN");
+    if (apiResult.total !== rows.length
+      || apiResult.rows.some((apiRow, index) => apiRow.caseName !== rows[index]?.caseName)) {
+      throw new Error("API_DOM_MISMATCH");
+    }
+  }
   if (kind === "qz" && !rows.some((row) => isEnforcementCaseType(row.caseType))) {
     throw new Error("EXECUTION_TAB_REQUIRED");
   }
