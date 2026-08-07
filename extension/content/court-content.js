@@ -644,6 +644,22 @@ function expectedSuccessStatus(kind) {
   return kind === "qz" ? "强执成功" : "立案成功";
 }
 
+function recordManualError(record) {
+  for (const code of [record?.errorCode, record?.error]) {
+    if (typeof code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(code)) return code;
+  }
+  return null;
+}
+
+function baselineManualError(records) {
+  for (const record of Array.isArray(records) ? records : []) {
+    if (record?.status !== "UNKNOWN" && record?.needsHuman !== true) continue;
+    return recordManualError(record)
+      ?? (record?.status === "UNKNOWN" ? "UNKNOWN" : "NEEDS_HUMAN");
+  }
+  return null;
+}
+
 function setControlledSearchValue(input, value) {
   const view = input?.ownerDocument?.defaultView;
   const descriptor = Object.getOwnPropertyDescriptor(view?.HTMLInputElement?.prototype, "value");
@@ -705,9 +721,10 @@ async function searchMyCaseBySourceName(sourceCaseName) {
 }
 
 async function persistMyCaseEvidence(record, selection) {
+  const existingManualError = recordManualError(record);
   const update = selection.ok
-    ? { ...record, ...selection.value, needsHuman: record.needsHuman === true, errorCode: record.errorCode ?? null }
-    : { ...record, needsHuman: true, errorCode: selection.error };
+    ? { ...record, ...selection.value, needsHuman: record.needsHuman === true, errorCode: existingManualError }
+    : { ...record, needsHuman: true, errorCode: existingManualError ?? selection.error };
   await persistSyncRecord(update);
   return update;
 }
@@ -757,7 +774,10 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
     _batchRunning = true;
     try {
       const evidence = await completeMyCaseEvidence(kind, { account, platformAccountId });
-      return evidence.needsHuman
+      const preservedManualError = baselineManualError(await db.query(store, { account, platformAccountId }));
+      return preservedManualError
+        ? { ok: false, error: preservedManualError, evidence }
+        : evidence.needsHuman
         ? { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE", evidence }
         : { ok: true, evidence };
     } finally {
@@ -811,6 +831,9 @@ async function executeBrowserCommand(message) {
   if (message.commandType === "QUERY_LI" || message.commandType === "QUERY_QZ") {
     const kind = message.commandType === "QUERY_QZ" ? "qz" : "li";
     if (message.queryMode === "platform_discovery") {
+      if (message.queryPhase === "mycase_evidence" && location.hash.split("?", 1)[0] !== MY_CASE_ROUTE) {
+        return { ok: false, error: "MYCASE_PAGE_REQUIRED" };
+      }
       return startPlatformDiscovery(kind, { platformAccountId: message.platformAccountId });
     }
     return { ok: false, error: "TEMPLATE_NOT_EMPTY" };

@@ -5,6 +5,14 @@ export const BROWSER_COMMAND_ALARM_NAME = "browser-command-poll";
 export const BROWSER_COMMAND_ALARM_PERIOD_MINUTES = 1;
 const COURT_URL_PATTERN = "https://zxfw.court.gov.cn/*";
 const POLL_INTERVAL_MS = 3000;
+const WSLA_LIST_ROUTE = "#/pagesWsla/pc/list/index";
+const MY_CASE_LIST_ROUTE = "#/pages/pc/case-list/index";
+const CONTENT_ROUTE_PING_TIMEOUT_MS = 2000;
+const CONTENT_ROUTE_PHASE_TIMEOUT_MS = 10 * 60 * 1000;
+const NAVIGATION_PORT_CLOSURE_MESSAGES = new Set([
+  "the message port closed before a response was received.",
+  "a listener indicated an asynchronous response by returning true, but the message channel closed before a response was received.",
+]);
 const CONFIG_KEYS = ["serverUrl", "token", "expiresAt", "browserCommandDeviceId"];
 const AUTHORIZATION_KEYS = ["token", "expiresAt", "browserCommandDeviceId"];
 const MANUAL_CODES = new Set([
@@ -59,6 +67,65 @@ function courtTab(tabs, commandType) {
   return candidates[0] ?? null;
 }
 
+function tabAtCourtRoute(tab, route) {
+  if (typeof tab?.url !== "string") return false;
+  try {
+    const url = new URL(tab.url);
+    return url.hostname === "zxfw.court.gov.cn"
+      && url.hash.split("?", 1)[0] === route;
+  } catch {
+    return false;
+  }
+}
+
+function sameTabAtMyCaseRoute(tabs, tabId) {
+  return (Array.isArray(tabs) ? tabs : []).some((tab) =>
+    tab?.id === tabId && tabAtCourtRoute(tab, MY_CASE_LIST_ROUTE));
+}
+
+function isNavigationPortClosure(error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const normalized = message.trim().toLowerCase();
+  return NAVIGATION_PORT_CLOSURE_MESSAGES.has(normalized)
+    || NAVIGATION_PORT_CLOSURE_MESSAGES.has(`${normalized}.`);
+}
+
+function schedulerTimers(scheduler) {
+  return {
+    schedule: typeof scheduler?.setTimeout === "function"
+      ? scheduler.setTimeout.bind(scheduler)
+      : globalThis.setTimeout,
+    cancel: typeof scheduler?.clearTimeout === "function"
+      ? scheduler.clearTimeout.bind(scheduler)
+      : globalThis.clearTimeout,
+  };
+}
+
+function withMessageTimeout(chromeApi, tabId, message, scheduler, timeoutMs) {
+  const delayMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 1;
+  const { schedule, cancel } = schedulerTimers(scheduler);
+  return new Promise((resolve) => {
+    let settled = false;
+    let timerId;
+    const finish = (outcome) => {
+      if (settled) return;
+      settled = true;
+      cancel(timerId);
+      resolve(outcome);
+    };
+    timerId = schedule(() => finish({ timedOut: true }), delayMs);
+    Promise.resolve()
+      .then(() => chromeApi.tabs.sendMessage(tabId, message))
+      .then((response) => finish({ response }), (error) => finish({ error }));
+  });
+}
+
+function waitForContentRoute(scheduler, delayMs) {
+  if (!Number.isFinite(delayMs) || delayMs <= 0) return Promise.resolve();
+  const { schedule } = schedulerTimers(scheduler);
+  return new Promise((resolve) => schedule(resolve, delayMs));
+}
+
 function resultFor(response) {
   if (response?.status === "uploaded") {
     return { status: "succeeded", resultCode: "SUCCESS", resultSummary: "报表已上传服务器" };
@@ -87,6 +154,10 @@ export function createBrowserCommandPoller({
   scheduler = globalThis,
   now = Date.now,
   intervalMs = POLL_INTERVAL_MS,
+  contentRouteRetryDelayMs = 500,
+  contentRouteRetryAttempts = 8,
+  contentRoutePingTimeoutMs = CONTENT_ROUTE_PING_TIMEOUT_MS,
+  contentRoutePhaseTimeoutMs = CONTENT_ROUTE_PHASE_TIMEOUT_MS,
 } = {}) {
   let intervalId = null;
   let inFlight = false;
@@ -184,7 +255,56 @@ export function createBrowserCommandPoller({
         activePlatformAccountId = command.platformAccountId;
       }
       return response;
-    } catch {
+    } catch (error) {
+      const mayReattachAfterRouteHandoff = command.type === "QUERY_LI"
+        && message.queryMode === "platform_discovery"
+        && tabAtCourtRoute(tab, WSLA_LIST_ROUTE)
+        && isNavigationPortClosure(error);
+      if (mayReattachAfterRouteHandoff) {
+        const attempts = Math.max(1, Math.min(20, Number.isInteger(contentRouteRetryAttempts) ? contentRouteRetryAttempts : 8));
+        for (let attempt = 0; attempt < attempts; attempt += 1) {
+          if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
+          try {
+            const tabsAfterHandoff = await chromeApi.tabs.query({ url: COURT_URL_PATTERN });
+            if (sameTabAtMyCaseRoute(tabsAfterHandoff, tab.id)) {
+              const probeResult = await withMessageTimeout(
+                chromeApi,
+                tab.id,
+                { type: "PING" },
+                scheduler,
+                contentRoutePingTimeoutMs,
+              );
+              const probe = probeResult.response;
+              if (probe?.ok === true && probe?.route?.split("?", 1)[0] === MY_CASE_LIST_ROUTE) {
+                if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
+                const evidenceResult = await withMessageTimeout(
+                  chromeApi,
+                  tab.id,
+                  { ...message, queryPhase: "mycase_evidence" },
+                  scheduler,
+                  contentRoutePhaseTimeoutMs,
+                );
+                if (evidenceResult.timedOut || evidenceResult.error) {
+                  return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
+                }
+                const evidenceResponse = evidenceResult.response;
+                if (evidenceResponse?.ok !== true) {
+                  const code = /^[A-Z][A-Z0-9_]{0,63}$/.test(evidenceResponse?.error ?? "")
+                    && MANUAL_CODES.has(evidenceResponse.error)
+                    ? evidenceResponse.error
+                    : "MYCASE_EVIDENCE_UNAVAILABLE";
+                  return { ok: false, error: code, progress: evidenceResponse?.progress ?? null };
+                }
+                return evidenceResponse;
+              }
+            }
+          } catch {
+            // The navigation can briefly expose a stale document; wait for the next bounded probe.
+          }
+          await waitForContentRoute(scheduler, contentRouteRetryDelayMs);
+        }
+        return { ok: false, error: "MYCASE_PAGE_TIMEOUT" };
+      }
       return { ok: false, error: "CONTENT_UNAVAILABLE" };
     }
   }

@@ -193,6 +193,143 @@ test("平台发现从网上立案跨页取证时，以平台唯一搜索回执�
   }
 });
 
+test("my-case evidence phase rejects the discovery route without changing its baseline", async () => {
+  await db.resetDb();
+  const platformAccountId = "00000000-0000-4000-8000-000000000027";
+  const { dom, chrome } = await loadEnforcementList();
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_LI",
+      queryMode: "platform_discovery",
+      queryPhase: "mycase_evidence",
+      platformAccountId,
+    });
+
+    assert.equal(response.ok, false);
+    assert.equal(response.error, "MYCASE_PAGE_REQUIRED");
+    assert.equal((await db.query(db.STORE_CASES, { account: "PLATFORM-ACCOUNT", platformAccountId })).length, 0);
+  } finally {
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("my-case evidence preserves an existing UNKNOWN baseline as manual required", async () => {
+  await db.resetDb();
+  const platformAccountId = "00000000-0000-4000-8000-000000000026";
+  await db.upsertByUid(db.STORE_ENFORCEMENT, "qz-existing-unknown", {
+    uid: "qz-existing-unknown",
+    account: "PLATFORM-ACCOUNT",
+    platformAccountId,
+    kind: "qz",
+    plaintiff: "SYNTHETIC APPLICANT",
+    defendant: "SYNTHETIC RESPONDENT",
+    sourceCaseName: "UNKNOWN SOURCE TITLE",
+    status: "UNKNOWN",
+    needsHuman: true,
+    errorCode: "UNKNOWN",
+  });
+  const { dom, chrome } = await loadEnforcementList({ myCase: true, keepSearchResult: true });
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_QZ",
+      queryMode: "platform_discovery",
+      platformAccountId,
+    });
+
+    assert.equal(response.ok, false);
+    assert.equal(response.error, "UNKNOWN");
+    assert.equal((await db.getByUid(db.STORE_ENFORCEMENT, "qz-existing-unknown"))?.needsHuman, true);
+  } finally {
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("my-case evidence retains a prior screenshot failure after successful F/G completion", async () => {
+  await db.resetDb();
+  const platformAccountId = "00000000-0000-4000-8000-000000000028";
+  const uid = "qz-existing-screenshot-failure";
+  await db.upsertByUid(db.STORE_ENFORCEMENT, uid, {
+    uid,
+    account: "PLATFORM-ACCOUNT",
+    platformAccountId,
+    kind: "qz",
+    plaintiff: "SYNTHETIC APPLICANT",
+    defendant: "SYNTHETIC RESPONDENT",
+    sourceCaseName: "SYNTHETIC ENFORCEMENT TITLE",
+    status: "强执成功",
+    needsHuman: true,
+    errorCode: "SCREENSHOT_CAPTURE_FAILED",
+  });
+  const nativeSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, delay >= 250 ? 0 : delay, ...args);
+  const { dom, chrome } = await loadEnforcementList({ status: "已结案", myCase: true, keepSearchResult: true });
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_QZ",
+      queryMode: "platform_discovery",
+      platformAccountId,
+    });
+
+    const record = await db.getByUid(db.STORE_ENFORCEMENT, uid);
+    assert.equal(response.ok, false);
+    assert.equal(response.error, "SCREENSHOT_CAPTURE_FAILED");
+    assert.equal(record.caseNumber, "SYNTHETIC-QZ-001");
+    assert.equal(record.filedTime, "2026-08-07");
+    assert.equal(record.needsHuman, true);
+    assert.equal(record.errorCode, "SCREENSHOT_CAPTURE_FAILED");
+  } finally {
+    globalThis.setTimeout = nativeSetTimeout;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("my-case evidence failure retains a prior screenshot failure instead of replacing its code", async () => {
+  await db.resetDb();
+  const platformAccountId = "00000000-0000-4000-8000-000000000029";
+  const uid = "qz-existing-screenshot-failure-no-match";
+  await db.upsertByUid(db.STORE_ENFORCEMENT, uid, {
+    uid,
+    account: "PLATFORM-ACCOUNT",
+    platformAccountId,
+    kind: "qz",
+    plaintiff: "SYNTHETIC APPLICANT",
+    defendant: "SYNTHETIC RESPONDENT",
+    sourceCaseName: "SYNTHETIC TITLE THAT MUST NOT MATCH",
+    status: "强执成功",
+    needsHuman: true,
+    errorCode: "SCREENSHOT_CAPTURE_FAILED",
+  });
+  const nativeSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, delay >= 250 ? 0 : delay, ...args);
+  const { dom, chrome } = await loadEnforcementList({ status: "已结案", myCase: true, keepSearchResult: true });
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_QZ",
+      queryMode: "platform_discovery",
+      platformAccountId,
+    });
+
+    const record = await db.getByUid(db.STORE_ENFORCEMENT, uid);
+    assert.equal(response.ok, false);
+    assert.equal(response.error, "SCREENSHOT_CAPTURE_FAILED");
+    assert.equal(record.caseNumber, undefined);
+    assert.equal(record.filedTime, undefined);
+    assert.equal(record.needsHuman, true);
+    assert.equal(record.errorCode, "SCREENSHOT_CAPTURE_FAILED");
+  } finally {
+    globalThis.setTimeout = nativeSetTimeout;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
 test("强执平台发现：执行列表首轮有待补 F/G 的成功记录时，提示进入我的案件而不是误报执行 tab", async () => {
   await db.resetDb();
   const nativeSetTimeout = globalThis.setTimeout;
@@ -386,7 +523,7 @@ test("我的案件执行 tab：异步搜索变为多条结果时，不得使用�
     });
 
     assert.equal(response.ok, false);
-    assert.equal(response.error, "MYCASE_EVIDENCE_UNAVAILABLE");
+    assert.equal(response.error, "MYCASE_EVIDENCE_AMBIGUOUS");
     const record = await db.getByUid(db.STORE_ENFORCEMENT, targetUid);
     assert.equal(record.caseNumber, undefined);
     assert.equal(record.filedTime, undefined);

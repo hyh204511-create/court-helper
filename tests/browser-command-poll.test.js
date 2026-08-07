@@ -34,6 +34,28 @@ function chromeMock(sendMessage) {
   };
 }
 
+function platformDiscoveryHarness(command) {
+  let resultBody;
+  return {
+    fetchImpl: async (url, init = {}) => {
+      const value = String(url);
+      if (value.endsWith("/browser-commands/next")) return response({ command });
+      if (value.endsWith(`/browser-commands/${command.id}/claim`)) {
+        return response({ command, claimToken: "claim-once" });
+      }
+      if (value.endsWith(`/import-batches/${command.clientBatchId}/extension-data`)) {
+        return response({ queryMode: "platform_discovery", rows: [] });
+      }
+      if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+        resultBody = JSON.parse(init.body);
+        return response({ command: { status: resultBody.status } });
+      }
+      throw new Error(`unexpected ${value}`);
+    },
+    resultBody: () => resultBody,
+  };
+}
+
 test("browser command poller claims QUERY_LI, reads only bound extension data, dispatches and reports success", async () => {
   const calls = [];
   const command = {
@@ -504,4 +526,277 @@ test("revoked device authorization clears its local token and stops unified poll
   assert.equal(stored.token, undefined);
   assert.equal(stored.expiresAt, undefined);
   assert.equal(scheduler.intervals.size, 0);
+});
+
+test("QUERY_LI does not reconnect after a non-navigation content error", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000811",
+    type: "QUERY_LI",
+    platformAccountId: "00000000-0000-4000-8000-000000000812",
+    clientBatchId: "00000000-0000-4000-8000-000000000813",
+  };
+  let commandSendCount = 0;
+  let resultBody;
+  const chromeApi = chromeMock(async () => {
+    commandSendCount += 1;
+    throw new Error("Could not establish connection. Receiving end does not exist.");
+  });
+  chromeApi.tabs.query = async () => [{ id: 7, url: "https://zxfw.court.gov.cn/#/pages/pc/case-list/index" }];
+  const fetchImpl = async (url, init = {}) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command });
+    if (value.endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim-once" });
+    if (value.endsWith(`/import-batches/${command.clientBatchId}/extension-data`)) return response({ queryMode: "platform_discovery", rows: [] });
+    if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+      resultBody = JSON.parse(init.body);
+      return response({ command: { status: "failed" } });
+    }
+    throw new Error(`unexpected ${value}`);
+  };
+
+  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl, contentRouteRetryDelayMs: 0 }).pollOnce();
+
+  assert.equal(commandSendCount, 1);
+  assert.equal(result.error, "CONTENT_UNAVAILABLE");
+  assert.equal(resultBody.resultCode, "CONTENT_UNAVAILABLE");
+  assert.equal(resultBody.status, "failed");
+});
+
+test("QUERY_LI only reconnects once after the same court tab hands off to my-case route", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000801",
+    type: "QUERY_LI",
+    platformAccountId: "00000000-0000-4000-8000-000000000802",
+    clientBatchId: "00000000-0000-4000-8000-000000000803",
+  };
+  let handedOff = false;
+  let commandSendCount = 0;
+  let pingCount = 0;
+  let resultBody;
+  const chromeApi = chromeMock(async (_tabId, message) => {
+    if (message.type === "PING") {
+      pingCount += 1;
+      return { ok: true, route: "#/pages/pc/case-list/index" };
+    }
+    commandSendCount += 1;
+    assert.equal(message.commandType, "QUERY_LI");
+    if (commandSendCount === 1) {
+      assert.equal(message.queryPhase, undefined);
+      handedOff = true;
+      throw new Error("The message port closed before a response was received.");
+    }
+    assert.equal(message.queryPhase, "mycase_evidence");
+    return { ok: false, error: "UNKNOWN" };
+  });
+  chromeApi.tabs.query = async () => [{
+    id: 7,
+    url: `https://zxfw.court.gov.cn/#/${handedOff ? "pages/pc/case-list/index" : "pagesWsla/pc/list/index"}`,
+  }];
+  const fetchImpl = async (url, init = {}) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command });
+    if (value.endsWith(`/browser-commands/${command.id}/claim`)) {
+      return response({ command, claimToken: "claim-once" });
+    }
+    if (value.endsWith(`/import-batches/${command.clientBatchId}/extension-data`)) {
+      return response({ queryMode: "platform_discovery", rows: [] });
+    }
+    if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+      resultBody = JSON.parse(init.body);
+      return response({ command: { status: "manual_required" } });
+    }
+    throw new Error(`unexpected ${value}`);
+  };
+
+  const poller = createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl,
+    contentRouteRetryDelayMs: 0,
+  });
+  const result = await poller.pollOnce();
+
+  assert.equal(commandSendCount, 2);
+  assert.equal(pingCount, 1);
+  assert.equal(result.error, "UNKNOWN");
+  assert.deepEqual(resultBody, {
+    deviceId: "device-test",
+    claimToken: "claim-once",
+    status: "manual_required",
+    resultCode: "UNKNOWN",
+    resultSummary: "需要人工接管",
+    progress: null,
+  });
+});
+
+test("QUERY_LI does not reattach when a message closes from an initial my-case route", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000821",
+    type: "QUERY_LI",
+    platformAccountId: "00000000-0000-4000-8000-000000000822",
+    clientBatchId: "00000000-0000-4000-8000-000000000823",
+  };
+  let commandSendCount = 0;
+  const chromeApi = chromeMock(async () => {
+    commandSendCount += 1;
+    throw new Error("The message port closed before a response was received.");
+  });
+  chromeApi.tabs.query = async () => [{ id: 7, url: "https://zxfw.court.gov.cn/#/pages/pc/case-list/index" }];
+  const harness = platformDiscoveryHarness(command);
+
+  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl: harness.fetchImpl }).pollOnce();
+
+  assert.equal(commandSendCount, 1);
+  assert.equal(result.error, "CONTENT_UNAVAILABLE");
+  assert.equal(harness.resultBody()?.status, "failed");
+});
+
+test("QUERY_LI bounds a pending my-case PING before reporting the route timeout", { timeout: 1000 }, async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000831",
+    type: "QUERY_LI",
+    platformAccountId: "00000000-0000-4000-8000-000000000832",
+    clientBatchId: "00000000-0000-4000-8000-000000000833",
+  };
+  let handedOff = false;
+  let pingCount = 0;
+  const chromeApi = chromeMock(async (_tabId, message) => {
+    if (message.type === "PING") {
+      pingCount += 1;
+      return new Promise(() => {});
+    }
+    handedOff = true;
+    throw new Error("The message port closed before a response was received.");
+  });
+  chromeApi.tabs.query = async () => [{
+    id: 7,
+    url: `https://zxfw.court.gov.cn/#/${handedOff ? "pages/pc/case-list/index" : "pagesWsla/pc/list/index"}`,
+  }];
+  const harness = platformDiscoveryHarness(command);
+
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl: harness.fetchImpl,
+    contentRouteRetryDelayMs: 0,
+    contentRouteRetryAttempts: 1,
+    contentRoutePingTimeoutMs: 1,
+  }).pollOnce();
+
+  assert.equal(pingCount, 1);
+  assert.equal(result.error, "MYCASE_PAGE_TIMEOUT");
+  assert.deepEqual(harness.resultBody(), {
+    deviceId: "device-test",
+    claimToken: "claim-once",
+    status: "manual_required",
+    resultCode: "MYCASE_PAGE_TIMEOUT",
+    resultSummary: "需要人工接管",
+    progress: null,
+  });
+});
+
+test("QUERY_LI bounds a pending my-case evidence phase and returns a manual code", { timeout: 1000 }, async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000841",
+    type: "QUERY_LI",
+    platformAccountId: "00000000-0000-4000-8000-000000000842",
+    clientBatchId: "00000000-0000-4000-8000-000000000843",
+  };
+  let handedOff = false;
+  let phaseSendCount = 0;
+  const chromeApi = chromeMock(async (_tabId, message) => {
+    if (message.type === "PING") return { ok: true, route: "#/pages/pc/case-list/index" };
+    if (message.queryPhase === "mycase_evidence") {
+      phaseSendCount += 1;
+      return new Promise(() => {});
+    }
+    handedOff = true;
+    throw new Error("The message port closed before a response was received.");
+  });
+  chromeApi.tabs.query = async () => [{
+    id: 7,
+    url: `https://zxfw.court.gov.cn/#/${handedOff ? "pages/pc/case-list/index" : "pagesWsla/pc/list/index"}`,
+  }];
+  const harness = platformDiscoveryHarness(command);
+
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl: harness.fetchImpl,
+    contentRouteRetryDelayMs: 0,
+    contentRoutePhaseTimeoutMs: 1,
+  }).pollOnce();
+
+  assert.equal(phaseSendCount, 1);
+  assert.equal(result.error, "MYCASE_EVIDENCE_UNAVAILABLE");
+  assert.equal(harness.resultBody()?.status, "manual_required");
+});
+
+test("QUERY_LI maps a second-phase port closure to a manual code without a third dispatch", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000851",
+    type: "QUERY_LI",
+    platformAccountId: "00000000-0000-4000-8000-000000000852",
+    clientBatchId: "00000000-0000-4000-8000-000000000853",
+  };
+  let handedOff = false;
+  let commandSendCount = 0;
+  const chromeApi = chromeMock(async (_tabId, message) => {
+    if (message.type === "PING") return { ok: true, route: "#/pages/pc/case-list/index" };
+    commandSendCount += 1;
+    if (commandSendCount === 1) {
+      handedOff = true;
+      throw new Error("The message port closed before a response was received.");
+    }
+    throw new Error("The message port closed before a response was received.");
+  });
+  chromeApi.tabs.query = async () => [{
+    id: 7,
+    url: `https://zxfw.court.gov.cn/#/${handedOff ? "pages/pc/case-list/index" : "pagesWsla/pc/list/index"}`,
+  }];
+  const harness = platformDiscoveryHarness(command);
+
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl: harness.fetchImpl,
+    contentRouteRetryDelayMs: 0,
+  }).pollOnce();
+
+  assert.equal(commandSendCount, 2);
+  assert.equal(result.error, "MYCASE_EVIDENCE_UNAVAILABLE");
+  assert.equal(harness.resultBody()?.status, "manual_required");
+});
+
+test("QUERY_LI normalizes an unknown second-phase content error to a manual code", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000861",
+    type: "QUERY_LI",
+    platformAccountId: "00000000-0000-4000-8000-000000000862",
+    clientBatchId: "00000000-0000-4000-8000-000000000863",
+  };
+  let handedOff = false;
+  const chromeApi = chromeMock(async (_tabId, message) => {
+    if (message.type === "PING") return { ok: true, route: "#/pages/pc/case-list/index" };
+    if (message.queryPhase === "mycase_evidence") return { ok: false, error: "NOT_READY" };
+    handedOff = true;
+    throw new Error("The message port closed before a response was received.");
+  });
+  chromeApi.tabs.query = async () => [{
+    id: 7,
+    url: `https://zxfw.court.gov.cn/#/${handedOff ? "pages/pc/case-list/index" : "pagesWsla/pc/list/index"}`,
+  }];
+  const harness = platformDiscoveryHarness(command);
+
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl: harness.fetchImpl,
+    contentRouteRetryDelayMs: 0,
+  }).pollOnce();
+
+  assert.equal(result.error, "MYCASE_EVIDENCE_UNAVAILABLE");
+  assert.deepEqual(harness.resultBody(), {
+    deviceId: "device-test",
+    claimToken: "claim-once",
+    status: "manual_required",
+    resultCode: "MYCASE_EVIDENCE_UNAVAILABLE",
+    resultSummary: "需要人工接管",
+    progress: null,
+  });
 });

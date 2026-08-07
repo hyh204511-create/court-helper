@@ -67,6 +67,10 @@
 - 扩展继续复用既有 `START_BATCH`、`runBatch`、状态识别、截图、节流（3–8 秒/案、单批 50、重试 1）。空模板发现先从当前真实列表建立当前账号隔离的记录集，再调用同一采集链路；预取验证失败不得清空旧数据。
 - 查询结果经既有 sync/outbox 上传；未知状态保持 `UNKNOWN + needsHuman=true`。
 
+**跨路由内容脚本交接**：平台发现从“网上立案”切换到“我的案件”时，原 `tabs.sendMessage` 响应端口可能随页面重建关闭。仅 `QUERY_LI` 的首次派发已在精确“网上立案”列表路由、且错误明确属于消息端口随导航关闭时，才可固定复用同一 `tabId`、同一 claim，在有界等待后重新查询到精确“我的案件”列表路由并通过有界 `PING` 确认新 content script 就绪；随后仅重发**一次**带 `queryPhase: "mycase_evidence"` 的第二阶段消息。`PING` 和第二阶段消息都必须有独立的有限响应时限：路由/PING 超时回写 `MYCASE_PAGE_TIMEOUT`，第二阶段超时或断连回写 `MYCASE_EVIDENCE_UNAVAILABLE`，两者均为待人工；不得宽泛或无限重试。第二阶段只能补充既有同账号、同 `platformAccountId` 基线，禁止重建发现记录；其终态必须聚合整份基线，`UNKNOWN`、既有 `needsHuman`、证据不完整或截图失败绝不因其他记录补证成功或失败而转为成功或覆盖首个稳定错误码。
+
+**查询执行租约**：`QUERY_LI` / `QUERY_QZ` 的单次 claim 固定 20 分钟，无心跳续租。该期限覆盖单批最多 50 条、每案 3–8 秒的首轮采集和一次最长 10 分钟的跨路由补证，并保留回写余量；第二阶段响应上限必须短于该租约。租约到期前未回写的命令由服务端标记为 `expired`，不得用新 claim 或无限重试掩盖。
+
 ### `EXPORT_REPORT`
 
 - Service Worker 只可使用同一运行期最近一次成功 `LOGIN` 的不透明 `platformAccountId` 执行导出；该 ID 不写入 storage、命令 payload 或服务端任务记录。没有这条绑定时必须回写 `PLATFORM_ACCOUNT_UNAVAILABLE` 并转人工。

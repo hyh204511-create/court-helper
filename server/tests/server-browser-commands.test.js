@@ -580,7 +580,10 @@ test('browser command service expires stale pending and executing commands', asy
   setNow(now);
   const claim = await service.claim(executing.id, 'device-a');
   assert.equal(claim.command.status, 'executing');
-  now = new Date('2026-08-06T10:08:00.000Z');
+  now = new Date('2026-08-06T10:25:00.000Z');
+  setNow(now);
+  assert.equal((await service.get(executing.id)).status, 'executing');
+  now = new Date('2026-08-06T10:27:00.000Z');
   setNow(now);
   assert.equal((await service.get(executing.id)).status, 'expired');
 });

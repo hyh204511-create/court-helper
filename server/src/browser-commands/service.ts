@@ -24,7 +24,10 @@ import {
 
 export const BROWSER_COMMAND_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const BROWSER_COMMAND_PENDING_TTL_MS = 5 * 60 * 1000;
-export const BROWSER_COMMAND_LEASE_TTL_MS = 60 * 1000;
+// Query discovery may inspect up to 50 rows at the mandated 3–8s cadence,
+// then perform the bounded cross-route evidence phase. Keep the claim alive
+// for that single execution without introducing a heartbeat protocol.
+export const BROWSER_COMMAND_LEASE_TTL_MS = 20 * 60 * 1000;
 export const BROWSER_COMMAND_RESULT_SUMMARY_LIMIT = 200;
 export const BROWSER_COMMAND_PAYLOAD_BYTES_LIMIT = 16 * 1024;
 export const BROWSER_COMMAND_PROGRESS_BYTES_LIMIT = 2 * 1024;
