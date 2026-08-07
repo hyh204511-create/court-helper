@@ -706,6 +706,24 @@ function waitForSearchRefresh(container, timeoutMs = 10000) {
   });
 }
 
+async function activateSearchInput(timeoutMs = 3000) {
+  const existing = document.querySelector(SELECTORS.list.searchInput);
+  if (existing) return existing;
+  const searchBox = document.querySelector(SELECTORS.list.searchBox);
+  if (!searchBox) return null;
+  try {
+    searchBox.click();
+  } catch {
+    return null;
+  }
+  const ready = await waitFor(
+    () => !!document.querySelector(SELECTORS.list.searchInput),
+    timeoutMs,
+    100,
+  );
+  return ready ? document.querySelector(SELECTORS.list.searchInput) : null;
+}
+
 async function navigateToMyCaseList() {
   if (location.hash.split("?", 1)[0] !== MY_CASE_ROUTE) location.hash = MY_CASE_ROUTE;
   const ready = await waitFor(() =>
@@ -717,7 +735,7 @@ async function navigateToMyCaseList() {
 }
 
 async function searchMyCaseBySourceName(sourceCaseName) {
-  const input = document.querySelector(SELECTORS.list.searchInput);
+  const input = await activateSearchInput();
   const button = document.querySelector(SELECTORS.list.searchBtn);
   const container = document.querySelector(SELECTORS.list.container);
   if (!input || !button || !container) return { ok: false, error: "SELECTOR_CHANGED" };

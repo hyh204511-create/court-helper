@@ -30,6 +30,7 @@ export const SELECTORS = {
     fieldValue: ".fd-field-value",
     spaceBtn: ".fd-case-space-btn",
     container: ".fd-com-list-container",
+    searchBox: ".fd-com-search .uni-searchbar__box",
     searchInput: ".fd-com-search input",
     // 顶部案件类型 tab（调解/保全/审判/执行/破产/信访）与查询按钮
     tab: ".fd-com-tab",

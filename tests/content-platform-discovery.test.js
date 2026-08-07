@@ -39,10 +39,10 @@ function caseRow({ status, name, type, values }) {
   </div>`;
 }
 
-function myCasePage({ rows }) {
+function myCasePage({ rows, placeholderSearch = false }) {
   return `<div class="fd-header-operate"><div class="fd-user-name">PLATFORM-ACCOUNT</div></div>
     <div class="fd-com-list-container">${rows}</div>
-    <div class="fd-com-search"><input type="text"></div>
+    <div class="fd-com-search">${placeholderSearch ? '<div class="uni-searchbar__box"><span>请输入案号、案件名称、法院查询</span></div>' : '<input type="text">'}</div>
     <button class="fd-com-search-btn">查询</button>`;
 }
 
@@ -50,7 +50,7 @@ function wslaPage(rows) {
   return `<div class="fd-header-operate"><div class="fd-user-name">PLATFORM-ACCOUNT</div></div>${rows}`;
 }
 
-async function loadContent() {
+async function loadContent({ placeholderSearch = false } = {}) {
   const initialRows = caseRow({
     status: "已立案",
     name: "SYNTHETIC SOURCE TITLE",
@@ -79,7 +79,14 @@ async function loadContent() {
       type: "民事一审案件",
       values: { 案号: "SYNTHETIC-IGNORE", 立案日期: "2026-08-06" },
     });
-    dom.window.document.body.innerHTML = myCasePage({ rows: beforeSearchRows });
+    dom.window.document.body.innerHTML = myCasePage({ rows: beforeSearchRows, placeholderSearch });
+    if (placeholderSearch) {
+      dom.window.document.querySelector(".uni-searchbar__box").addEventListener("click", () => {
+        dom.window.setTimeout(() => {
+          dom.window.document.querySelector(".fd-com-search").innerHTML = '<input type="text">';
+        }, 0);
+      });
+    }
     dom.window.document.querySelector(".fd-com-search-btn").addEventListener("click", () => {
       searchValue = dom.window.document.querySelector(".fd-com-search input").value;
       const matchedRow = caseRow({
@@ -217,7 +224,7 @@ test("平台发现从网上立案跨页取证时，以平台唯一搜索回执�
     if (args[0] === "[court-helper] 行截图失败") return;
     nativeWarn(...args);
   };
-  const { dom, chrome, readSearchValue } = await loadContent();
+  const { dom, chrome, readSearchValue } = await loadContent({ placeholderSearch: true });
   const expectedStableUid = db.uidOf({
     platformAccountId: "00000000-0000-4000-8000-000000000010",
     plaintiff: "SYNTHETIC PLAINTIFF",
