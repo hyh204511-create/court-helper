@@ -38,7 +38,7 @@
 
 ### 3.2 详情页采集器（collectDetail）
 - 适用页面：案件空间（`#/pagesWsla/common/wsla/detail/index`）。
-- 表单项 `.uni-forms-item` 的 innerText 为「label\nvalue」结构；「审核结果」+「审核时间」+「审核意见」必须归入同一条 `{status,time,opinion}` 审核记录（页面按时间倒序，最新在前，含时分秒，写表格取日期）。驳回时间与原因只取第一条完整记录，禁止把历史记录的意见与最新时间拼接。
+- 表单项 `.uni-forms-item` 的 innerText 为「label\nvalue」结构；「审核结果」+「审核时间」+「审核意见」必须归入同一条 `{status,time,opinion}` 审核记录（页面按时间倒序，最新在前，含时分秒，写表格取日期）。驳回时间与原因只取第一条完整记录，禁止把历史记录的意见与最新时间拼接；没有完整记录时返回 `AUDIT_EVIDENCE_INCOMPLETE + needsHuman=true`，不得写入半条证据。
 - 输出：`{ auditRecords: [{status, time, opinion}], fields: {label: value}, opinion }`；顶层 `opinion` 仅为最新记录意见的兼容别名。最新记录缺少意见时必须为 `null`，禁止回退到下一条历史记录的意见。
 - 强执详情字段：案件类型（首次执行案件）/执行依据类别/原审案号（原审案号≠强执案号，强执案号在「我的案件」页执行 tab 列表行）。
 
