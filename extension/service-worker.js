@@ -191,6 +191,9 @@ function resumeExtensionPairer() {
   return extensionPairer.resume().catch(() => null);
 }
 
+browserCommandPoller.ensureAlarm();
+void wakeBrowserCommandPoller({ immediate: true });
+
 if (globalThis.chrome?.runtime?.onStartup?.addListener) {
   chrome.runtime.onStartup.addListener(() => {
     browserCommandPoller.ensureAlarm();
