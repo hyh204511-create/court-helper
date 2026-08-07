@@ -5,6 +5,7 @@ import {
   CAPTURE_OPTIONS,
   captureVisibleTab,
   dataUrlToBlob,
+  requestVisibleTabCapture,
 } from "../extension/content/screen-capturer.js";
 
 test("captureVisibleTab 调用 chrome.tabs.captureVisibleTab 并返回 JPEG Blob", async () => {
@@ -37,4 +38,20 @@ test("dataUrlToBlob 解析 base64 数据", () => {
   const blob = dataUrlToBlob("data:image/jpeg;base64," + Buffer.from("hello").toString("base64"));
   assert.equal(blob.type, "image/jpeg");
   assert.equal(blob.size, 5);
+});
+
+test("content 通过 Service Worker 截取消息发送方的活动法院标签", async () => {
+  const dataUrl = "data:image/jpeg;base64," + Buffer.from([1, 2, 3]).toString("base64");
+  const messages = [];
+  const blob = await requestVisibleTabCapture({
+    runtime: {
+      async sendMessage(message) {
+        messages.push(message);
+        return { ok: true, dataUrl };
+      },
+    },
+  });
+  assert.deepEqual(messages, [{ type: "CAPTURE_VISIBLE_TAB" }]);
+  assert.equal(blob.type, "image/jpeg");
+  assert.equal(blob.size, 3);
 });

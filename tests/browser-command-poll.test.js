@@ -78,6 +78,48 @@ test("browser command poller claims QUERY_LI, reads only bound extension data, d
   });
 });
 
+test("多个非活动法院列表标签时选择最近使用标签并在执行前显式激活", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000121",
+    type: "QUERY_LI",
+    platformAccountId: "00000000-0000-4000-8000-000000000221",
+    clientBatchId: "00000000-0000-4000-8000-000000000321",
+  };
+  const activated = [];
+  const dispatched = [];
+  const chromeApi = chromeMock(async (tabId) => {
+    dispatched.push(tabId);
+    return { ok: true, progress: { done: 1, total: 1 } };
+  });
+  chromeApi.tabs.query = async () => [
+    { id: 7, active: false, lastAccessed: 200, url: "https://zxfw.court.gov.cn/#/pages/pc/case-list/index" },
+    { id: 8, active: false, lastAccessed: 300, url: "https://zxfw.court.gov.cn/#/pagesWsla/pc/list/index" },
+  ];
+  chromeApi.tabs.update = async (tabId, options) => {
+    activated.push([tabId, options]);
+    return { id: tabId, active: options.active };
+  };
+  const fetchImpl = async (url) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command });
+    if (value.endsWith(`/browser-commands/${command.id}/claim`)) {
+      return response({ command, claimToken: "claim-active-tab" });
+    }
+    if (value.endsWith(`/import-batches/${command.clientBatchId}/extension-data`)) {
+      return response({ queryMode: "platform_discovery", rows: [] });
+    }
+    if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+      return response({ command: { status: "succeeded" } });
+    }
+    throw new Error(`unexpected ${value}`);
+  };
+
+  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl }).pollOnce();
+  assert.equal(result.ok, true);
+  assert.deepEqual(activated, [[8, { active: true }]]);
+  assert.deepEqual(dispatched, [8]);
+});
+
 test("同一运行期自动登录绑定的后台账号与查询账号不一致时，不读取批次数据并转人工", async () => {
   const loginCommand = {
     id: "00000000-0000-4000-8000-000000000111",

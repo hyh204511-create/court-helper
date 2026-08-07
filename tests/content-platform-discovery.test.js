@@ -244,6 +244,63 @@ test("强执平台发现：执行列表没有待补 F/G 的成功记录时正常
   }
 });
 
+test("我的案件页没有本地发现基线时不得把零补证回写成功", async () => {
+  await db.resetDb();
+  const platformAccountId = "00000000-0000-4000-8000-000000000024";
+  const { dom, chrome } = await loadEnforcementList({ myCase: true, keepSearchResult: true });
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_QZ",
+      queryMode: "platform_discovery",
+      platformAccountId,
+    });
+    assert.equal(response.ok, false);
+    assert.equal(response.error, "DISCOVERY_BASELINE_MISSING");
+  } finally {
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("网上立案页零可见行时不清空旧记录且不得回写成功", async () => {
+  await db.resetDb();
+  const platformAccountId = "00000000-0000-4000-8000-000000000025";
+  const uid = "preserved-visible-baseline";
+  await db.upsertByUid(db.STORE_CASES, uid, {
+    uid,
+    account: "PLATFORM-ACCOUNT",
+    platformAccountId,
+    kind: "li",
+    plaintiff: "SYNTHETIC PLAINTIFF",
+    defendant: "SYNTHETIC DEFENDANT",
+    status: "审核中",
+  });
+  const dom = new JSDOM("<!doctype html><html><body><div class=\"fd-header-operate\"><div class=\"fd-user-name\">PLATFORM-ACCOUNT</div></div></body></html>", {
+    url: "https://zxfw.court.gov.cn/zxfw/#/pagesWsla/pc/list/index",
+  });
+  const chrome = makeChrome();
+  globalThis.window = dom.window;
+  globalThis.document = dom.window.document;
+  globalThis.location = dom.window.location;
+  globalThis.chrome = chrome;
+  await import(`../extension/content/court-content.js?platform-discovery-empty-test=${importSequence++}`);
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_LI",
+      queryMode: "platform_discovery",
+      platformAccountId,
+    });
+    assert.equal(response.ok, false);
+    assert.equal(response.error, "NO_VISIBLE_CASES");
+    assert.equal((await db.getByUid(db.STORE_CASES, uid))?.status, "审核中");
+  } finally {
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
 test("我的案件执行 tab：第二次强执任务只补 F/G，搜索结果前后相同也不重建发现记录", async () => {
   await db.resetDb();
   const platformAccountId = "00000000-0000-4000-8000-000000000022";

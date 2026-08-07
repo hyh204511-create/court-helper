@@ -72,6 +72,63 @@ test("未知状态 → UNKNOWN + needsHuman，不写状态词", async () => {
   assert.equal(updated[0].needsHuman, true);
 });
 
+test("驳回结果沿 rejectImage 传播并保留时间和原因", async () => {
+  const updated = [];
+  const rejectImage = new Blob(["synthetic-reject-image"], { type: "image/jpeg" });
+  const ops = makePageOps({
+    queryResults: {
+      rejected: {
+        statusText: "审核不通过",
+        caseType: "民事一审案件",
+        pageKind: "wsla",
+        rejectTime: "2026-08-07",
+        rejectReason: "脱敏驳回原因",
+        rejectImage,
+      },
+    },
+  });
+  await runBatch({
+    cases: [{ uid: "rejected", account: "A", kind: "li" }],
+    pageOps: ops,
+    onUpdate: (record) => updated.push(record),
+    timing: { delay: sleep0 },
+  });
+  assert.equal(updated[0].status, "已驳回");
+  assert.equal(updated[0].rejectTime, "2026-08-07");
+  assert.equal(updated[0].rejectReason, "脱敏驳回原因");
+  assert.equal(updated[0].rejectImage, rejectImage);
+  assert.equal(updated[0].successImage, null);
+  assert.equal(updated[0].needsHuman, false);
+});
+
+test("驳回截图失败只标待人工，不清空已确认文字事实", async () => {
+  const updated = [];
+  const ops = makePageOps({
+    captureResult: null,
+    queryResults: {
+      rejected: {
+        statusText: "审核不通过",
+        caseType: "民事一审案件",
+        pageKind: "wsla",
+        rejectTime: "2026-08-07",
+        rejectReason: "脱敏驳回原因",
+      },
+    },
+  });
+  await runBatch({
+    cases: [{ uid: "rejected", account: "A", kind: "li" }],
+    pageOps: ops,
+    onUpdate: (record) => updated.push(record),
+    timing: { delay: sleep0 },
+  });
+  assert.equal(updated[0].status, "已驳回");
+  assert.equal(updated[0].rejectTime, "2026-08-07");
+  assert.equal(updated[0].rejectReason, "脱敏驳回原因");
+  assert.equal(updated[0].rejectImage, null);
+  assert.equal(updated[0].needsHuman, true);
+  assert.equal(updated[0].error, "SCREENSHOT_CAPTURE_FAILED");
+});
+
 test("失败重试：第 1 次失败 → 重试成功；持续失败 → UNKNOWN 待人工", async () => {
   const updated = [];
   const ops = makePageOps({
@@ -135,4 +192,53 @@ test("syncing an evidence update preserves the original client UID", async () =>
 
   assert.equal(records.size, 1);
   assert.equal(records.get(uid).caseNumber, "SYNTHETIC-LI-001");
+});
+
+test("查询失败同步不得用 UNKNOWN/null 覆盖既有驳回证据", async () => {
+  const uid = "stable-reject-evidence";
+  const rejectImage = new Blob(["synthetic-reject-image"], { type: "image/jpeg" });
+  let stored = {
+    uid,
+    account: "masked-account",
+    platformAccountId: "platform-account-id",
+    kind: "li",
+    plaintiff: "synthetic plaintiff",
+    defendant: "synthetic defendant",
+    status: "已驳回",
+    rejectTime: "2026-08-07",
+    rejectReason: "脱敏驳回原因",
+    rejectImage,
+  };
+  let event;
+  const db = {
+    STORE_CASES: "cases",
+    STORE_ENFORCEMENT: "enforcementCases",
+    async getByUid() { return stored; },
+    async upsertByUid(_store, _uid, value) {
+      stored = { ...value, uid, updatedAt: 1 };
+      return stored;
+    },
+  };
+  const outbox = { async enqueue(value) { event = value; } };
+
+  await persistSyncRecord({
+    uid,
+    kind: "li",
+    account: "masked-account",
+    platformAccountId: "platform-account-id",
+    status: "UNKNOWN",
+    rejectTime: null,
+    rejectReason: null,
+    queryTime: "2026-08-07",
+    needsHuman: true,
+    error: "QUERY_TIMEOUT",
+  }, { db, outbox });
+
+  assert.equal(stored.status, "已驳回");
+  assert.equal(stored.rejectTime, "2026-08-07");
+  assert.equal(stored.rejectReason, "脱敏驳回原因");
+  assert.equal(stored.rejectImage, rejectImage);
+  assert.equal(stored.needsHuman, true);
+  assert.equal(event.payload.status, "已驳回");
+  assert.equal(event.payload.rejectReason, "脱敏驳回原因");
 });

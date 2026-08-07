@@ -59,6 +59,31 @@ test("已立案详情：多条审核记录，最新在前", () => {
   assert.equal(d.opinion, "决定立案");
 });
 
+test("多条审核历史：最新时间只绑定同组最新意见", () => {
+  const d = collectDetail(makeEl({
+    ".uni-forms-item": [
+      item("审核结果\n退回补充材料"),
+      item("审核时间\n2026-08-07 09:30:00"),
+      item("审核意见\n最新一次补充要求"),
+      item("审核结果\n审核不通过"),
+      item("审核时间\n2026-08-01 10:00:00"),
+      item("审核意见\n历史意见不得导出"),
+    ],
+  }));
+  assert.equal(d.auditRecords.length, 2);
+  assert.deepEqual(d.auditRecords[0], {
+    status: "退回补充材料",
+    time: "2026-08-07 09:30:00",
+    opinion: "最新一次补充要求",
+  });
+  assert.deepEqual(d.auditRecords[1], {
+    status: "审核不通过",
+    time: "2026-08-01 10:00:00",
+    opinion: "历史意见不得导出",
+  });
+  assert.equal(d.opinion, "最新一次补充要求");
+});
+
 test("强执详情：字段含原审案号/执行依据类别", () => {
   const d = collectDetail(makeEl({
     ".uni-forms-item": [

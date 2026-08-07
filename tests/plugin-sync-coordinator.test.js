@@ -410,6 +410,67 @@ test("批量结果按本地 upsert → outbox enqueue → onUpdate 顺序处理"
   assert.deepEqual(calls, ["get", ["upsert", "cases"], "enqueue", "onUpdate"]);
 });
 
+test("带 rejectImage blobRef 的案件同步在 ACK 后上传 reject 截图", async () => {
+  const uid = "uid-reject-screenshot";
+  const eventId = "mutation-reject-screenshot";
+  const rejectImage = new Blob(["synthetic-reject-image"], { type: "image/jpeg" });
+  await upsertByUid(STORE_CASES, uid, {
+    uid,
+    account: "masked-account",
+    platformAccountId: "platform-1",
+    kind: "li",
+    plaintiff: "synthetic plaintiff",
+    defendant: "synthetic defendant",
+    status: "已驳回",
+    rejectTime: "2026-08-07",
+    rejectReason: "synthetic reason",
+    rejectImage,
+  });
+  const event = await enqueue({
+    id: "outbox-reject-screenshot",
+    type: "case.sync",
+    clientMutationId: eventId,
+    payload: {
+      clientUid: uid,
+      platformAccountId: "platform-1",
+      kind: "li",
+      status: "已驳回",
+      rejectTime: "2026-08-07",
+      rejectReason: "synthetic reason",
+      queryTime: "2026-08-07",
+      needsHuman: false,
+      sourceUpdatedAt: "2026-08-07T00:00:00.000Z",
+    },
+    blobRef: { storeName: STORE_CASES, uid, field: "rejectImage" },
+  });
+  const uploads = [];
+  const client = {
+    async healthCheck() { return { ok: true }; },
+    async listPlatformAccounts() { return { platformAccounts: [] }; },
+    async pullChanges() { return { cases: [], nextCursor: 1 }; },
+    async syncCases() {
+      return {
+        accepted: [{ id: "00000000-0000-4000-8000-000000000501", clientUid: uid, eventId, revision: 1 }],
+        conflicts: [],
+        cursor: 1,
+      };
+    },
+    async uploadScreenshot(caseId, input, options) {
+      uploads.push({ caseId, input, options });
+      return { id: "synthetic-screenshot", created: true };
+    },
+  };
+
+  const result = await createSyncCoordinator({ client }).syncNow();
+  assert.equal(result.status, "online");
+  assert.equal(uploads.length, 1);
+  assert.equal(uploads[0].caseId, "00000000-0000-4000-8000-000000000501");
+  assert.equal(uploads[0].input.type, "reject");
+  assert.equal(uploads[0].input.blob, rejectImage);
+  assert.match(uploads[0].input.sha256, /^[a-f0-9]{64}$/);
+  assert.equal((await getOutbox(event.id)).status, "sent");
+});
+
 test("SYNC_* 消息和面板同步区只展示白名单、脱敏账号与安全冲突摘要", () => {
   const response = handleMessage({
     type: "SYNC_STATUS",

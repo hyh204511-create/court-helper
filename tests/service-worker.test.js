@@ -20,7 +20,12 @@ async function waitFor(predicate, { attempts = 50 } = {}) {
   throw new Error("condition was not met before timeout");
 }
 
-async function loadWorker({ storageData = {}, fetchImpl = async () => makeResponse({}), tabs = [] } = {}) {
+async function loadWorker({
+  storageData = {},
+  fetchImpl = async () => makeResponse({}),
+  tabs = [],
+  captureVisibleTab = async () => "data:image/jpeg;base64,",
+} = {}) {
   const runtimeListeners = [];
   const storageListeners = [];
   const fetches = [];
@@ -73,6 +78,7 @@ async function loadWorker({ storageData = {}, fetchImpl = async () => makeRespon
     tabs: {
       query: async () => tabs,
       sendMessage: async () => ({ ok: true }),
+      captureVisibleTab,
     },
   };
 
@@ -113,10 +119,10 @@ async function loadWorker({ storageData = {}, fetchImpl = async () => makeRespon
   }
 }
 
-function invoke(listener, message) {
+function invoke(listener, message, sender = {}) {
   let response;
   const wireMessage = JSON.parse(JSON.stringify(message));
-  const returned = listener(wireMessage, {}, (value) => { response = value; });
+  const returned = listener(wireMessage, sender, (value) => { response = value; });
   return { returned, readResponse: async () => {
     for (let i = 0; i < 20 && response === undefined; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -124,6 +130,29 @@ function invoke(listener, message) {
     return response;
   } };
 }
+
+test("CAPTURE_VISIBLE_TAB 只截取消息发送方法院标签所在窗口", async () => {
+  const calls = [];
+  const dataUrl = "data:image/jpeg;base64," + Buffer.from([1, 2, 3]).toString("base64");
+  const loaded = await loadWorker({
+    captureVisibleTab: async (windowId, options) => {
+      calls.push({ windowId, options });
+      return dataUrl;
+    },
+  });
+  try {
+    const request = invoke(
+      loaded.runtimeListener,
+      { type: "CAPTURE_VISIBLE_TAB" },
+      { tab: { id: 17, windowId: 23, url: "https://zxfw.court.gov.cn/zxfw/#/pagesWsla/pc/list/index" } },
+    );
+    assert.equal(request.returned, true);
+    assert.deepEqual(await request.readResponse(), { ok: true, dataUrl });
+    assert.deepEqual(calls, [{ windowId: 23, options: { format: "jpeg", quality: 85 } }]);
+  } finally {
+    loaded.cleanup();
+  }
+});
 
 test("已授权 Worker 冷启动无需 onStartup 事件也会领取待执行命令", async () => {
   const command = {

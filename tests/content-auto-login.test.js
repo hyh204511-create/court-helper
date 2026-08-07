@@ -181,6 +181,37 @@ test("EXPORT_REPORT 仅导出当前登录链路绑定的 platformAccountId 记�
   }
 });
 
+test("EXPORT_REPORT 两表零行时返回 REPORT_EMPTY 且不下载不上传", async () => {
+  await db.resetDb();
+  const platformAccountId = "00000000-0000-4000-8000-000000000403";
+  const { dom, chrome, listener } = await loadContent({
+    hash: "#/pagesWsla/pc/list/index",
+    html: batchListHtml(),
+  });
+  const anchorClick = dom.window.HTMLAnchorElement.prototype.click;
+  let downloads = 0;
+  let uploads = 0;
+  dom.window.HTMLAnchorElement.prototype.click = () => { downloads += 1; };
+  chrome.runtime.sendMessage = async (message) => {
+    if (message?.type === "EXPORT_UPLOAD") uploads += 1;
+    return { ok: true };
+  };
+  try {
+    const result = await dispatch(listener, {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "EXPORT_REPORT",
+      platformAccountId,
+    });
+    assert.deepEqual(result.response, { ok: false, error: "REPORT_EMPTY" });
+    assert.equal(downloads, 0);
+    assert.equal(uploads, 0);
+  } finally {
+    dom.window.HTMLAnchorElement.prototype.click = anchorClick;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
 test("AUTO_LOGIN 登录路由异步响应成功，并只执行页面表单操作", async () => {
   const { dom, chrome, listener } = await loadContent({
     hash: "#/pagesGrxx/pc/login/index",
