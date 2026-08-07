@@ -30,12 +30,26 @@ export function selectMyCaseEvidence({ record, kind = "li", rows = [] } = {}) {
   if (!record?.uid || record.status !== expected || !Array.isArray(rows)) {
     return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
   }
-  if (rows.length > 1) return { ok: false, error: "MYCASE_EVIDENCE_AMBIGUOUS" };
-  const row = rows[0];
-  if (!row || !rowMatchesKind(row, kind)) return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
-  if (!text(record.sourceCaseName) || text(row.caseName) !== text(record.sourceCaseName)) {
+  if (!text(record.sourceCaseName)) {
     return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
   }
+  const candidates = rows
+    .filter((row) => rowMatchesKind(row, kind))
+    .filter((row) => text(row.caseName) === text(record.sourceCaseName))
+    .map((row) => {
+      const fields = extractBusinessFields(row.fields);
+      return { row, caseNumber: text(fields.caseNumber), filedTime: exactDate(fields.filedDate) };
+    });
+  if (!candidates.length || candidates.some((candidate) => !candidate.filedTime)) {
+    return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
+  }
+  const latestDate = candidates.reduce(
+    (latest, candidate) => candidate.filedTime > latest ? candidate.filedTime : latest,
+    candidates[0].filedTime,
+  );
+  const latest = candidates.filter((candidate) => candidate.filedTime === latestDate);
+  if (latest.length !== 1) return { ok: false, error: "MYCASE_EVIDENCE_AMBIGUOUS" };
+  const [{ row, caseNumber, filedTime }] = latest;
   if (recognizeStatus({
     statusText: row.statusText,
     caseType: row.caseType,
@@ -43,9 +57,6 @@ export function selectMyCaseEvidence({ record, kind = "li", rows = [] } = {}) {
   }) !== expected) {
     return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
   }
-  const fields = extractBusinessFields(row.fields);
-  const caseNumber = text(fields.caseNumber);
-  const filedTime = exactDate(fields.filedDate);
   if (!caseNumber || !filedTime) return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
   return { ok: true, value: { uid: record.uid, caseNumber, filedTime } };
 }

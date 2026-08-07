@@ -405,7 +405,7 @@ test("START_BATCH 驳回行使用真实 DOM 按钮触发详情取证", async () 
   }
 });
 
-test("详情页取第一条完整审核记录并在补图成功后清除旧失败标记", async () => {
+test("详情页最新审核记录不完整时不回退历史记录或截图", async () => {
   await db.resetDb();
   const uid = "synthetic-reject-recapture";
   await db.upsertByUid(db.STORE_CASES, uid, {
@@ -433,15 +433,20 @@ test("详情页取第一条完整审核记录并在补图成功后清除旧失�
   await new Promise((resolve) => setTimeout(resolve, 0));
   chrome.storage.session.get = async () => ({ pendingDetail: { uid, kind: "li" } });
   try {
+    let captures = 0;
     const ok = await module.runDetailCapture({
-      capture: async () => new Blob(["synthetic-recaptured-image"], { type: "image/jpeg" }),
+      capture: async () => {
+        captures += 1;
+        return new Blob(["synthetic-recaptured-image"], { type: "image/jpeg" });
+      },
     });
     assert.equal(ok, true);
     const stored = await db.getByUid(db.STORE_CASES, uid);
-    assert.equal(stored.needsHuman, false);
-    assert.equal(stored.errorCode, null);
-    assert.equal(stored.rejectTime, "2026-08-01");
-    assert.equal(stored.rejectReason, "synthetic complete opinion");
+    assert.equal(captures, 0);
+    assert.equal(stored.needsHuman, true);
+    assert.equal(stored.errorCode, "AUDIT_EVIDENCE_INCOMPLETE");
+    assert.equal(stored.rejectTime, "2026-08-07");
+    assert.equal(stored.rejectReason, "synthetic stale reason");
 
     const incompleteUid = "synthetic-incomplete-audit";
     await db.upsertByUid(db.STORE_CASES, incompleteUid, {

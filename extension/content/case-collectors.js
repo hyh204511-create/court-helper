@@ -146,6 +146,27 @@ export function collectDetail(root, selectors = SELECTORS) {
   return {
     auditRecords,
     fields,
-    opinion: auditRecords[0]?.opinion ?? null,
+    opinion: selectLatestAuditRecord(auditRecords)?.opinion ?? null,
   };
+}
+
+/** 按审核时间选择最新记录；最新记录不完整时不得回退到历史记录。 */
+export function selectLatestAuditRecord(records = []) {
+  if (!Array.isArray(records) || !records.length) return null;
+  const dated = records.map((record) => ({
+    record,
+    time: String(record?.time ?? "").trim(),
+  }));
+  if (dated.some(({ time }) => !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(time))) return null;
+  const latestTime = dated.reduce(
+    (latest, { time }) => time > latest ? time : latest,
+    dated[0].time,
+  );
+  const latestMatches = dated.filter(({ time }) => time === latestTime);
+  if (latestMatches.length !== 1) return null;
+  const latest = latestMatches[0].record;
+  if (!latest
+    || typeof latest.status !== "string" || !latest.status.trim()
+    || typeof latest.opinion !== "string" || !latest.opinion.trim()) return null;
+  return latest;
 }

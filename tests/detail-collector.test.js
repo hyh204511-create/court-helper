@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { collectDetail } from "../extension/content/case-collectors.js";
+import { collectDetail, selectLatestAuditRecord } from "../extension/content/case-collectors.js";
 
 function makeEl(selMap) {
   return {
@@ -115,4 +115,52 @@ test("无审核结果时 opinion 为 null", () => {
   }));
   assert.equal(d.auditRecords.length, 0);
   assert.equal(d.opinion, null);
+});
+
+test("最新审核记录按审核时间选择，不依赖 DOM 顺序", () => {
+  const latest = selectLatestAuditRecord([
+    { status: "审核不通过", time: "2026-08-01 10:00:00", opinion: "较早意见" },
+    { status: "退回补充材料", time: "2026-08-07 09:30:00", opinion: "最新意见" },
+  ]);
+  assert.deepEqual(latest, {
+    status: "退回补充材料",
+    time: "2026-08-07 09:30:00",
+    opinion: "最新意见",
+  });
+});
+
+test("详情兼容 opinion 按审核时间取最新记录，不依赖 DOM 顺序", () => {
+  const detail = collectDetail(makeEl({
+    ".uni-forms-item": [
+      item("审核结果\n审核不通过"),
+      item("审核时间\n2026-08-01 10:00:00"),
+      item("审核意见\n历史意见"),
+      item("审核结果\n退回补充材料"),
+      item("审核时间\n2026-08-07 09:30:00"),
+      item("审核意见\n最新意见"),
+    ],
+  }));
+  assert.equal(detail.opinion, "最新意见");
+});
+
+test("最新审核记录缺少意见时不回退到历史完整记录", () => {
+  assert.equal(selectLatestAuditRecord([
+    { status: "退回补充材料", time: "2026-08-07 09:30:00" },
+    { status: "审核不通过", time: "2026-08-01 10:00:00", opinion: "历史意见" },
+  ]), null);
+});
+
+test("任一审核记录缺少可比较时间时不回退到旧记录", () => {
+  assert.equal(selectLatestAuditRecord([
+    { status: "退回补充材料", opinion: "时间缺失，无法确认是否最新" },
+    { status: "审核不通过", time: "2026-08-01 10:00:00", opinion: "历史意见" },
+  ]), null);
+});
+
+test("最新审核时间并列时保持歧义，不任意选择", () => {
+  assert.equal(selectLatestAuditRecord([
+    { status: "退回补充材料", time: "2026-08-07 09:30:00", opinion: "意见一" },
+    { status: "审核不通过", time: "2026-08-07 09:30:00", opinion: "意见二" },
+    { status: "审核不通过", time: "2026-08-01 10:00:00", opinion: "历史意见" },
+  ]), null);
 });

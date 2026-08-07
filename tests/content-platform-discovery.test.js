@@ -96,6 +96,66 @@ async function loadContent() {
   return { dom, chrome, readSearchValue: () => searchValue };
 }
 
+async function loadDuplicateCivilContent() {
+  const title = "SYNTHETIC DUPLICATE TITLE";
+  const identity = {
+    参与人: "原告：SYNTHETIC PLAINTIFF；被告：SYNTHETIC DEFENDANT",
+    案由: "SYNTHETIC CAUSE",
+  };
+  const initialRows = [
+    caseRow({
+      status: "审核不通过",
+      name: title,
+      type: "民事一审案件",
+      values: { ...identity, 申请日期: "2026-08-01" },
+    }),
+    caseRow({
+      status: "审核通过",
+      name: title,
+      type: "民事一审案件",
+      values: { ...identity, 申请日期: "2026-08-07" },
+    }),
+  ].join("");
+  const dom = new JSDOM(`<!doctype html><html><body>${wslaPage(initialRows)}</body></html>`, {
+    url: "https://zxfw.court.gov.cn/zxfw/#/pagesWsla/pc/list/index",
+  });
+  const chrome = makeChrome();
+  globalThis.window = dom.window;
+  globalThis.document = dom.window.document;
+  globalThis.location = dom.window.location;
+  globalThis.chrome = chrome;
+
+  dom.window.addEventListener("hashchange", () => {
+    if (dom.window.location.hash !== "#/pages/pc/case-list/index") return;
+    dom.window.document.body.innerHTML = myCasePage({ rows: caseRow({
+      status: "未知状态",
+      name: "BEFORE PLATFORM SEARCH",
+      type: "民事一审案件",
+      values: { 案号: "SYNTHETIC-IGNORE", 立案日期: "2026-08-06" },
+    }) });
+    dom.window.document.querySelector(".fd-com-search-btn").addEventListener("click", () => {
+      const results = [
+        caseRow({
+          status: "审理中",
+          name: title,
+          type: "民事一审案件",
+          values: { 案号: "SYNTHETIC-LI-OLD", 立案日期: "2026-08-02" },
+        }),
+        caseRow({
+          status: "审理中",
+          name: title,
+          type: "民事一审案件",
+          values: { 案号: "SYNTHETIC-LI-LATEST", 立案日期: "2026-08-09" },
+        }),
+      ].join("");
+      dom.window.document.querySelector(".fd-com-list-container").innerHTML = results;
+    });
+  });
+
+  await import(`../extension/content/court-content.js?platform-duplicate-test=${importSequence++}`);
+  return { dom, chrome };
+}
+
 async function loadEnforcementList({ status = "已立案", myCase = false, keepSearchResult = false } = {}) {
   const title = "SYNTHETIC ENFORCEMENT TITLE";
   const executionRow = caseRow({
@@ -185,6 +245,41 @@ test("平台发现从网上立案跨页取证时，以平台唯一搜索回执�
     assert.equal(records[0].filedTime, "2026-08-07");
     assert.equal(records[0].needsHuman, true);
     assert.equal(records[0].uid, expectedStableUid, "补齐案号不能生成第二条 UID");
+  } finally {
+    globalThis.setTimeout = nativeSetTimeout;
+    console.warn = nativeWarn;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("平台发现同标题重传案件：按最新申请日采状态，并按最新立案日补 F/G", async () => {
+  await db.resetDb();
+  const nativeSetTimeout = globalThis.setTimeout;
+  const nativeWarn = console.warn;
+  globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, delay >= 250 ? 0 : delay, ...args);
+  console.warn = (...args) => {
+    if (args[0] === "[court-helper] 行截图失败") return;
+    nativeWarn(...args);
+  };
+  const { dom, chrome } = await loadDuplicateCivilContent();
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_LI",
+      queryMode: "platform_discovery",
+      platformAccountId: "00000000-0000-4000-8000-000000000030",
+    });
+    assert.equal(response.error, "SCREENSHOT_CAPTURE_FAILED");
+    const records = await db.query(db.STORE_CASES, {
+      account: "PLATFORM-ACCOUNT",
+      platformAccountId: "00000000-0000-4000-8000-000000000030",
+    });
+    assert.equal(records.length, 1);
+    assert.equal(records[0].sourceApplicationDate, "2026-08-07");
+    assert.equal(records[0].status, "立案成功");
+    assert.equal(records[0].filedTime, "2026-08-09");
+    assert.equal(records[0].caseNumber, "SYNTHETIC-LI-LATEST");
   } finally {
     globalThis.setTimeout = nativeSetTimeout;
     console.warn = nativeWarn;

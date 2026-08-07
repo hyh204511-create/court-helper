@@ -34,6 +34,7 @@ export function recognizeStatus({ statusText = "", caseType = "", pageKind } = {
   if (pageKind === "wsla" || !pageKind) {
     // 网上立案页（默认）
     if (Object.hasOwn(WSLA_STATIC, t)) return WSLA_STATIC[t];
+    if (t === "审核通过") return isEnforcement(caseType) ? "UNKNOWN" : "立案成功";
     if (t === "已立案") return isEnforcement(caseType) ? "强执成功" : "立案成功";
     return "UNKNOWN";
   }

@@ -45,6 +45,39 @@ test("我的案件成功取证：结果不唯一、类型、状态或字段不�
   }
 });
 
+test("我的案件成功取证：同一原被告和案由存在历史案件时选唯一最新立案日期", () => {
+  const result = selectMyCaseEvidence({
+    record: successfulLiRecord,
+    kind: "li",
+    rows: [
+      civilSuccess({ fields: [
+        { label: "案号", value: "SYNTHETIC-LI-OLD" },
+        { label: "立案日期", value: "2026-08-01" },
+      ] }),
+      civilSuccess({ fields: [
+        { label: "案号", value: "SYNTHETIC-LI-LATEST" },
+        { label: "立案日期", value: "2026-08-07" },
+      ] }),
+    ],
+  });
+  assert.deepEqual(result, {
+    ok: true,
+    value: { uid: "li-platform-record", caseNumber: "SYNTHETIC-LI-LATEST", filedTime: "2026-08-07" },
+  });
+});
+
+test("我的案件成功取证：最新立案日期并列时保持歧义待人工", () => {
+  const result = selectMyCaseEvidence({
+    record: successfulLiRecord,
+    kind: "li",
+    rows: [civilSuccess(), civilSuccess({ fields: [
+      { label: "案号", value: "SYNTHETIC-LI-002" },
+      { label: "立案日期", value: "2026-08-07" },
+    ] })],
+  });
+  assert.deepEqual(result, { ok: false, error: "MYCASE_EVIDENCE_AMBIGUOUS" });
+});
+
 test("我的案件成功取证：平台搜索的唯一结果标题不全等时也不得补 F/G", () => {
   const result = selectMyCaseEvidence({
     record: successfulLiRecord,

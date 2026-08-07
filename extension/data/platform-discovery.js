@@ -87,3 +87,29 @@ export function buildPlatformDiscoveryRecords({ account, platformAccountId = nul
     queryTime: null,
   }));
 }
+
+/**
+ * 将已按三元组去重建档的记录精确回绑到当前列表行。
+ * 同标题历史记录不能仅凭标题判歧义；必须复核原告/被告/案由及已选申请日期。
+ */
+export function selectDiscoveredListRow({ record, kind = "li", rows = [] } = {}) {
+  if (!record || !Array.isArray(rows)) return { ok: false, error: "CASE_NOT_FOUND_IN_LIST" };
+  const matches = [];
+  rows.forEach((row, index) => {
+    try {
+      const participants = parseParticipantField(findField(row?.fields ?? [], "参与人"), kind);
+      const cause = nonEmptyText(findField(row?.fields ?? [], "案由"));
+      if (participants.plaintiff !== nonEmptyText(record.plaintiff)
+        || participants.defendant !== nonEmptyText(record.defendant)
+        || cause !== nonEmptyText(record.sourceCause)) return;
+      const applicationDate = exactIsoDate(findField(row?.fields ?? [], "申请日期"));
+      if (record.sourceApplicationDate && applicationDate !== record.sourceApplicationDate) return;
+      matches.push(index);
+    } catch {
+      // 无法精确解析的行不是候选；若没有任何候选，统一返回稳定的未找到错误。
+    }
+  });
+  if (!matches.length) return { ok: false, error: "CASE_NOT_FOUND_IN_LIST" };
+  if (matches.length !== 1) return { ok: false, error: "CASE_MATCH_AMBIGUOUS" };
+  return { ok: true, index: matches[0] };
+}

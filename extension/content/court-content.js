@@ -12,6 +12,7 @@ import {
   collectListRows,
   extractBusinessFields,
   collectDetail,
+  selectLatestAuditRecord,
 } from "./case-collectors.js";
 import {
   createLoginStateMessage,
@@ -29,7 +30,7 @@ import { createCourtPanel } from "./court-panel.js";
 import { importXlsx } from "../data/import-xlsx.js";
 import { buildExportWorkbook } from "../data/xlsx-io.js";
 import { exportUploadMessage, exportWorkbookToServer } from "../data/export-uploader.js";
-import { buildPlatformDiscoveryRecords } from "../data/platform-discovery.js";
+import { buildPlatformDiscoveryRecords, selectDiscoveredListRow } from "../data/platform-discovery.js";
 import { selectMyCaseEvidence } from "../data/platform-evidence.js";
 import * as db from "../data/db.js";
 
@@ -440,10 +441,7 @@ export async function runDetailCapture({ capture = captureElement } = {}) {
   const detail = collectDetail(document);
   const rec = await db.getByUid(store, uid);
   if (!rec || !detail.auditRecords.length) return false;
-  const latest = detail.auditRecords.find((record) => (
-    typeof record?.time === "string" && record.time.trim()
-    && typeof record?.opinion === "string" && record.opinion.trim()
-  ));
+  const latest = selectLatestAuditRecord(detail.auditRecords);
   if (!latest) {
     await db.upsertByUid(store, uid, {
       ...rec,
@@ -505,14 +503,26 @@ async function queryCase({ uid, kind }) {
   const pageKind = location.hash.includes("pagesWsla") ? "wsla" : "mycase";
   const rowEntries = collectListRowEntries(document);
   if (!rowEntries.length) throw new Error("LIST_EMPTY");
-  const candidates = rec.sourceCaseName
-    ? rowEntries.filter(({ data }) => data.caseName === rec.sourceCaseName)
-    : rec.caseNumber
-      ? rowEntries.filter(({ data }) => extractBusinessFields(data.fields).caseNumber === rec.caseNumber)
-      : [];
-  if (!candidates.length) throw new Error("CASE_NOT_FOUND_IN_LIST");
-  if (candidates.length !== 1) throw new Error("CASE_MATCH_AMBIGUOUS");
-  const [{ data: target, element: targetElement }] = candidates;
+  let selectedEntry = null;
+  if (rec.plaintiff && rec.defendant && rec.sourceCause) {
+    const selection = selectDiscoveredListRow({
+      record: rec,
+      kind,
+      rows: rowEntries.map(({ data }) => data),
+    });
+    if (!selection.ok) throw new Error(selection.error);
+    selectedEntry = rowEntries[selection.index];
+  } else {
+    const candidates = rec.sourceCaseName
+      ? rowEntries.filter(({ data }) => data.caseName === rec.sourceCaseName)
+      : rec.caseNumber
+        ? rowEntries.filter(({ data }) => extractBusinessFields(data.fields).caseNumber === rec.caseNumber)
+        : [];
+    if (!candidates.length) throw new Error("CASE_NOT_FOUND_IN_LIST");
+    if (candidates.length !== 1) throw new Error("CASE_MATCH_AMBIGUOUS");
+    [selectedEntry] = candidates;
+  }
+  const { data: target, element: targetElement } = selectedEntry;
 
   const biz = extractBusinessFields(target.fields);
   const raw = {
