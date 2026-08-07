@@ -10,7 +10,7 @@
     "server:migrate": "npm run server:build && node server/dist/migrate.js",
     "server:start": "node server/dist/main.js",
     "fixture": "python scripts/generate-fixtures.py",
-    "build": "esbuild extension/content/court-content.js --bundle --format=iife --outfile=extension/dist/court-content.bundle.js"
+    "build": "node ./scripts/build-extension.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
