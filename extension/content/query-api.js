@@ -4,6 +4,49 @@
 
 const MANUAL = (code, error = code) => ({ ok: false, status: "UNKNOWN", needsHuman: true, code, error });
 
+export function createMainWorldFetch(sendMessage = globalThis.chrome?.runtime?.sendMessage) {
+  if (typeof sendMessage !== "function") return null;
+  return async (url, init = {}) => {
+    let parsed;
+    try {
+      parsed = new URL(url, "https://zxfw.court.gov.cn");
+    } catch {
+      return { bridgeResult: MANUAL("API_ENDPOINT_INVALID") };
+    }
+    const method = String(init.method ?? "GET").toUpperCase();
+    let body;
+    if (method === "POST") {
+      try {
+        body = typeof init.body === "string" ? JSON.parse(init.body) : init.body;
+      } catch {
+        return { bridgeResult: MANUAL("API_PARAMS_INVALID") };
+      }
+    }
+    let result;
+    try {
+      result = await sendMessage({
+        type: "QUERY_API_REQUEST",
+        method,
+        path: `${parsed.pathname}${parsed.search}`,
+        ...(method === "POST" ? { body } : {}),
+      });
+    } catch {
+      return { bridgeResult: MANUAL("BRIDGE_UNAVAILABLE") };
+    }
+    if (!result?.ok) return { bridgeResult: result ?? MANUAL("BRIDGE_PROTOCOL_ERROR") };
+    if (!Number.isInteger(result.status) || result.status < 200 || result.status >= 300) {
+      return { bridgeResult: MANUAL("BRIDGE_PROTOCOL_ERROR") };
+    }
+    return {
+      status: Number(result.status),
+      url: parsed.href,
+      redirected: false,
+      headers: { get: (name) => String(name).toLowerCase() === "content-type" ? "application/json" : null },
+      async json() { return result.data; },
+    };
+  };
+}
+
 function isJsonResponse(response) {
   const type = response?.headers?.get?.("content-type") ?? "";
   return /(^|\s|;)application\/json(?:\s*;|$)/i.test(type);
@@ -31,6 +74,7 @@ export async function fetchStructuredJson(url, { fetchImpl = globalThis.fetch?.b
   } catch {
     return MANUAL("API_REQUEST_FAILED");
   }
+  if (response?.bridgeResult) return response.bridgeResult;
   const responseUrl = String(response?.url ?? "");
   if ([401, 403].includes(Number(response?.status))) return MANUAL("AUTH_REQUIRED");
   if (response?.redirected || /(?:^|\/)login(?:[/?#]|$)/i.test(responseUrl)) return MANUAL("LOGIN_REDIRECT");
@@ -53,12 +97,9 @@ export function assertPaginationConservation({ total, pages } = {}) {
 
 export function validateFieldSignature(value, expected = []) {
   if (!value || !Array.isArray(expected) || expected.length === 0) return MANUAL("FIELD_SIGNATURE_INVALID");
-  const actual = Object.keys(value).sort();
-  const required = [...expected].sort();
-  if (actual.length !== required.length || actual.some((key, i) => key !== required[i])) {
-    return MANUAL("FIELD_SIGNATURE_DRIFT");
-  }
-  if (expected.some((key) => value[key] == null || typeof value[key] === "object")) return MANUAL("FIELD_SIGNATURE_DRIFT");
+  if (expected.some((key) => !Object.hasOwn(value, key)
+    || typeof value[key] !== "string"
+    || !value[key].trim())) return MANUAL("FIELD_SIGNATURE_DRIFT");
   return { ok: true, value };
 }
 
@@ -135,9 +176,25 @@ const LAYY_STATUS = new Map([
   ["11800007-4", "已立案"],
   ["11800007-3", "审核不通过"],
 ]);
+export const LAYY_REQUIRED_FIELDS = ["id", "zt", "ajmc", "dsrMc", "laayMz", "tjsj"];
+
+function parseLayyParticipants(value) {
+  const text = String(value ?? "").trim();
+  const match = /^原告：([^；]+)；被告：([^；]+)$/.exec(text);
+  if (!match) return null;
+  const applicant = match[1].trim();
+  const respondent = match[2].trim();
+  return applicant && respondent ? { applicant, respondent } : null;
+}
+
+function normalizeLayyDate(value) {
+  const text = String(value ?? "").trim();
+  const match = /^(\d{4}-\d{2}-\d{2})(?:[T\s].*)?$/.exec(text);
+  return match?.[1] ?? "";
+}
 
 /** Public collector used by QUERY_LI/QUERY_QZ. */
-export async function fetchLayyPages({ filters = {}, pageSize = 50, expectedFields = [], fetchImpl } = {}) {
+export async function fetchLayyPages({ filters = {}, pageSize = 50, expectedFields = LAYY_REQUIRED_FIELDS, fetchImpl } = {}) {
   const result = await fetchLayyDataset({ params: filters, limit: pageSize, fetchImpl });
   if (!result.ok) return result;
   const rows = [];
@@ -146,7 +203,18 @@ export async function fetchLayyPages({ filters = {}, pageSize = 50, expectedFiel
     if (!signature.ok) return signature;
     const statusText = LAYY_STATUS.get(String(raw.zt));
     if (!statusText) return MANUAL("UNKNOWN_STATUS");
-    rows.push({ ...raw, statusText, caseName: String(raw.ajmc ?? "").trim(), applicationDate: String(raw.sqrsj ?? "").trim() });
+    const participants = parseLayyParticipants(raw.dsrMc);
+    const applicationDate = normalizeLayyDate(raw.tjsj);
+    const cause = String(raw.laayMz ?? "").trim();
+    if (!participants || !applicationDate || !cause) return MANUAL("FIELD_SIGNATURE_DRIFT");
+    rows.push({
+      ...raw,
+      statusText,
+      caseName: String(raw.ajmc ?? "").trim(),
+      ...participants,
+      cause,
+      applicationDate,
+    });
   }
   return { ok: true, total: result.total, rows, pages: result.pages };
 }

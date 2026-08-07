@@ -1,5 +1,15 @@
 # 规格：query-module（立案/强执采集与状态识别）
 
+## 主世界结构化接口桥（真实验收修订）
+
+- 真实页面验收确认：隔离世界中的 content script 直接 `fetch` 会得到 401；MAIN world 原生 `fetch` 仍不会经过法院页面请求适配器，因缺少页面适配器注入的鉴权头同样得到 401。结构化接口请求必须由 content script 发送内部消息，经 service worker 调用 `chrome.scripting.executeScript`，并显式指定 `world: "MAIN"`，在已登录的法院标签页主世界调用页面已经加载的请求适配器。插件只向适配器传受控 path/method/body，不读取、复制、返回或持久化鉴权值。
+- service worker 只允许已确认的法院接口路径：`/yzw/yzw-zxfw-lafw/api/v3/layy`、`/layy/count`、`/layy/layyxq/{layyid}/0`、`/pz/layymb/{fyid}/{ajlx}`，以及 `/yzw/yzw-zxfw-ajfw/api/v1/ajlist`。禁止任意 URL、跨域 URL、路径穿越和未确认接口。
+- 方法白名单：lafw 列表、总数、详情和模板仅允许 `GET`；ajfw `ajlist` 仅允许 `POST`。主世界原生探测请求必须使用 `credentials: "include"` 和 `redirect: "manual"`；遇到 401/403 时只允许改走页面自身已加载的受控请求适配器，不得接收或拼接 Cookie、Token、Authorization 等凭据参数。受限 query 键不得重复；详情/模板路径不得带 query；路径参数只接受受限字符且拒绝编码后的斜杠、反斜杠与点段。3xx/opaque redirect 必须在跟随前转 `LOGIN_REDIRECT`，避免 POST body 被转发。
+- sender 必须来自已确认的 `zxfw.court.gov.cn` 法院标签页；缺少 tab、来源 host 不符或非 http(s) 页面均拒绝执行。
+- 401、403、登录重定向、非 JSON、网络异常必须映射为稳定的待人工结果，禁止回退 DOM 猜测或把失败包装成空成功。
+- 桥返回只包含业务 JSON、HTTP 状态和稳定错误码；响应对象及日志不得包含 Cookie、Token、Authorization 或其他请求凭据。
+- content 查询链路必须调用该白名单桥获取结构化数据；插件 DOM 仅用于真实页面定位、双向唯一匹配和截图。
+
 > 版本：0.1 ｜ 状态：待实现 ｜ 依据：计划 §2.2/2.3、用户需求原文、模板状态词（已确认）
 
 ## 1. 目标
@@ -113,6 +123,6 @@
 
 Content script 必须在当前法院页面上下文中以 `credentials: "include"` 请求已确认的同源接口：`layy` 列表及 `layy/count`、`layyxq/{layyid}/0`、`pz/layymb/{fyid}/{ajlx}` 和 `ajlist`。仅接受 JSON；401/403、登录重定向、非 JSON 或传输异常统一 `needsHuman=true`，不得猜测字段。
 
-列表分页必须以 `count.data` 为总数，逐页累计条数与 total 守恒；超过单批 50 条拒绝执行。接口字段签名漂移、缺失、重复签名，以及 API 与 DOM 的页码/排序/条数或双向身份签名不一致，统一返回 `UNKNOWN` + `needsHuman=true`。DOM 不得按数组下标绑定 `layyid`，身份签名至少包含案件名称、原被告、案由、申请时间。
+列表分页必须以 `count.data` 为总数，逐页累计条数与 total 守恒；超过单批 50 条拒绝执行。`layy` 采集必需字段为 `id/zt/ajmc/dsrMc/laayMz/tjsj`：缺失、为空或类型变化视为字段签名漂移；平台增加未消费的元数据字段不阻断采集。身份映射固定为案件名称=`ajmc`、参与人=`dsrMc`、案由=`laayMz`、申请时间=`tjsj`；参与人只接受与 DOM 相同的“原告：…；被告：…”精确结构，ISO 日期时间只规范为 `YYYY-MM-DD` 后比较。重复签名，以及 API 与 DOM 的页码/排序/条数或双向五字段身份签名不一致，统一返回 `UNKNOWN` + `needsHuman=true`。DOM 不得按数组下标绑定 `id`，也不得只按案件名称绑定。
 
 案件空间按钮可能创建新标签页；执行器必须接管新标签并在该标签采集详情，不得继续等待原列表标签。详情 `data.shjgs[]` 必须按可解析 `shsj` 选择唯一最新记录；最新记录缺字段或最新时间并列时返回待人工，不得按数组顺序或回退历史记录。

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createMainWorldFetch,
   fetchStructuredJson,
   assertPaginationConservation,
   validateFieldSignature,
@@ -55,9 +56,28 @@ test("assertPaginationConservation 拒绝 total 与逐页条数不守恒", () =>
 test("validateFieldSignature 字段签名漂移转 UNKNOWN", () => {
   const expected = ["cajmc", "cajlbTranslateText", "cah", "clarq"];
   assert.equal(validateFieldSignature({ cajmc: "x", cajlbTranslateText: "民事", cah: "1", clarq: "2026-01-01" }, expected).ok, true);
+  assert.equal(validateFieldSignature({ cajmc: "x", cajlbTranslateText: "民事", cah: "1", clarq: "2026-01-01", metadata: { ignored: true } }, expected).ok, true);
   const result = validateFieldSignature({ cajmc: "x", cah: "1", clarq: "2026-01-01", unexpected: "drift" }, expected);
   assert.equal(result.status, "UNKNOWN");
   assert.equal(result.needsHuman, true);
+  const typeDrift = validateFieldSignature({ cajmc: 123, cajlbTranslateText: "民事", cah: "1", clarq: "2026-01-01" }, expected);
+  assert.equal(typeDrift.code, "FIELD_SIGNATURE_DRIFT");
+});
+
+test("createMainWorldFetch 不发送 header/token 并保留桥返回状态", async () => {
+  let message;
+  const fetchImpl = createMainWorldFetch(async (value) => {
+    message = value;
+    return { ok: true, status: 206, data: { data: [] } };
+  });
+  const response = await fetchImpl("/yzw/yzw-zxfw-ajfw/api/v1/ajlist", {
+    method: "POST",
+    headers: { Authorization: "MUST-NOT-PASS", Cookie: "MUST-NOT-PASS" },
+    token: "MUST-NOT-PASS",
+    body: JSON.stringify({ pageNum: 1, pageSize: 10 }),
+  });
+  assert.equal(response.status, 206);
+  assert.equal(/header|cookie|authorization|token|MUST-NOT-PASS/i.test(JSON.stringify(message)), false);
 });
 
 test("matchApiDomRows 双向唯一匹配，重复签名或 API/DOM 不一致转 UNKNOWN", () => {
@@ -108,9 +128,9 @@ test("selectLatestAudit 按最新 shsj 选择；并列最新时待人工", () =>
 test("fetchLayyPages 先取 count，再携完整筛选参数逐页采集并映射状态", async () => {
   const calls = [];
   const rows = [
-    { layyid: "SYNTHETIC-ID-1", zt: "11800007-4", ajmc: "SYNTHETIC CASE 1", sqrsj: "2026-01-01" },
-    { layyid: "SYNTHETIC-ID-2", zt: "11800007-3", ajmc: "SYNTHETIC CASE 2", sqrsj: "2026-01-02" },
-    { layyid: "SYNTHETIC-ID-3", zt: "11800007-4", ajmc: "SYNTHETIC CASE 3", sqrsj: "2026-01-03" },
+    { id: "SYNTHETIC-ID-1", zt: "11800007-4", ajmc: "SYNTHETIC CASE 1", dsrMc: "原告：A；被告：B", laayMz: "CAUSE 1", tjsj: "2026-01-01T10:00:00Z", metadata: "allowed" },
+    { id: "SYNTHETIC-ID-2", zt: "11800007-3", ajmc: "SYNTHETIC CASE 2", dsrMc: "原告：C；被告：D", laayMz: "CAUSE 2", tjsj: "2026-01-02", metadata: "allowed" },
+    { id: "SYNTHETIC-ID-3", zt: "11800007-4", ajmc: "SYNTHETIC CASE 3", dsrMc: "原告：E；被告：F", laayMz: "CAUSE 3", tjsj: "2026-01-03", metadata: "allowed" },
   ];
   const fetchImpl = async (url, init) => {
     const parsed = new URL(url, "https://court.invalid");
@@ -122,12 +142,20 @@ test("fetchLayyPages 先取 count，再携完整筛选参数逐页采集并映�
   const result = await fetchLayyPages({
     fetchImpl,
     pageSize: 2,
-    expectedFields: ["layyid", "zt", "ajmc", "sqrsj"],
+    expectedFields: ["id", "zt", "ajmc", "dsrMc", "laayMz", "tjsj"],
     filters: { cxtj: "synthetic", kssj: "2026-01-01", jssj: "2026-01-31", zt: "", sfid: "SYNTHETIC-SF", sqrsf: "1" },
   });
   assert.equal(result.ok, true);
   assert.equal(result.total, 3);
   assert.deepEqual(result.rows.map((row) => row.statusText), ["已立案", "审核不通过", "已立案"]);
+  assert.deepEqual(
+    result.rows.map(({ applicant, respondent, cause, applicationDate }) => ({ applicant, respondent, cause, applicationDate })),
+    [
+      { applicant: "A", respondent: "B", cause: "CAUSE 1", applicationDate: "2026-01-01" },
+      { applicant: "C", respondent: "D", cause: "CAUSE 2", applicationDate: "2026-01-02" },
+      { applicant: "E", respondent: "F", cause: "CAUSE 3", applicationDate: "2026-01-03" },
+    ],
+  );
   assert.equal(calls.length, 3);
   for (const { parsed, init } of calls) {
     assert.equal(init.credentials, "include");
@@ -141,17 +169,17 @@ test("fetchLayyPages 先取 count，再携完整筛选参数逐页采集并映�
 test("fetchLayyPages 对 total 不守恒和字段签名漂移统一转人工", async () => {
   const run = async (listBody) => fetchLayyPages({
     pageSize: 2,
-    expectedFields: ["layyid", "zt", "ajmc", "sqrsj"],
+    expectedFields: ["id", "zt", "ajmc", "dsrMc", "laayMz", "tjsj"],
     fetchImpl: async (url) => String(url).includes("/count")
       ? jsonResponse({ data: 2 })
       : jsonResponse({ data: listBody }),
   });
-  const shortPage = await run([{ layyid: "SYNTHETIC-ID-1", zt: "11800007-4", ajmc: "A", sqrsj: "2026-01-01" }]);
+  const shortPage = await run([{ id: "SYNTHETIC-ID-1", zt: "11800007-4", ajmc: "A", dsrMc: "原告：A；被告：B", laayMz: "CAUSE", tjsj: "2026-01-01" }]);
   assert.equal(shortPage.code, "PAGINATION_TOTAL_MISMATCH");
   assert.equal(shortPage.needsHuman, true);
   const drift = await run([
-    { layyid: "SYNTHETIC-ID-1", zt: "11800007-4", ajmc: "A", sqrsj: "2026-01-01" },
-    { layyid: "SYNTHETIC-ID-2", zt: "11800007-4", ajmc: "B", renamedDate: "2026-01-02" },
+    { id: "SYNTHETIC-ID-1", zt: "11800007-4", ajmc: "A", dsrMc: "原告：A；被告：B", laayMz: "CAUSE", tjsj: "2026-01-01" },
+    { id: "SYNTHETIC-ID-2", zt: "11800007-4", ajmc: "B", dsrMc: "原告：C；被告：D", laayMz: "CAUSE", renamedDate: "2026-01-02" },
   ]);
   assert.equal(drift.code, "FIELD_SIGNATURE_DRIFT");
   assert.equal(drift.status, "UNKNOWN");

@@ -7,13 +7,19 @@ import * as db from "../extension/data/db.js";
 
 let importSequence = 0;
 
-function makeChrome() {
+function makeChrome(sendMessage) {
   const listeners = [];
+  const sentMessages = [];
   return {
     listeners,
+    sentMessages,
     runtime: {
+      id: typeof sendMessage === "function" ? "synthetic-extension-id" : undefined,
       onMessage: { addListener(listener) { listeners.push(listener); } },
-      sendMessage: async () => undefined,
+      sendMessage: async (message) => {
+        sentMessages.push(message);
+        return typeof sendMessage === "function" ? sendMessage(message) : undefined;
+      },
     },
     storage: {
       session: {
@@ -50,7 +56,7 @@ function wslaPage(rows) {
   return `<div class="fd-header-operate"><div class="fd-user-name">PLATFORM-ACCOUNT</div></div>${rows}`;
 }
 
-async function loadContent({ placeholderSearch = false } = {}) {
+async function loadContent({ placeholderSearch = false, runtimeSendMessage } = {}) {
   const initialRows = caseRow({
     status: "已立案",
     name: "SYNTHETIC SOURCE TITLE",
@@ -64,7 +70,7 @@ async function loadContent({ placeholderSearch = false } = {}) {
   const dom = new JSDOM(`<!doctype html><html><body>${wslaPage(initialRows)}</body></html>`, {
     url: "https://zxfw.court.gov.cn/zxfw/#/pagesWsla/pc/list/index",
   });
-  const chrome = makeChrome();
+  const chrome = makeChrome(runtimeSendMessage);
   globalThis.window = dom.window;
   globalThis.document = dom.window.document;
   globalThis.location = dom.window.location;
@@ -209,23 +215,16 @@ async function dispatch(listener, message) {
 
 test("QUERY_LI 优先调用结构化 layy API；API 与 DOM 签名不一致时转人工", async () => {
   await db.resetDb();
-  const nativeFetch = globalThis.fetch;
   const nativeSetTimeout = globalThis.setTimeout;
-  const calls = [];
   globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, delay >= 250 ? 0 : delay, ...args);
-  globalThis.fetch = async (url, init = {}) => {
-    calls.push({ url: String(url), init });
-    const body = String(url).includes("/count")
-      ? { data: 1 }
-      : { data: [{ layyid: "SYNTHETIC-API-ID", zt: "11800007-4", ajmc: "DIFFERENT API TITLE", sqrsj: "2026-01-01" }] };
-    return {
-      status: 200,
-      url: String(url),
-      headers: { get: () => "application/json" },
-      async json() { return body; },
-    };
-  };
-  const { dom, chrome } = await loadContent();
+  const { dom, chrome } = await loadContent({
+    runtimeSendMessage: async (message) => {
+      if (message?.type !== "QUERY_API_REQUEST") return undefined;
+      return message.path.includes("/count")
+        ? { ok: true, status: 200, data: { data: 1 } }
+        : { ok: true, status: 200, data: { data: [{ id: "SYNTHETIC-API-ID", zt: "11800007-4", ajmc: "DIFFERENT API TITLE", dsrMc: "原告：SYNTHETIC PLAINTIFF；被告：SYNTHETIC DEFENDANT", laayMz: "SYNTHETIC CAUSE", tjsj: "2026-08-01" }] } };
+    },
+  });
   try {
     const response = await dispatch(chrome.listeners.at(-1), {
       type: "BROWSER_COMMAND_EXECUTE",
@@ -233,12 +232,64 @@ test("QUERY_LI 优先调用结构化 layy API；API 与 DOM 签名不一致时�
       queryMode: "platform_discovery",
       platformAccountId: "00000000-0000-4000-8000-000000000099",
     });
-    assert.ok(calls.length >= 1, "QUERY_LI must call structured API before DOM fallback");
-    assert.ok(calls.some(({ url }) => url.includes("/layy")));
+    const bridgeCalls = chrome.sentMessages.filter(({ type }) => type === "QUERY_API_REQUEST");
+    assert.ok(bridgeCalls.length >= 1, "QUERY_LI must call the MAIN-world query bridge before DOM fallback");
+    assert.ok(bridgeCalls.some(({ path }) => path.includes("/layy")));
     assert.equal(response.ok, false);
     assert.equal(response.error === "UNKNOWN" || response.error === "API_DOM_MISMATCH", true);
   } finally {
-    globalThis.fetch = nativeFetch;
+    globalThis.setTimeout = nativeSetTimeout;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("QUERY_LI 仅在 API 与 DOM 五字段双向唯一匹配后继续采集", async () => {
+  await db.resetDb();
+  const nativeSetTimeout = globalThis.setTimeout;
+  const nativeWarn = console.warn;
+  globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, delay >= 250 ? 0 : delay, ...args);
+  console.warn = (...args) => {
+    if (args[0] === "[court-helper] 行截图失败") return;
+    nativeWarn(...args);
+  };
+  const { dom, chrome } = await loadContent({
+    runtimeSendMessage: async (message) => {
+      if (message?.type !== "QUERY_API_REQUEST") return undefined;
+      return message.path.includes("/count")
+        ? { ok: true, status: 200, data: { data: 1 } }
+        : {
+          ok: true,
+          status: 200,
+          data: {
+            data: [{
+              id: "SYNTHETIC-API-ID",
+              zt: "11800007-4",
+              ajmc: "SYNTHETIC SOURCE TITLE",
+              dsrMc: "原告：SYNTHETIC PLAINTIFF；被告：SYNTHETIC DEFENDANT",
+              laayMz: "SYNTHETIC CAUSE",
+              tjsj: "2026-08-01T08:00:00Z",
+              platformMetadata: "allowed",
+            }],
+          },
+        };
+    },
+  });
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_LI",
+      queryMode: "platform_discovery",
+      platformAccountId: "00000000-0000-4000-8000-000000000098",
+    });
+    assert.notEqual(response.error, "API_DOM_MISMATCH");
+    const records = await db.query(db.STORE_CASES, {
+      account: "PLATFORM-ACCOUNT",
+      platformAccountId: "00000000-0000-4000-8000-000000000098",
+    });
+    assert.equal(records.length, 1);
+  } finally {
+    console.warn = nativeWarn;
     globalThis.setTimeout = nativeSetTimeout;
     cleanup(dom);
     await db.resetDb();

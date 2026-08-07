@@ -10,6 +10,7 @@ import {
   assertSelectors,
   collectListRowEntries,
   collectListRows,
+  findField,
   extractBusinessFields,
   collectDetail,
   selectLatestAuditRecord,
@@ -30,9 +31,9 @@ import { createCourtPanel } from "./court-panel.js";
 import { importXlsx } from "../data/import-xlsx.js";
 import { buildExportWorkbook } from "../data/xlsx-io.js";
 import { exportUploadMessage, exportWorkbookToServer } from "../data/export-uploader.js";
-import { buildPlatformDiscoveryRecords, selectDiscoveredListRow } from "../data/platform-discovery.js";
+import { buildPlatformDiscoveryRecords, parseParticipantField, selectDiscoveredListRow } from "../data/platform-discovery.js";
 import { selectMyCaseEvidence } from "../data/platform-evidence.js";
-import { fetchLayyPages } from "./query-api.js";
+import { createMainWorldFetch, fetchLayyPages, matchApiDomRows } from "./query-api.js";
 import * as db from "../data/db.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -828,21 +829,33 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
   // In the real page, the API count is the authoritative page-size guard.
   // JSDOM fixtures intentionally do not expose window.fetch and keep their
   // deterministic DOM-only path.
-  const structuredFetch = typeof window?.fetch === "function"
-    ? window.fetch.bind(window)
+  const structuredFetch = kind === "li" && typeof chrome?.runtime?.id === "string"
+    ? createMainWorldFetch(chrome.runtime.sendMessage.bind(chrome.runtime))
     : (typeof globalThis.fetch === "function" && globalThis.fetch.name !== "fetch" ? globalThis.fetch : null);
   if (structuredFetch) {
     const apiResult = await fetchLayyPages({
       filters: { cxtj: "", kssj: "", jssj: "", zt: "", ajlb: "sp", sfid: "", sqrsf: "" },
       pageSize: 50,
-      expectedFields: ["layyid", "zt", "ajmc", "sqrsj"],
       fetchImpl: structuredFetch,
     });
     if (!apiResult.ok) throw new Error(apiResult.code ?? "UNKNOWN");
-    if (apiResult.total !== rows.length
-      || apiResult.rows.some((apiRow, index) => apiRow.caseName !== rows[index]?.caseName)) {
+    let domIdentityRows;
+    try {
+      domIdentityRows = rows.map((row) => {
+        const participants = parseParticipantField(findField(row.fields, "参与人"), kind);
+        return {
+          caseName: String(row.caseName ?? "").trim(),
+          applicant: participants.plaintiff,
+          respondent: participants.defendant,
+          cause: String(findField(row.fields, "案由") ?? "").trim(),
+          applicationDate: String(findField(row.fields, "申请日期") ?? "").trim(),
+        };
+      });
+    } catch {
       throw new Error("API_DOM_MISMATCH");
     }
+    const matched = matchApiDomRows(apiResult.rows, domIdentityRows);
+    if (apiResult.total !== rows.length || !matched.ok) throw new Error("API_DOM_MISMATCH");
   }
   if (kind === "qz" && !rows.some((row) => isEnforcementCaseType(row.caseType))) {
     throw new Error("EXECUTION_TAB_REQUIRED");

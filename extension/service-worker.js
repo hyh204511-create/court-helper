@@ -9,6 +9,10 @@ import {
 } from "./sw/browser-command-poll.js";
 import { routeExtensionAction } from "./sw/action-router.js";
 import {
+  QUERY_API_REQUEST,
+  handleMainWorldQueryRequest,
+} from "./sw/main-world-query-bridge.js";
+import {
   EXTENSION_PAIRING_ALARM_NAME,
   EXTENSION_PAIRING_REQUEST,
   EXTENSION_PAIRING_STATUS_REQUEST,
@@ -324,6 +328,12 @@ function handleExtensionPairingMessage(message, sendResponse) {
 
 if (globalThis.chrome?.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === QUERY_API_REQUEST) {
+      handleMainWorldQueryRequest({ message, sender, chromeApi: chrome })
+        .then((response) => sendResponse(response))
+        .catch(() => sendResponse({ ok: false, status: "UNKNOWN", needsHuman: true, code: "BRIDGE_UNAVAILABLE" }));
+      return true;
+    }
     if (debuggerDriver.canHandle(message)) {
       return debuggerDriver.handleMessage(message, sender, sendResponse);
     }
