@@ -73,6 +73,7 @@ needsHuman, errorCode, sourceUpdatedAt
 
 - `clientUid` 沿用 `db.js` 的唯一键语义；服务器不得重新猜测合并键。
 - `batch-runner.js` 的 `filedDate` 在同步边界明确映射为 `filedTime`，IndexedDB 数字型 `updatedAt` 转为 ISO 8601 `sourceUpdatedAt`；`image` 不进 JSON，由状态映射到独立截图类型后上传。
+- 带本地 `blobRef` 的 outbox 事件只有在案件同步响应 `accepted[]` 返回对应服务器案件 `id` 后，才读取 IndexedDB 中指定的 `successImage` / `rejectImage` Blob，计算 SHA-256 并调用 `uploadScreenshot`。类型固定映射：立案成功=`success`、强执成功=`enforcement_success`、驳回=`reject`；截图上传成功后事件才可标记 sent。上传失败必须保留事件供既有有界重试/人工接管，不得把案件 ACK 误当作截图 ACK。
 - 只接受规格枚举；未知平台文本必须由插件上传为 `UNKNOWN + needsHuman=true`。原始异常只归一为稳定 `errorCode`，不上传可能含业务明文的错误栈。
 - `kind=li` 不接受 `强执成功`，`kind=qz` 不接受 `立案成功`；状态与类型不一致按逐项校验错误拒收，服务器不自动改写。
 - 同一 `clientUid`：相同 `eventId` 或相同 `sourceUpdatedAt` 且内容相同返回幂等成功；更旧版本或同时间不同内容返回逐项 `409 CONFLICT`，不得覆盖新值。

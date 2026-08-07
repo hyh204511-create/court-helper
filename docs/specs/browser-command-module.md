@@ -124,6 +124,7 @@
 - manifest `action` 不配置 `default_popup`。点击扩展图标时：本机服务器地址已配置且设备授权仍有效 → 新标签打开 `http://127.0.0.1:3000/admin/browser-control`；未配置、配对中、授权过期或已撤销 → 打开独立 Options/Setup 页面。
 - Options/Setup 只允许规范化的 `http://127.0.0.1:3000` 根地址；保持 host 权限 `http://127.0.0.1:3000/*`，不得增加 `<all_urls>`。
 - content script 只接受来自扩展消息路由的已校验动作；不接受网页脚本直接创建任务。
+- 同时存在多个法院标签页时，Service Worker 必须在符合精确路由门禁的候选中优先选择 `active=true` 的标签；没有活动法院标签时选择 `lastAccessed` 最大的最近使用标签。禁止依赖 `tabs.query()` 的数组顺序把查询发送到错误列表页；候选缺少 `lastAccessed` 时保持确定性回退。
 - 浮动面板不得显示完整账号、案号、当事人、身份证号、密码、驳回原因；只显示脱敏状态、进度和稳定错误码。
 - Chrome 重启、扩展重载、SW 休眠、法院标签关闭时，命令保持真实 pending/failed/manual_required 等状态并显示稳定结果码，不从缺失的心跳推断实时连接状态或伪造成功。
 
@@ -132,7 +133,7 @@
 ### 自动测试
 
 - server：迁移可重复、角色隔离、重复创建、领取/claimant、回写幂等、过期/取消、UUID/cursor 校验、payload 敏感字段拒绝。
-- extension：无法院标签、未登录、账号不匹配、LOGIN、QUERY_LI、QUERY_QZ 执行 tab 门禁、EXPORT_REPORT、claimant 回写、SW 配置重建。
+- extension：无法院标签、未登录、账号不匹配、LOGIN、QUERY_LI、QUERY_QZ 执行 tab 门禁、EXPORT_REPORT、claimant 回写、SW 配置重建；多法院列表标签必须选择活动标签或最近使用标签。
 - extension：模拟已授权配置下的 Service Worker 冷启动（不触发 `onStartup` 或 `onInstalled`）时，必须立即请求 `/browser-commands/next` 并领取可执行命令；缺少/过期令牌时不得发起该请求。
 - admin：`/`、`/admin`、登录成功入口跳转；控制台独立一键登录；通用任务区无 LOGIN；完整当前用户名/创建者名称；两种角色凭据按需查看；跨域、未登录和 extension Bearer 拒绝；无缓存响应；任务轮询、隐藏页退避、错误/取消/重试、安全显示。
 - manifest：无 `default_popup`；不存在 popup 源码、构建入口、产物和测试；已授权 action 打开控制台，未授权 action 打开 Options/Setup；扩展仍能注入法院页面和运行 SW。
