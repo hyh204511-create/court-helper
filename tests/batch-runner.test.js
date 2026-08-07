@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { runBatch } from "../extension/data/batch-runner.js";
+import { persistSyncRecord, runBatch } from "../extension/data/batch-runner.js";
 
 /** 页面操作器 mock：记录调用并返回预设结果 */
 function makePageOps({ queryResults = {}, captureResult = "img-jpeg", failTimes = {} } = {}) {
@@ -30,7 +30,7 @@ test("批量执行：成功案件 → 状态识别 + 截图 + 进度回调", asy
   const updated = [];
   const ops = makePageOps({
     queryResults: {
-      c1: { statusText: "已立案", caseType: "民事一审案件", caseNumber: "（2026）京0000民初1号", filedDate: "2026-07-22" },
+      c1: { statusText: "已立案", caseType: "民事一审案件", caseNumber: "（2026）京0000民初1号", filedTime: "2026-07-22" },
     },
   });
   const stats = await runBatch({
@@ -42,7 +42,7 @@ test("批量执行：成功案件 → 状态识别 + 截图 + 进度回调", asy
   assert.equal(updated.length, 1);
   assert.equal(updated[0].status, "立案成功");
   assert.equal(updated[0].caseNumber, "（2026）京0000民初1号");
-  assert.equal(updated[0].filedDate, "2026-07-22");
+  assert.equal(updated[0].filedTime, "2026-07-22");
   assert.equal(updated[0].image, "img-jpeg");
   assert.equal(updated[0].needsHuman, false);
   assert.equal(stats.total, 1);
@@ -54,12 +54,13 @@ test("批量执行：强执案件类型 → 强执成功", async () => {
   const updated = [];
   const ops = makePageOps({
     queryResults: {
-      e1: { statusText: "已立案", caseType: "首次执行案件", caseNumber: "（2026）京0000执1号", filedDate: "2026-06-03" },
+      e1: { statusText: "已立案", caseType: "首次执行案件", caseNumber: "（2026）京0000执1号", filedTime: "2026-06-03" },
     },
   });
   await runBatch({ cases: [{ uid: "e1", account: "B", kind: "qz" }], pageOps: ops, onUpdate: (r) => updated.push(r), timing: { delay: sleep0 } });
   assert.equal(updated[0].status, "强执成功");
   assert.equal(updated[0].caseNumber, "（2026）京0000执1号");
+  assert.equal(updated[0].filedTime, "2026-06-03");
   assert.equal(updated[0].kind, "qz");
 });
 
@@ -102,4 +103,36 @@ test("单批上限 50：51 条只处理前 50", async () => {
 test("空案件列表 → 空统计不报错", async () => {
   const stats = await runBatch({ cases: [], pageOps: makePageOps(), timing: { delay: sleep0 } });
   assert.deepEqual(stats, { total: 0, success: 0, unknown: 0, needsHuman: 0 });
+});
+
+test("syncing an evidence update preserves the original client UID", async () => {
+  const records = new Map();
+  const uid = "platform-account-id\u0000plaintiff\u0000defendant";
+  records.set(uid, {
+    uid,
+    account: "masked-platform-account",
+    platformAccountId: "platform-account-id",
+    plaintiff: "synthetic plaintiff",
+    defendant: "synthetic defendant",
+    kind: "li",
+    status: "立案成功",
+    caseNumber: null,
+  });
+  const db = {
+    STORE_CASES: "cases",
+    STORE_ENFORCEMENT: "enforcementCases",
+    async getByUid(_store, key) { return records.get(key); },
+    async upsertByUid(_store, key, value) { records.set(key, { ...value, uid: key, updatedAt: 1 }); return records.get(key); },
+  };
+  const outbox = { async enqueue() {} };
+
+  await persistSyncRecord({
+    ...records.get(uid),
+    uid,
+    caseNumber: "SYNTHETIC-LI-001",
+    filedTime: "2026-08-07",
+  }, { db, outbox });
+
+  assert.equal(records.size, 1);
+  assert.equal(records.get(uid).caseNumber, "SYNTHETIC-LI-001");
 });

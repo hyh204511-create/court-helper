@@ -189,17 +189,27 @@ export function registerImportBatchRoutes(
       }
       const context = request.auth;
       if (!context?.extensionDevice) throw new ForbiddenError();
-      await browserCommandService.authorizeExecutionData(
+      const executionAccess = await browserCommandService.authorizeExecutionData(
         commandId,
         id,
         context.extensionDevice.deviceId,
         claimToken,
       );
       const result = await service.readExecutionData(id);
+      const kind = executionAccess.command.type === 'QUERY_QZ' ? 'qz' : 'li';
+      const rows = result.rows.filter((row) => row.kind === kind);
       reply.header('cache-control', 'private, no-store');
+      if (rows.length > 0) {
+        return {
+          importBatchId: id,
+          queryMode: 'template_not_empty',
+          rows: [],
+        };
+      }
       return {
         importBatchId: id,
-        rows: result.rows,
+        queryMode: 'platform_discovery',
+        rows: [],
       };
     });
   }

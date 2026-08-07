@@ -52,20 +52,24 @@
 - 后台只提交 `platformAccountId`。
 - 扩展领取后：检查法院登录页标签 → 取平台凭据 → content 执行既有 `AUTO_LOGIN` → OCR/可信点击链路不变 → 回写成功或稳定失败码。
 - 密码只在服务器凭据出口到扩展运行时内存链路流转，不进入 command payload、storage、日志或后台 HTML。
+- Service Worker 仅在同一运行期内保存最近一次成功 `LOGIN` 的不透明 `platformAccountId`，不持久化、不记录真实账号或密码。该绑定存在时，后续 `QUERY_LI` / `QUERY_QZ` 的目标 ID 不一致必须在读取批次数据前回写 `ACCOUNT_MISMATCH` 并转人工；尚无该运行期自动登录绑定的手工登录兼容流程不据此猜测账号归属。
 
 ### `QUERY_LI` / `QUERY_QZ`
 
 - 后台选择查询类型、目标平台账号和**已存在、未过期的 `importBatchId`**。服务端创建命令时将该 UUID 写入 `clientBatchId`；不得接受客户端自由字符串作为查询批次引用。
-- `QUERY_LI` 仅可绑定 `liRows > 0` 的批次，`QUERY_QZ` 仅可绑定 `qzRows > 0` 的批次。批次缺少当前查询类型的可执行行时，创建 API 必须返回 `400 VALIDATION_ERROR`，其详情为 `{ field: "importBatchId", code: "no_rows_for_query_type" }`；不得创建会在扩展端必然返回 `NO_CASES` 的任务，也不得在错误中返回业务行内容。
-- 后台的创建与历史查询任务重试都必须用已加载的批次摘要作前置提示；若当前查询类型没有可执行行，前端不得发送创建请求，须提示用户选择或上传含有效行的批次。服务端校验仍是最终防线。
+- `QUERY_LI` / `QUERY_QZ` 可绑定当前类型 `liRows` / `qzRows` 为零的合法空白模板。零行是“平台发现模式”，不是无效批次；创建、重试和扩展执行不得以 `no_rows_for_query_type` 或 `NO_CASES` 拒绝任务。仍不得在错误、命令 payload 或普通历史接口中返回业务行内容。
+- 当前查询类型存在任何业务数据行时，服务端创建或重试必须以稳定码 `TEMPLATE_NOT_EMPTY` 拒绝；不得退回旧的导入行驱动查询。已领取的历史非空任务在扩展端也必须转人工，禁止按原告、账号或标题作模糊匹配。
+- 后台的创建与历史查询任务重试可展示批次行数作为摘要，但零行必须显示“平台发现（空模板）”并允许发送请求。
 - 批次绑定在命令创建时由服务器校验；后续 extension 读取批次执行数据时必须同时校验：命令处于 `executing`、`claimed_by` 与 claim token 匹配、命令的 `clientBatchId` 与请求批次一致且批次未过期。
 - `QUERY_LI` 允许网上立案列表与我的案件列表。
 - `QUERY_QZ` 当前页面可见行不存在执行类 `caseType` 时，必须回写 `EXECUTION_TAB_REQUIRED`，不得继续执行、不得自动切 tab。
-- 扩展继续复用既有 `START_BATCH`、`runBatch`、状态识别、截图、节流（3–8 秒/案、单批 50、重试 1）。
+- 扩展继续复用既有 `START_BATCH`、`runBatch`、状态识别、截图、节流（3–8 秒/案、单批 50、重试 1）。空模板发现先从当前真实列表建立当前账号隔离的记录集，再调用同一采集链路；预取验证失败不得清空旧数据。
 - 查询结果经既有 sync/outbox 上传；未知状态保持 `UNKNOWN + needsHuman=true`。
 
 ### `EXPORT_REPORT`
 
+- Service Worker 只可使用同一运行期最近一次成功 `LOGIN` 的不透明 `platformAccountId` 执行导出；该 ID 不写入 storage、命令 payload 或服务端任务记录。没有这条绑定时必须回写 `PLATFORM_ACCOUNT_UNAVAILABLE` 并转人工。
+- content 必须同时按真实页面顶栏账号和该 `platformAccountId` 查询两张本地案件表；相同页面账号名但不同后台账号 UUID 的记录绝不能混入同一份报表。
 - 扩展从 IndexedDB 读取既有 `cases`/`enforcementCases`，复用 `xlsx-io.js` 生成工作簿。
 - 保持本地下载；随后复用 `EXPORT_UPLOAD` base64 交接上传服务器，后台 `report_exports` 记录可再次下载。
 - 服务器不生成 Excel，不接收密码列以外的未授权真实模板数据；报表文件按 report-export-module 保护。

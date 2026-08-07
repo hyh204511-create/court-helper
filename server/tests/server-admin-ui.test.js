@@ -287,6 +287,7 @@ test('browser control renders full session and creator names, separates LOGIN, a
     const admin = await login(app, 'admin', ADMIN_PASSWORD);
     const worker = await login(app, 'worker', WORKER_PASSWORD);
     const script = await app.inject({ method: 'GET', url: '/admin/assets/admin.js' });
+    assert.match(script.body, /TEMPLATE_NOT_EMPTY/);
     const emptyLiBatch = {
       id: '00000000-0000-0000-0000-000000000401',
       fileName: 'synthetic-qz-only.xlsx',
@@ -398,29 +399,32 @@ test('browser control renders full session and creator names, separates LOGIN, a
       const taskType = dom.window.document.querySelector('#browser-command-type');
       const taskAccount = dom.window.document.querySelector('#browser-command-account');
       const taskBatch = dom.window.document.querySelector('#browser-command-batch');
+      assert.match(taskBatch.options[1].textContent, /平台发现/);
+      assert.match(dom.window.document.querySelector('#import-batch-rows').textContent, /0（平台发现）/);
+      const browserCommandPosts = () => requests.filter((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands');
       taskType.value = 'QUERY_LI';
       taskType.dispatchEvent(new dom.window.Event('change'));
       taskAccount.value = ACCOUNT_ID;
       taskBatch.value = emptyLiBatch.id;
-      const queryRequestsBefore = requests.filter((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands').length;
+      const queryRequestsBefore = browserCommandPosts().length;
       dom.window.document.querySelector('#browser-command-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
       await new Promise((resolve) => setTimeout(resolve, 0));
-      assert.equal(requests.filter((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands').length, queryRequestsBefore);
-      assert.match(dom.window.document.querySelector('[data-browser-command-message]').textContent, /没有可执行的立案行/);
+      assert.equal(browserCommandPosts().length, queryRequestsBefore + 1);
+      assert.equal(JSON.parse(String(browserCommandPosts().at(-1).body)).importBatchId, emptyLiBatch.id);
 
       taskType.value = 'QUERY_QZ';
       taskType.dispatchEvent(new dom.window.Event('change'));
       taskBatch.value = emptyQzBatch.id;
-      const qzRequestsBefore = requests.filter((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands').length;
+      const qzRequestsBefore = browserCommandPosts().length;
       dom.window.document.querySelector('#browser-command-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
       await new Promise((resolve) => setTimeout(resolve, 0));
-      assert.equal(requests.filter((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands').length, qzRequestsBefore);
-      assert.match(dom.window.document.querySelector('[data-browser-command-message]').textContent, /没有可执行的强执行行/);
+      assert.equal(browserCommandPosts().length, qzRequestsBefore + 1);
+      assert.equal(JSON.parse(String(browserCommandPosts().at(-1).body)).importBatchId, emptyQzBatch.id);
 
       await waitFor(() => dom.window.document.querySelector('#platform-login-account').value === ACCOUNT_ID);
       dom.window.document.querySelector('#platform-login-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
       await waitFor(() => requests.some((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands'));
-      const loginRequest = requests.find((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands');
+      const loginRequest = requests.find((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands' && JSON.parse(String(request.body)).type === 'LOGIN');
       assert.deepEqual(JSON.parse(String(loginRequest.body)), { type: 'LOGIN', platformAccountId: ACCOUNT_ID });
 
       const failedQueryIndex = commands.findIndex((command) => command.id === '00000000-0000-0000-0000-000000000301');
@@ -431,11 +435,11 @@ test('browser control renders full session and creator names, separates LOGIN, a
       };
       dom.window.document.querySelector('#browser-command-refresh').click();
       await waitFor(() => dom.window.document.querySelector('[data-action="retry-browser-command"]') !== null);
-      const retryRequestsBefore = requests.filter((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands').length;
+      const retryRequestsBefore = browserCommandPosts().length;
       dom.window.document.querySelector('[data-action="retry-browser-command"]').click();
       await new Promise((resolve) => setTimeout(resolve, 0));
-      assert.equal(requests.filter((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands').length, retryRequestsBefore);
-      assert.match(dom.window.document.querySelector('[data-browser-command-status]').textContent, /没有可执行的立案行/);
+      assert.equal(browserCommandPosts().length, retryRequestsBefore + 1);
+      assert.equal(JSON.parse(String(browserCommandPosts().at(-1).body)).importBatchId, emptyLiBatch.id);
 
       await waitFor(() => dom.window.document.querySelector('#platform-credential-show').disabled === false);
       dom.window.document.querySelector('#platform-credential-show').click();

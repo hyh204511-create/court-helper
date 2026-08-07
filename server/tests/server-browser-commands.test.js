@@ -78,8 +78,8 @@ function importBatchRecord(
     contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     byteSize: 1024,
     sha256: 'a'.repeat(64),
-    liRows: 1,
-    qzRows: 1,
+    liRows: 0,
+    qzRows: 0,
     skippedRows: 0,
     createdBy: ADMIN_ID,
     createdAt,
@@ -284,8 +284,8 @@ test('extension pending feed and execution-data lease authorization are claimant
   });
   assert.equal(executionData.statusCode, 200);
   assert.match(executionData.headers['cache-control'], /no-store/);
-  assert.ok(executionData.json().rows.length > 0);
-  assert.equal(executionData.json().rows.some((row) => Object.hasOwn(row, 'password')), false);
+  assert.equal(executionData.json().queryMode, 'template_not_empty');
+  assert.deepEqual(executionData.json().rows, []);
 
   const spoofedDeviceHeader = await app.inject({
     method: 'GET',
@@ -446,23 +446,33 @@ test('browser query commands bind only an existing, unexpired import batch', asy
   );
 });
 
-test('browser query commands reject batches without rows for the selected query type', async () => {
+test('browser query commands accept empty templates as platform-discovery baselines', async () => {
   for (const [type, rowField] of [['QUERY_LI', 'liRows'], ['QUERY_QZ', 'qzRows']]) {
     const emptyForType = importBatchRecord();
     emptyForType[rowField] = 0;
     const { service, repository } = await makeService(undefined, [emptyForType]);
 
-    await assert.rejects(
-      service.create(commandInput(type, { platformAccountId: randomUUID() })),
-      (error) => error?.code === 'VALIDATION_ERROR'
-        && error?.statusCode === 400
-        && JSON.stringify(error?.details) === JSON.stringify([{ field: 'importBatchId', code: 'no_rows_for_query_type' }]),
-    );
-    assert.equal((await repository.list({ limit: 10 })).items.length, 0);
+    const command = await service.create(commandInput(type, { platformAccountId: randomUUID() }));
+    assert.equal(command.clientBatchId, IMPORT_BATCH_ID);
+    assert.equal(command.status, 'pending');
+    assert.equal((await repository.list({ limit: 10 })).items.length, 1);
   }
 });
 
-test('browser command API rejects query batches without executable rows before creating a command', async () => {
+test('browser query commands reject non-empty template blocks instead of falling back to row matching', async () => {
+  for (const [type, rowField] of [['QUERY_LI', 'liRows'], ['QUERY_QZ', 'qzRows']]) {
+    const nonEmptyForType = importBatchRecord();
+    nonEmptyForType[rowField] = 1;
+    const { service } = await makeService(undefined, [nonEmptyForType]);
+
+    await assert.rejects(
+      service.create(commandInput(type, { platformAccountId: randomUUID() })),
+      (error) => error?.code === 'TEMPLATE_NOT_EMPTY' && error?.statusCode === 400,
+    );
+  }
+});
+
+test('browser command API creates a query command for an empty template', async () => {
   const emptyLiBatch = importBatchRecord();
   emptyLiBatch.liRows = 0;
   const importBatchRepository = new MemoryImportBatchRepository([emptyLiBatch]);
@@ -475,10 +485,9 @@ test('browser command API rejects query batches without executable rows before c
       importBatchId: IMPORT_BATCH_ID,
     });
 
-    assert.equal(response.statusCode, 400);
-    assert.equal(response.json().error.code, 'VALIDATION_ERROR');
-    assert.deepEqual(response.json().error.details, [{ field: 'importBatchId', code: 'no_rows_for_query_type' }]);
-    assert.equal((await browserCommands.list({ limit: 10 })).items.length, 0);
+    assert.equal(response.statusCode, 201);
+    assert.equal(response.json().command.clientBatchId, IMPORT_BATCH_ID);
+    assert.equal((await browserCommands.list({ limit: 10 })).items.length, 1);
   } finally {
     await app.close();
   }

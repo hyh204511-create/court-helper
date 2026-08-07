@@ -248,6 +248,7 @@ function errorMessage(error) {
     if (error.status === 403) return '无权访问';
     if (error.status === 401 || error.code === 'ACCOUNT_DISABLED') return '账号或密码错误/账号不可用';
     if (error.code === 'DUPLICATE_PENDING') return '已有进行中的统一登录任务，请前往浏览器控制查看';
+    if (error.code === 'TEMPLATE_NOT_EMPTY') return '当前查询表块必须为空，请上传仅含表头的模板';
     if (error.requestId) return '请求失败，请提供请求编号 ' + error.requestId;
   }
   return '请求失败，请稍后重试';
@@ -893,10 +894,12 @@ async function loadImportBatches() {
     clear(target); clear(select);
     const empty = element('option', '不选择'); empty.value = ''; select.appendChild(empty);
     importBatches.forEach((batch) => {
-      const option = element('option', batch.fileName + '（立案 ' + batch.liRows + ' / 强执 ' + batch.qzRows + '）');
+      const liLabel = batch.liRows === 0 ? '立案 0（平台发现）' : '立案 ' + batch.liRows;
+      const qzLabel = batch.qzRows === 0 ? '强执 0（平台发现）' : '强执 ' + batch.qzRows;
+      const option = element('option', batch.fileName + '（' + liLabel + ' / ' + qzLabel + '）');
       option.value = batch.id; select.appendChild(option);
       const row = element('tr');
-      row.append(element('td', batch.fileName), element('td', batch.liRows), element('td', batch.qzRows), element('td', batch.skippedRows), element('td', dateLabel(batch.createdAt)));
+      row.append(element('td', batch.fileName), element('td', batch.liRows === 0 ? '0（平台发现）' : batch.liRows), element('td', batch.qzRows === 0 ? '0（平台发现）' : batch.qzRows), element('td', batch.skippedRows), element('td', dateLabel(batch.createdAt)));
       target.appendChild(row);
     });
     if (!target.firstChild) { const row = element('tr'); const cell = element('td', '暂无导入批次'); cell.colSpan = 5; row.appendChild(cell); target.appendChild(row); }
@@ -989,16 +992,6 @@ function startBrowserCommandPolling() {
   void loadBrowserCommands();
 }
 
-function noExecutableQueryRowsMessage(type, importBatchId) {
-  const rowField = type === 'QUERY_LI' ? 'liRows' : type === 'QUERY_QZ' ? 'qzRows' : null;
-  if (!rowField || !importBatchId) return '';
-  const selectedBatch = browserControlImportBatches.find((candidate) => candidate.id === importBatchId);
-  const executableRows = selectedBatch?.[rowField];
-  if (typeof executableRows !== 'number' || executableRows >= 1) return '';
-  const queryLabel = type === 'QUERY_LI' ? '立案' : '强执行';
-  return '所选批次没有可执行的' + queryLabel + '行，请上传或选择含 A 列原告和 C 列账号的' + queryLabel + '数据';
-}
-
 function initBrowserControl() {
   const commandForm = $('#browser-command-form');
   const loginForm = $('#platform-login-form');
@@ -1056,11 +1049,6 @@ function initBrowserControl() {
     event.preventDefault(); const selectedType = type.value; const platformAccountId = selectedType === 'EXPORT_REPORT' ? null : (account.value || null); const importBatchId = selectedType.startsWith('QUERY_') ? (batch.value || null) : null;
     if (selectedType.startsWith('QUERY_') && !platformAccountId) { setMessage($('[data-browser-command-message]'), '请选择平台账号'); return; }
     if (selectedType.startsWith('QUERY_') && !importBatchId) { setMessage($('[data-browser-command-message]'), '查询任务必须选择导入批次'); return; }
-    const unavailableRowsMessage = noExecutableQueryRowsMessage(selectedType, importBatchId);
-    if (unavailableRowsMessage) {
-      setMessage($('[data-browser-command-message]'), unavailableRowsMessage);
-      return;
-    }
     setFormBusy(commandForm, true);
     try { await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: selectedType, platformAccountId, importBatchId }) }); setMessage($('[data-browser-command-message]'), '任务已创建', 'success'); await loadBrowserCommands(); }
     catch (error) { setMessage($('[data-browser-command-message]'), errorMessage(error)); } finally { setFormBusy(commandForm, false); }
@@ -1109,11 +1097,6 @@ function initBrowserControl() {
         await api('/browser-commands/' + encodeURIComponent(id) + '/cancel', { method: 'POST', body: '{}' });
       } else if (button.dataset.action === 'retry-browser-command') {
         const row = button.closest('tr');
-        const unavailableRowsMessage = noExecutableQueryRowsMessage(row?.dataset.type, row?.dataset.batch);
-        if (unavailableRowsMessage) {
-          setMessage($('[data-browser-command-status]'), unavailableRowsMessage);
-          return;
-        }
         await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: row.dataset.type, platformAccountId: row.dataset.account || null, importBatchId: row.dataset.batch || null }) });
       }
       await loadBrowserCommands();
@@ -1249,6 +1232,12 @@ async function initPage() {
   }
 }
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { void initPage(); });
-else void initPage();
+let pageInitialization = null;
+function initPageOnce() {
+  if (!pageInitialization) pageInitialization = initPage();
+  return pageInitialization;
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { void initPageOnce(); });
+else void initPageOnce();
 `;

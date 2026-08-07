@@ -48,12 +48,14 @@ function fingerprint(value) {
  */
 export async function persistSyncRecord(record, { db = defaultDb, outbox = defaultOutbox } = {}) {
   const storeName = record.kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
-  const existing = await db.getByUid(storeName, record.uid);
-  const local = await db.upsert(storeName, {
+  const uid = typeof record.uid === "string" && record.uid ? record.uid : db.uidOf(record);
+  const existing = await db.getByUid(storeName, uid);
+  const successImage = record.image ?? record.successImage ?? existing?.successImage ?? null;
+  const local = await db.upsertByUid(storeName, uid, {
     ...existing,
     ...record,
-    successImage: record.image ?? existing?.successImage ?? null,
-    needsHuman: record.needsHuman || (!record.image && ["立案成功", "强执成功"].includes(record.status)),
+    successImage,
+    needsHuman: record.needsHuman || (!successImage && ["立案成功", "强执成功"].includes(record.status)),
   });
   const payload = {
     clientUid: local.uid,
@@ -63,7 +65,7 @@ export async function persistSyncRecord(record, { db = defaultDb, outbox = defau
     plaintiff: local.plaintiff ?? "",
     defendant: local.defendant ?? "",
     status: local.status,
-    filedDate: local.filedDate ?? null,
+    filedTime: local.filedTime ?? null,
     caseNumber: local.caseNumber ?? null,
     rejectTime: local.rejectTime ?? null,
     rejectReason: local.rejectReason ?? null,
@@ -80,7 +82,7 @@ export async function persistSyncRecord(record, { db = defaultDb, outbox = defau
     blobRef: record.image
       ? {
           storeName,
-          uid: record.uid,
+          uid,
           field: record.status === "已驳回" ? "rejectImage" : "successImage",
         }
       : null,
@@ -123,10 +125,11 @@ export async function runBatch({ cases = [], pageOps, onUpdate, timing = {}, per
       uid: c.uid,
       kind: c.kind ?? "li",
       account: c.account ?? "",
+      platformAccountId: c.platformAccountId ?? "",
       plaintiff: c.plaintiff ?? "",
       status: "UNKNOWN",
       caseNumber: null,
-      filedDate: null,
+      filedTime: null,
       rejectTime: null,
       rejectReason: null,
       image: null,
@@ -143,7 +146,7 @@ export async function runBatch({ cases = [], pageOps, onUpdate, timing = {}, per
       });
       record.status = status;
       record.caseNumber = raw.caseNumber ?? null;
-      record.filedDate = raw.filedDate ?? null;
+      record.filedTime = raw.filedTime ?? raw.filedDate ?? null;
       record.rejectTime = raw.rejectTime ?? null;
       record.rejectReason = raw.rejectReason ?? null;
       if (status === "UNKNOWN") {

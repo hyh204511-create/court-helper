@@ -106,8 +106,17 @@ export async function resetDb() {
 
 /** 唯一键：账号+案号；案号空 → 账号+原告+被告 */
 export function uidOf(record) {
-  const key = record.caseNumber || `${record.plaintiff}\u0000${record.defendant}`;
-  return `${record.account}\u0000${key}`;
+  const owner = typeof record?.platformAccountId === "string" && record.platformAccountId
+    ? record.platformAccountId
+    : record.account;
+  const sourceCaseName = typeof record?.sourceCaseName === "string" ? record.sourceCaseName : "";
+  const sourceCause = typeof record?.sourceCause === "string" ? record.sourceCause : "";
+  const sourceApplicationDate = typeof record?.sourceApplicationDate === "string" ? record.sourceApplicationDate : "";
+  const sourceKey = sourceCaseName
+    ? `${record.plaintiff}\u0000${record.defendant}\u0000${sourceCause}\u0000${sourceApplicationDate}\u0000${sourceCaseName}`
+    : `${record.plaintiff}\u0000${record.defendant}`;
+  const key = record.caseNumber || sourceKey;
+  return `${owner}\u0000${key}`;
 }
 
 function txDone(tx) {
@@ -225,17 +234,61 @@ export async function clearStore(storeName) {
 }
 
 /**
+ * 原子替换一个平台账号在指定表块中的记录。用于空模板平台发现，避免旧账号数据混入新报表。
+ */
+export async function replaceAccountRecords(storeName, account, records, { platformAccountId = null } = {}) {
+  if (typeof account !== "string" || account.trim() === "") throw new TypeError("account required");
+  if (!Array.isArray(records) || records.some((record) => record?.account !== account)) {
+    throw new TypeError("records must belong to account");
+  }
+  if (platformAccountId !== null && (typeof platformAccountId !== "string" || !platformAccountId)) {
+    throw new TypeError("platformAccountId required");
+  }
+  if (platformAccountId !== null && records.some((record) => record?.platformAccountId !== platformAccountId)) {
+    throw new TypeError("records must belong to platformAccountId");
+  }
+  const db = await openDb();
+  const tx = db.transaction(storeName, "readwrite");
+  const store = tx.objectStore(storeName);
+  const request = store.openCursor();
+  request.onsuccess = () => {
+    const cursor = request.result;
+    if (cursor) {
+      const value = cursor.value;
+      const belongsToReplacedAccount = value?.account === account
+        && (platformAccountId === null
+          || value.platformAccountId === platformAccountId
+          || value.platformAccountId == null
+          || value.platformAccountId === "");
+      if (belongsToReplacedAccount) {
+        cursor.delete();
+      }
+      cursor.continue();
+      return;
+    }
+    for (const record of records) {
+      const cleaned = withoutPassword(record);
+      store.put({ ...cleaned, uid: uidOf(cleaned), updatedAt: Date.now() });
+    }
+  };
+  request.onerror = () => tx.abort();
+  await txDone(tx);
+  return records.map((record) => ({ ...withoutPassword(record), uid: uidOf(record) }));
+}
+
+/**
  * 查询（数据量小，全表过滤即可）。
  * @param {string} storeName
  * @param {{account?: string, keyword?: string, status?: string}} [filter]
  *   keyword 模糊匹配 原告/被告/账号
  */
-export async function query(storeName, { account, keyword, status } = {}) {
+export async function query(storeName, { account, platformAccountId, keyword, status } = {}) {
   const all = await getAll(storeName);
   const k = keyword?.trim();
   return all
     .filter((r) => {
       if (account && r.account !== account) return false;
+      if (platformAccountId && r.platformAccountId !== platformAccountId) return false;
       if (status && r.status !== status) return false;
       if (k && ![r.plaintiff, r.defendant, r.account].some((v) => v?.includes(k))) return false;
       return true;

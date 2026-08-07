@@ -145,7 +145,7 @@ function toLocalCase(value) {
     defendant: typeof value?.defendant === "string" ? value.defendant : "",
     kind: value?.kind === "qz" ? "qz" : "li",
     status,
-    filedDate: dateOnly(value?.filedTime),
+    filedTime: dateOnly(value?.filedTime),
     caseNumber: typeof value?.caseNumber === "string" ? value.caseNumber : null,
     rejectTime: dateOnly(value?.rejectTime),
     rejectReason: typeof value?.rejectReason === "string" ? value.rejectReason : null,

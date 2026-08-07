@@ -1,5 +1,6 @@
 import { hashToken, newOpaqueToken } from '../auth/token.ts';
 import {
+  AppError,
   ConflictError,
   ForbiddenError,
   NotFoundError,
@@ -342,13 +343,13 @@ export class BrowserCommandService {
       if (importBatch.expiresAt.getTime() <= now.getTime()) {
         throw new ConflictError('Import batch expired', 'IMPORT_BATCH_EXPIRED');
       }
-      const executableRows = normalized.type === 'QUERY_LI'
+      const rowCount = normalized.type === 'QUERY_LI'
         ? importBatch.liRows
         : normalized.type === 'QUERY_QZ'
           ? importBatch.qzRows
-          : null;
-      if (executableRows !== null && executableRows < 1) {
-        throw new ValidationError([{ field: 'importBatchId', code: 'no_rows_for_query_type' }]);
+          : 0;
+      if (rowCount > 0) {
+        throw new AppError('Import template must be empty', 'TEMPLATE_NOT_EMPTY', 400, false);
       }
       clientBatchId = importBatch.id;
     }

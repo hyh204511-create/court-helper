@@ -22,15 +22,18 @@ import {
 } from "./login-detector.js";
 import { doAutoLogin } from "./login-auto.js";
 import { captureElement } from "./screen-capturer.js";
-import { runBatch, RETRY_COUNT, jitterMs } from "../data/batch-runner.js";
+import { persistSyncRecord, runBatch, RETRY_COUNT, jitterMs } from "../data/batch-runner.js";
 import { recognizeStatus } from "./status-recognizer.js";
 import { createCourtPanel } from "./court-panel.js";
 import { importXlsx } from "../data/import-xlsx.js";
 import { buildExportWorkbook } from "../data/xlsx-io.js";
 import { exportUploadMessage, exportWorkbookToServer } from "../data/export-uploader.js";
+import { buildPlatformDiscoveryRecords } from "../data/platform-discovery.js";
+import { selectMyCaseEvidence } from "../data/platform-evidence.js";
 import * as db from "../data/db.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const MY_CASE_ROUTE = "#/pages/pc/case-list/index";
 const isDetailPage = () => location.hash.includes("wsla/detail");
 const isListPage = () => isCourtListRoute(location.hash);
 
@@ -290,12 +293,17 @@ async function handlePanelImport(file) {
   );
 }
 
-/** 面板导出：IndexedDB → 模板格式 xlsx → 下载 */
-function handlePanelExport() {
+/** 面板导出：只导出当前平台账号绑定的 IndexedDB 记录。 */
+function handlePanelExport({ platformAccountId = null } = {}) {
   if (_exportInFlight) return _exportInFlight;
   const current = (async () => {
-    const cases = await db.query(db.STORE_CASES, {});
-    const enforcementCases = await db.query(db.STORE_ENFORCEMENT, {});
+    ensureListReady();
+    const account = getCurrentAccount(document);
+    if (!account) throw new Error("ACCOUNT_UNDETECTED");
+    if (typeof platformAccountId !== "string" || !platformAccountId) throw new Error("PLATFORM_ACCOUNT_UNAVAILABLE");
+    const filter = { account, platformAccountId };
+    const cases = await db.query(db.STORE_CASES, filter);
+    const enforcementCases = await db.query(db.STORE_ENFORCEMENT, filter);
     const wb = await buildExportWorkbook({ cases, enforcementCases });
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
@@ -385,7 +393,7 @@ async function waitFor(fn, timeoutMs = 10000, intervalMs = 300) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      if (fn()) return true;
+      if (await fn()) return true;
     } catch { /* 继续等待 */ }
     await sleep(intervalMs);
   }
@@ -479,16 +487,24 @@ async function queryCase({ uid, kind }) {
   const pageKind = location.hash.includes("pagesWsla") ? "wsla" : "mycase";
   const rows = collectListRows(document);
   if (!rows.length) throw new Error("LIST_EMPTY");
-  const target = rows.find((r) => rec.plaintiff && r.caseName.includes(rec.plaintiff));
-  if (!target) throw new Error("CASE_NOT_FOUND_IN_LIST");
+  const candidates = rec.sourceCaseName
+    ? rows.filter((row) => row.caseName === rec.sourceCaseName)
+    : rec.caseNumber
+      ? rows.filter((row) => extractBusinessFields(row.fields).caseNumber === rec.caseNumber)
+      : [];
+  if (!candidates.length) throw new Error("CASE_NOT_FOUND_IN_LIST");
+  if (candidates.length !== 1) throw new Error("CASE_MATCH_AMBIGUOUS");
+  const [target] = candidates;
 
   const biz = extractBusinessFields(target.fields);
   const raw = {
     statusText: target.statusText,
     caseType: target.caseType,
     pageKind,
-    caseNumber: biz.caseNumber,
-    filedDate: biz.filedDate,
+    // 网上立案列表只提供 A/B/C/E/I/J/K 事实；成功日期和案号必须由
+    // “我的案件”中的严格唯一搜索结果补齐，不能提前写入 F/G。
+    caseNumber: pageKind === "mycase" ? biz.caseNumber : null,
+    filedTime: pageKind === "mycase" ? biz.filedDate : null,
   };
   const status = recognizeStatus({ statusText: raw.statusText, caseType: raw.caseType, pageKind });
   if (status === "已驳回") {
@@ -522,7 +538,7 @@ async function captureRow(target) {
 }
 
 /** 批量执行入口（START_BATCH 消息） */
-async function startBatch(kind) {
+async function startBatch(kind, { account = null, platformAccountId = null } = {}) {
   if (!ensureListReady()) throw new Error("NOT_READY");
   if (kind === "qz") {
     const rows = collectListRows(document);
@@ -531,9 +547,13 @@ async function startBatch(kind) {
     }
   }
   const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
-  const all = await db.query(store, {});
+  const all = await db.query(store, {
+    ...(account ? { account } : {}),
+    ...(platformAccountId ? { platformAccountId } : {}),
+  });
   if (!all.length) throw new Error("NO_CASES");
-  const total = Math.min(all.length, 50);
+  if (all.length > 50) throw new Error("BATCH_LIMIT_EXCEEDED");
+  const total = all.length;
   showToast(`开始批量查询 ${total} 条（${kind === "qz" ? "强执" : "立案"}），请勿切换页面`, 8000);
   _batchRunning = true;
   _batchPaused = false;
@@ -541,7 +561,13 @@ async function startBatch(kind) {
 
   let done = 0;
   const stats = await runBatch({
-    cases: all.map((r) => ({ uid: r.uid, kind, account: r.account, plaintiff: r.plaintiff })),
+    cases: all.map((r) => ({
+      uid: r.uid,
+      kind,
+      account: r.account,
+      platformAccountId: r.platformAccountId ?? platformAccountId,
+      plaintiff: r.plaintiff,
+    })),
     pageOps: {
       queryCase,
       async capture() {
@@ -553,7 +579,7 @@ async function startBatch(kind) {
     onUpdate: async (record) => {
       const storeName = record.kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
       const existing = await db.getByUid(storeName, record.uid);
-      await db.upsert(storeName, {
+      await db.upsertByUid(storeName, record.uid, {
         ...existing,
         ...record,
         successImage: record.image ?? existing?.successImage ?? null,
@@ -566,6 +592,156 @@ async function startBatch(kind) {
   });
   _batchRunning = false;
   return { ok: true, stats };
+}
+
+/** 空白模板：当前真实列表是案件事实源，先验证完再替换当前账号本地记录。 */
+function expectedSuccessStatus(kind) {
+  return kind === "qz" ? "强执成功" : "立案成功";
+}
+
+function setControlledSearchValue(input, value) {
+  const view = input?.ownerDocument?.defaultView;
+  const descriptor = Object.getOwnPropertyDescriptor(view?.HTMLInputElement?.prototype, "value");
+  if (typeof descriptor?.set !== "function") throw new Error("SELECTOR_CHANGED");
+  descriptor.set.call(input, value);
+  input.dispatchEvent(new view.Event("input", { bubbles: true, composed: true }));
+  input.dispatchEvent(new view.Event("change", { bubbles: true, composed: true }));
+}
+
+function waitForSearchRefresh(container, timeoutMs = 10000) {
+  const MutationObserverCtor = container?.ownerDocument?.defaultView?.MutationObserver;
+  if (typeof MutationObserverCtor !== "function") return Promise.resolve(false);
+  const beforeRows = [...container.querySelectorAll(SELECTORS.list.row)];
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    const finish = (refreshed) => {
+      if (settled) return;
+      settled = true;
+      observer.disconnect();
+      if (timer !== null) clearTimeout(timer);
+      resolve(refreshed);
+    };
+    const observer = new MutationObserverCtor(() => {
+      const currentRows = [...container.querySelectorAll(SELECTORS.list.row)];
+      const rowsRefreshed = currentRows.length !== beforeRows.length
+        || currentRows.some((row, index) => row !== beforeRows[index]);
+      if (rowsRefreshed) finish(true);
+    });
+    // 只把案件行替换/增减视为搜索结果刷新。loading class 等容器属性变化
+    // 不能证明平台已返回本次搜索结果，不能据此读取 F/G。
+    observer.observe(container, { childList: true, subtree: true });
+    timer = setTimeout(() => finish(false), timeoutMs);
+  });
+}
+
+async function navigateToMyCaseList() {
+  if (location.hash.split("?", 1)[0] !== MY_CASE_ROUTE) location.hash = MY_CASE_ROUTE;
+  const ready = await waitFor(() =>
+    location.hash.split("?", 1)[0] === MY_CASE_ROUTE
+      && !!document.querySelector(SELECTORS.list.container)
+      && !!document.querySelector(SELECTORS.list.searchBtn),
+  10000, 250);
+  if (!ready) throw new Error("MYCASE_PAGE_TIMEOUT");
+}
+
+async function searchMyCaseBySourceName(sourceCaseName) {
+  const input = document.querySelector(SELECTORS.list.searchInput);
+  const button = document.querySelector(SELECTORS.list.searchBtn);
+  const container = document.querySelector(SELECTORS.list.container);
+  if (!input || !button || !container) return { ok: false, error: "SELECTOR_CHANGED" };
+  setControlledSearchValue(input, sourceCaseName);
+  for (let attempt = 0; attempt <= RETRY_COUNT; attempt += 1) {
+    const refreshed = waitForSearchRefresh(container);
+    button.click();
+    if (await refreshed) return { ok: true, rows: collectListRows(document) };
+  }
+  return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
+}
+
+async function persistMyCaseEvidence(record, selection) {
+  const update = selection.ok
+    ? { ...record, ...selection.value, needsHuman: record.needsHuman === true, errorCode: record.errorCode ?? null }
+    : { ...record, needsHuman: true, errorCode: selection.error };
+  await persistSyncRecord(update);
+  return update;
+}
+
+async function completeMyCaseEvidence(kind, { account, platformAccountId, navigate = false } = {}) {
+  if (location.hash.split("?", 1)[0] !== MY_CASE_ROUTE) {
+    if (!navigate) throw new Error(kind === "qz" ? "EXECUTION_TAB_REQUIRED" : "MYCASE_PAGE_REQUIRED");
+    await navigateToMyCaseList();
+  }
+  if (!ensureListReady()) throw new Error("NOT_READY");
+  if (getCurrentAccount(document) !== account) throw new Error("ACCOUNT_MISMATCH");
+  const visibleRows = collectListRows(document);
+  if (kind === "qz" && !visibleRows.some((row) => isEnforcementCaseType(row.caseType))) {
+    throw new Error("EXECUTION_TAB_REQUIRED");
+  }
+
+  const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
+  const candidates = (await db.query(store, { account, platformAccountId }))
+    .filter((record) => record.status === expectedSuccessStatus(kind))
+    .filter((record) => !record.caseNumber || !record.filedTime);
+  let completed = 0;
+  let needsHuman = 0;
+  for (const record of candidates) {
+    const search = record.sourceCaseName
+      ? await searchMyCaseBySourceName(record.sourceCaseName)
+      : { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
+    const selection = search.ok
+      ? selectMyCaseEvidence({ record, kind, rows: search.rows })
+      : search;
+    const updated = await persistMyCaseEvidence(record, selection);
+    if (selection.ok && !updated.needsHuman) completed += 1;
+    else needsHuman += 1;
+    await delayWithPause();
+  }
+  return { total: candidates.length, completed, needsHuman };
+}
+
+async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
+  if (!ensureListReady()) throw new Error("NOT_READY");
+  if (typeof platformAccountId !== "string" || !platformAccountId) throw new Error("PLATFORM_ACCOUNT_UNAVAILABLE");
+  const account = getCurrentAccount(document);
+  if (!account) throw new Error("ACCOUNT_UNDETECTED");
+  if (location.hash.split("?", 1)[0] === MY_CASE_ROUTE) {
+    _batchRunning = true;
+    try {
+      const evidence = await completeMyCaseEvidence(kind, { account, platformAccountId });
+      return evidence.needsHuman
+        ? { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE", evidence }
+        : { ok: true, evidence };
+    } finally {
+      _batchRunning = false;
+    }
+  }
+  const rows = collectListRows(document);
+  if (kind === "qz" && !rows.some((row) => isEnforcementCaseType(row.caseType))) {
+    throw new Error("EXECUTION_TAB_REQUIRED");
+  }
+  const records = buildPlatformDiscoveryRecords({ account, platformAccountId, kind, rows });
+  const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
+  await db.replaceAccountRecords(store, account, records, { platformAccountId });
+  if (!records.length) return { ok: true, stats: { total: 0, success: 0, unknown: 0, needsHuman: 0 } };
+  const initial = await startBatch(kind, { account, platformAccountId });
+  if (kind === "qz") {
+    const pendingEvidence = (await db.query(store, { account, platformAccountId }))
+      .some((record) => record.status === expectedSuccessStatus(kind)
+        && (!record.caseNumber || !record.filedTime));
+    return pendingEvidence
+      ? { ok: false, error: "MYCASE_PAGE_REQUIRED", stats: initial.stats }
+      : { ok: true, stats: initial.stats };
+  }
+  _batchRunning = true;
+  try {
+    const evidence = await completeMyCaseEvidence(kind, { account, platformAccountId, navigate: true });
+    return evidence.needsHuman
+      ? { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE", stats: initial.stats, evidence }
+      : { ok: true, stats: initial.stats, evidence };
+  } finally {
+    _batchRunning = false;
+  }
 }
 
 async function executeBrowserCommand(message) {
@@ -584,20 +760,14 @@ async function executeBrowserCommand(message) {
   }
   if (message.commandType === "QUERY_LI" || message.commandType === "QUERY_QZ") {
     const kind = message.commandType === "QUERY_QZ" ? "qz" : "li";
-    const rows = Array.isArray(message.rows) ? message.rows.filter((row) => row?.kind === kind).slice(0, 50) : [];
-    if (!rows.length) return { ok: false, error: "NO_CASES" };
-    const records = rows.map((row) => {
-      const clean = { ...row };
-      delete clean.password;
-      delete clean.kind;
-      return clean;
-    });
-    await db.applyImport(kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES, records);
-    return startBatch(kind);
+    if (message.queryMode === "platform_discovery") {
+      return startPlatformDiscovery(kind, { platformAccountId: message.platformAccountId });
+    }
+    return { ok: false, error: "TEMPLATE_NOT_EMPTY" };
   }
   if (message.commandType === "EXPORT_REPORT") {
     ensureListReady();
-    return handlePanelExport();
+    return handlePanelExport({ platformAccountId: message.platformAccountId });
   }
   return { ok: false, error: "UNSUPPORTED_COMMAND" };
 }

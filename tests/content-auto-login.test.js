@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import ExcelJS from "exceljs";
 import { JSDOM } from "jsdom";
 import "fake-indexeddb/auto";
 
@@ -126,6 +127,57 @@ test("EXPORT_REPORT 在非允许列表路由先拒绝，不下载或上传", asy
     assert.equal(sent, 0);
   } finally {
     cleanup(dom);
+  }
+});
+
+test("EXPORT_REPORT 仅导出当前登录链路绑定的 platformAccountId 记录", async () => {
+  await db.resetDb();
+  const targetPlatformAccountId = "00000000-0000-4000-8000-000000000402";
+  const otherPlatformAccountId = "00000000-0000-4000-8000-000000000401";
+  await db.upsert(db.STORE_CASES, {
+    account: "demo-account",
+    platformAccountId: targetPlatformAccountId,
+    plaintiff: "TARGET PLAINTIFF",
+    defendant: "TARGET DEFENDANT",
+    kind: "li",
+    status: "审核中",
+  });
+  await db.upsert(db.STORE_CASES, {
+    account: "demo-account",
+    platformAccountId: otherPlatformAccountId,
+    plaintiff: "OTHER PLAINTIFF",
+    defendant: "OTHER DEFENDANT",
+    kind: "li",
+    status: "审核中",
+  });
+  const { dom, chrome, listener } = await loadContent({
+    hash: "#/pagesWsla/pc/list/index",
+    html: batchListHtml(),
+  });
+  const anchorClick = dom.window.HTMLAnchorElement.prototype.click;
+  const uploads = [];
+  dom.window.HTMLAnchorElement.prototype.click = () => undefined;
+  chrome.runtime.sendMessage = async (message) => {
+    if (message?.type === "EXPORT_UPLOAD") uploads.push(message);
+    return { ok: true, exportId: "synthetic-export" };
+  };
+  try {
+    const result = await dispatch(listener, {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "EXPORT_REPORT",
+      platformAccountId: targetPlatformAccountId,
+    });
+    assert.deepEqual(result.response, { status: "uploaded", exportId: "synthetic-export" });
+    assert.equal(uploads.length, 1);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Buffer.from(uploads[0].base64, "base64"));
+    const worksheet = workbook.getWorksheet("Sheet1");
+    assert.equal(worksheet.getCell("A2").value, "TARGET PLAINTIFF");
+    assert.equal(worksheet.getCell("A3").value, null);
+  } finally {
+    dom.window.HTMLAnchorElement.prototype.click = anchorClick;
+    cleanup(dom);
+    await db.resetDb();
   }
 });
 

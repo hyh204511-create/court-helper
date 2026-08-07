@@ -381,9 +381,9 @@ test("批量结果按本地 upsert → outbox enqueue → onUpdate 顺序处理"
       calls.push("get");
       return null;
     },
-    async upsert(storeName, record) {
+    async upsertByUid(storeName, uid, record) {
       calls.push(["upsert", storeName]);
-      return { ...record, updatedAt: Date.now() };
+      return { ...record, uid, updatedAt: Date.now() };
     },
   };
   const outbox = {

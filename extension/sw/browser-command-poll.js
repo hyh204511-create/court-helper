@@ -7,7 +7,21 @@ const COURT_URL_PATTERN = "https://zxfw.court.gov.cn/*";
 const POLL_INTERVAL_MS = 3000;
 const CONFIG_KEYS = ["serverUrl", "token", "expiresAt", "browserCommandDeviceId"];
 const AUTHORIZATION_KEYS = ["token", "expiresAt", "browserCommandDeviceId"];
-const MANUAL_CODES = new Set(["NEEDS_HUMAN", "SELECTOR_CHANGED", "SESSION_EXPIRED", "UNKNOWN"]);
+const MANUAL_CODES = new Set([
+  "NEEDS_HUMAN",
+  "SELECTOR_CHANGED",
+  "SESSION_EXPIRED",
+  "UNKNOWN",
+  "EXECUTION_TAB_REQUIRED",
+  "MYCASE_EVIDENCE_UNAVAILABLE",
+  "MYCASE_EVIDENCE_AMBIGUOUS",
+  "MYCASE_PAGE_REQUIRED",
+  "MYCASE_PAGE_TIMEOUT",
+  "CASE_MATCH_AMBIGUOUS",
+  "ACCOUNT_MISMATCH",
+  "TEMPLATE_NOT_EMPTY",
+  "PLATFORM_ACCOUNT_UNAVAILABLE",
+]);
 
 function trim(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -63,6 +77,7 @@ export function createBrowserCommandPoller({
   let inFlight = false;
   let configurationGeneration = 0;
   let activeRequestController = null;
+  let activePlatformAccountId = null;
 
   function isCurrentGeneration(generation) {
     return generation === configurationGeneration;
@@ -111,6 +126,9 @@ export function createBrowserCommandPoller({
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
       message = { ...message, account: credential?.account, password: credential?.password, serviceUrl: "http://127.0.0.1:8765" };
     } else if (command.type === "QUERY_LI" || command.type === "QUERY_QZ") {
+      if (activePlatformAccountId !== null && activePlatformAccountId !== command.platformAccountId) {
+        return { ok: false, error: "ACCOUNT_MISMATCH" };
+      }
       let data;
       try {
         data = await client.request(`/import-batches/${path(command.clientBatchId)}/extension-data`, {
@@ -125,11 +143,24 @@ export function createBrowserCommandPoller({
         return { ok: false, error: error?.code === "IMPORT_BATCH_EXPIRED" ? "NEEDS_HUMAN" : "BATCH_DATA_UNAVAILABLE" };
       }
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
-      message = { ...message, rows: data?.rows ?? [] };
+      if (data?.queryMode === "platform_discovery") {
+        message = { ...message, queryMode: "platform_discovery", platformAccountId: command.platformAccountId };
+      } else if (data?.queryMode === "template_not_empty") {
+        return { ok: false, error: "TEMPLATE_NOT_EMPTY" };
+      } else {
+        return { ok: false, error: "TEMPLATE_NOT_EMPTY" };
+      }
+    } else if (command.type === "EXPORT_REPORT") {
+      if (activePlatformAccountId === null) return { ok: false, error: "PLATFORM_ACCOUNT_UNAVAILABLE" };
+      message = { ...message, platformAccountId: activePlatformAccountId };
     }
     try {
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
-      return await chromeApi.tabs.sendMessage(tab.id, message);
+      const response = await chromeApi.tabs.sendMessage(tab.id, message);
+      if (command.type === "LOGIN" && response?.ok === true) {
+        activePlatformAccountId = command.platformAccountId;
+      }
+      return response;
     } catch {
       return { ok: false, error: "CONTENT_UNAVAILABLE" };
     }
@@ -197,6 +228,7 @@ export function createBrowserCommandPoller({
       configurationGeneration += 1;
       activeRequestController?.abort("configuration changed");
       activeRequestController = null;
+      activePlatformAccountId = null;
     }
     if (intervalId != null) scheduler.clearInterval?.(intervalId);
     intervalId = null;
