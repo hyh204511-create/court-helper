@@ -32,13 +32,14 @@
 ### 3.1 列表采集器（collectListRows / collectRow / collectFields）
 - 适用页面：网上立案页（`#/pagesWsla/pc/list/index`）与「我的案件」页（`#/pages/pc/case-list/index`）共用 `.fd-case-item` 行结构。
 - 输出：`{ statusText, caseName, caseType, fields: [{label, value}], hasSpaceBtn }`。
+- 纯采集输出不得混入 DOM 节点；需要点击详情或截图的调用链必须在同一次列表快照中按索引保留 `{data, element}` 配对，并只把真实且仍连接页面的 `element` 交给动作函数，禁止把结构化 `data` 对象当 DOM 使用。
 - 字段行 `.fd-field-item > (.fd-field-lable + .fd-field-value)`；`findField(fields, label)` 按 label 取 value；`extractBusinessFields` 提取案号/立案日期/法院/审核意见/申请日期。
 - 数据源分工：网上立案页字段含申请日期/审核意见（驳回取证）；「我的案件」页字段含**案号/立案日期**（成功取证，立案与强执同构）。
 
 ### 3.2 详情页采集器（collectDetail）
 - 适用页面：案件空间（`#/pagesWsla/common/wsla/detail/index`）。
 - 表单项 `.uni-forms-item` 的 innerText 为「label\nvalue」结构；「审核结果」+「审核时间」+「审核意见」必须归入同一条 `{status,time,opinion}` 审核记录（页面按时间倒序，最新在前，含时分秒，写表格取日期）。驳回时间与原因只取第一条完整记录，禁止把历史记录的意见与最新时间拼接。
-- 输出：`{ auditRecords: [{status, time, opinion}], fields: {label: value}, opinion }`；顶层 `opinion` 仅为最新记录意见的兼容别名。
+- 输出：`{ auditRecords: [{status, time, opinion}], fields: {label: value}, opinion }`；顶层 `opinion` 仅为最新记录意见的兼容别名。最新记录缺少意见时必须为 `null`，禁止回退到下一条历史记录的意见。
 - 强执详情字段：案件类型（首次执行案件）/执行依据类别/原审案号（原审案号≠强执案号，强执案号在「我的案件」页执行 tab 列表行）。
 
 ### 3.3 强执查询采集
@@ -92,6 +93,7 @@
 - 时机：对应状态页面稳定后，由 content script 使用 `captureElement` 截取已确认的案件行或审核区域；**截图前先确认目标信息已渲染**（详情时间/原因可见）。后台自动任务不得依赖需要用户手势临时授权的 `activeTab/captureVisibleTab`，也不得为截图附加 `chrome.debugger`，避免与浏览器验收控制争用调试会话；禁止截取整页或任意非目标区域。
 - 截图归属：立案成功 → H 列；驳回 → K 列；强执成功 → H 列（强执表块）。
 - 文字事实与截图独立提交：已精确读取的状态、审核时间和审核意见必须先保留；截图失败仅标记 `SCREENSHOT_CAPTURE_FAILED + needsHuman=true`，不得降级为 `UNKNOWN`、不得清空时间/原因。驳回图片必须沿 `rejectImage` 传播，禁止误写 `successImage`。
+- 一个批次中只要存在 `UNKNOWN`、截图失败或其他 `needsHuman=true` 记录，浏览器查询命令就不得回写成功；必须返回该批次首个稳定错误码（没有更具体错误码时为 `NEEDS_HUMAN`）。后续跨页补证不得掩盖首轮失败。
 
 ## 7. 测试
 
