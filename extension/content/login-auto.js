@@ -44,6 +44,22 @@ function setControlledInputValue(input, value) {
   input.dispatchEvent(new EventCtor("input", { bubbles: true, composed: true }));
 }
 
+function loginInputs(root) {
+  const textInputs = [...root.querySelectorAll(SELECTORS.login.accountInput)];
+  return {
+    accountInput: textInputs[0],
+    captchaInput: textInputs[1],
+    passwordInput: root.querySelector(SELECTORS.login.passwordInput),
+  };
+}
+
+function fillAccountAndPassword(root, credentials) {
+  const { accountInput, passwordInput } = loginInputs(root);
+  if (!accountInput || !passwordInput) throw new Error("FORM_NOT_READY");
+  setControlledInputValue(accountInput, credentials.account);
+  setControlledInputValue(passwordInput, credentials.password);
+}
+
 /**
  * 通过原生 value setter 填写账号、密码、验证码，并通知 uni-app 受控输入。
  * 支持 fillLoginForm(credentials, root) 与 fillLoginForm(root, credentials)。
@@ -52,14 +68,10 @@ export function fillLoginForm(first, second) {
   const { root, credentials } = normalizeFillArgs(first, second);
   if (!isRoot(root)) throw new Error("FORM_NOT_READY");
 
-  const textInputs = [...root.querySelectorAll(SELECTORS.login.accountInput)];
-  const accountInput = textInputs[0];
-  const captchaInput = textInputs[1];
-  const passwordInput = root.querySelector(SELECTORS.login.passwordInput);
-  if (!accountInput || !passwordInput || !captchaInput) throw new Error("FORM_NOT_READY");
+  const { captchaInput } = loginInputs(root);
+  if (!captchaInput) throw new Error("FORM_NOT_READY");
 
-  setControlledInputValue(accountInput, credentials.account);
-  setControlledInputValue(passwordInput, credentials.password);
+  fillAccountAndPassword(root, credentials);
   setControlledInputValue(captchaInput, credentials.captcha);
   return true;
 }
@@ -213,6 +225,16 @@ function hasPasswordForm(root) {
   return !!root.querySelector(SELECTORS.login.passwordInput);
 }
 
+function hasCredentialForm(root) {
+  if (!hasPasswordForm(root)) return false;
+  return !!loginInputs(root).accountInput;
+}
+
+function hasCaptchaForm(root) {
+  if (!isRoot(root)) return false;
+  return !!loginInputs(root).captchaInput && !!fetchCaptchaBase64(root);
+}
+
 function readUserArea(root) {
   const element = root?.querySelector?.(SELECTORS.header.userName);
   return (element?.textContent ?? element?.innerText ?? "").toString().trim();
@@ -242,12 +264,18 @@ async function waitUntil(predicate, { now, sleep, timeoutMs, intervalMs }) {
 }
 
 async function ensurePasswordMode(root, dependencies, timeoutMs) {
-  if (hasPasswordForm(root)) return true;
+  if (hasCredentialForm(root)) return true;
+  const ready = await waitUntil(
+    () => hasCredentialForm(root) || !!findExactTextView(root, "密码登录"),
+    { ...dependencies, timeoutMs },
+  );
+  if (!ready) return false;
+  if (hasCredentialForm(root)) return true;
   const tab = findExactTextView(root, "密码登录");
   if (!tab) return false;
   const click = await requestTrustedClick(tab, dependencies);
   if (!click.ok) return false;
-  return waitUntil(() => hasPasswordForm(root), {
+  return waitUntil(() => hasCredentialForm(root), {
     ...dependencies,
     timeoutMs,
   });
@@ -363,6 +391,18 @@ async function runAutoLogin(options) {
       settings.passwordFormTimeoutMs ?? PASSWORD_FORM_TIMEOUT_MS,
     );
     if (!passwordReady) return { ok: false, error: "FORM_NOT_READY" };
+
+    try {
+      fillAccountAndPassword(root, { account, password });
+    } catch {
+      return { ok: false, error: "FORM_NOT_READY" };
+    }
+
+    const captchaReady = await waitUntil(() => hasCaptchaForm(root), {
+      ...dependencies,
+      timeoutMs: settings.captchaFormTimeoutMs ?? PASSWORD_FORM_TIMEOUT_MS,
+    });
+    if (!captchaReady) return { ok: false, error: "FORM_NOT_READY" };
 
     const first = await submitAttempt({ root, location, account, password, serviceUrl, dependencies });
     if (first.ok) return first;

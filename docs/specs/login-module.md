@@ -1,11 +1,12 @@
 # 规格：login-module（登录状态、账号识别与自动登录）
 
-> 版本：0.8 ｜ 状态：已确认、待实现 ｜ 依据：计划 §Phase 2、自动登录真实会话验收、Phase 11 控制台唯一入口决策
+> 版本：1.0 ｜ 状态：已确认、待实现 ｜ 依据：计划 §Phase 2、自动登录真实会话验收、Phase 11 控制台唯一入口决策
 > v0.2 变更：登录全人工 → 登录自动化（可选）；新增自动登录范围、本地服务、验证码识别流程。
 > v0.3 变更：**自动登录凭据来源改为服务器**（`GET /platform-accounts` 列表 + `POST /platform-accounts/:id/credential` 取明文）；验证码 OCR 仍走本地 8765 服务（ddddocr）；本地 `accounts.txt` 降级为可选回退。
 > v0.4 变更：**本地服务支持 `--port` 参数**（默认 8765，测试用独立随机端口避免与既有实例冲突）；补充测试环境隔离说明（8765 残留实例历史坑）。
 > v0.5 变更：**真实输入驱动**——2026-08-05 真实会话实测确认：平台（uni-app H5）**只响应 `isTrusted=true` 的真实用户事件**，JS 合成 `click()`（isTrusted=false）被静默忽略 → 自动登录「点登录按钮」「点击验证码刷新」均不触发（表单可填、提交不执行）。修复：扩展经 **`chrome.debugger` API** 向平台页注入**真实输入事件**（`Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`），由 service worker 统一驱动；debugger 不可用时回退「待人工」。
 > v0.8 变更：自动登录入口迁移到 `/admin/browser-control` 的“平台账号与自动登录”区域；“一键登录”创建统一 `LOGIN` 命令。删除 Popup 登录/抓取流程；独立 Options/Setup 只保留服务配置和设备配对。
+> v1.0 变更：真实登录页为异步渲染。`AUTO_LOGIN` 到达登录路由后必须有界等待密码表单和验证码就绪；密码表单就绪即先填账号/密码，验证码不可用时不得阻塞这两个字段写入、不得提交，并回写既有稳定待人工码。
 
 ## 1. 目标
 
@@ -59,9 +60,9 @@
 → 已配对 extension Bearer 的 SW 轮询并领取命令
 → POST /platform-accounts/:id/credential（extension 会话）→ 取明文 {account,password}（仅内存）
 → content AUTO_LOGIN 消息（仅登录页路由执行）
-→ 确保「密码登录」方式（必要时真实点击 passwordTab，见 §5.1）
-→ 填账号/密码
-→ 验证码：读 captchaImage.src（dataURL）→ base64 → POST http://127.0.0.1:8765/ocr（本地 OCR 不变）
+→ 有界等待并确保「密码登录」方式（必要时真实点击 passwordTab，见 §5.1）
+→ 密码表单就绪即填账号/密码（不等待验证码）
+→ 有界等待验证码：读 captchaImage.src（dataURL）→ base64 → POST http://127.0.0.1:8765/ocr（本地 OCR 不变）
 → 填验证码 → **真实点击「登录」**（见 §5.1 debugger 驱动）
 → 等待结果（≤8s）：hash 离开 login 或用户区出现 → 成功
 → 停留 login 路由 → 失败 → **真实点击验证码图刷新**（见 §5.1）→ 重试 1 次 → 仍败 → 报「登录失败，待人工处理」
@@ -117,7 +118,8 @@ content 需真实点击（登录按钮/验证码刷新/passwordTab 切换）→ 
   - `tests/login-auto.test.js`（jsdom mock 登录页：2×text input + 1×password input + img[dataURL] + 「登录」view）：
     - `fillLoginForm` 按类型/次序填充正确；
     - `fetchCaptchaBase64` 从 dataURL img 提取 base64；
-    - `doAutoLogin` 全流程（mock fetch /ocr + mock CLICK_REQUEST）：成功路径、失败重试 1 次路径、服务不可达路径。
+  - `doAutoLogin` 全流程（mock fetch /ocr + mock CLICK_REQUEST）：成功路径、失败重试 1 次路径、服务不可达路径。
+  - 登录页异步渲染：初始无密码表单或验证码、在有界等待内出现后继续；验证码仍未就绪时账号/密码已填入且不提交。
   - **v0.5 新增** `tests/debugger-driver.test.js`（mock chrome.debugger）：attach/detach 生命周期（登录结束必 detach）、mousePressed+mouseReleased 双命令顺序、坐标透传、attach 失败 → 回执「待人工」、非法院 tab 拒绝 attach。
   - content 端坐标计算单测：`getBoundingClientRect` 中心点取整、元素不可见/无 rect → `FORM_NOT_READY`。
   - `tests/login-helper-server.test.js`（node 子进程 spawn python + 临时 fixture）：/health、/accounts 解析、/ocr 无 ddddocr → DDDDOCR_MISSING。

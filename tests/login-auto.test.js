@@ -251,6 +251,88 @@ test("doAutoLogin：首次 OCR、填表、点击后 hash 离开登录路由即�
   dom.window.close();
 });
 
+test("doAutoLogin：登录页异步渲染后等待表单和验证码再填表提交", async () => {
+  const dom = new JSDOM("<main></main>");
+  const clock = makeClock();
+  const location = { hash: "#/pagesGrxx/pc/login/index" };
+  let mounted = false;
+  clock.onSleep = async () => {
+    if (mounted) return;
+    mounted = true;
+    dom.window.document.querySelector("main").innerHTML = `
+      <input type="text" class="uni-input-input" aria-label="账号">
+      <input type="password" class="uni-input-input" aria-label="密码">
+      <input type="text" class="uni-input-input" aria-label="验证码">
+      <img id="captcha" src="data:image/jpeg;base64,delayed-captcha">
+      <view id="submit-view">登录</view>
+    `;
+    prepareClickTargets(dom.window.document);
+  };
+
+  const result = await doAutoLogin(autoLoginOptions(
+    dom,
+    clock,
+    async () => jsonResponse({ ok: true, text: "A7x2" }),
+    {
+      location,
+      passwordFormTimeoutMs: 500,
+      captchaFormTimeoutMs: 500,
+      sendMessage: async (message) => {
+        if (message.type === CLICK_REQUEST) location.hash = "#/pagesWsla/pc/list/index";
+        return { ok: true };
+      },
+    },
+  ));
+
+  const inputs = [...dom.window.document.querySelectorAll("input")];
+  assert.deepEqual(result, { ok: true });
+  assert.equal(inputs[0].value, "demo-account");
+  assert.equal(inputs[1].value, "demo-password");
+  assert.equal(inputs[2].value, "A7x2");
+  assert.ok(clock.sleeps.length >= 1);
+  dom.window.close();
+});
+
+test("doAutoLogin：验证码未就绪时仍先填账号密码且不提交", async () => {
+  const dom = new JSDOM(`
+    <main>
+      <input type="text" class="uni-input-input" aria-label="账号">
+      <input type="password" class="uni-input-input" aria-label="密码">
+      <input type="text" class="uni-input-input" aria-label="验证码">
+      <img src="data:image/png;base64,no-jpeg-captcha">
+      <view id="submit-view">登录</view>
+    </main>
+  `);
+  const clock = makeClock();
+  let fetchCalls = 0;
+  let clickCalls = 0;
+
+  const result = await doAutoLogin(autoLoginOptions(
+    dom,
+    clock,
+    async () => {
+      fetchCalls += 1;
+      return jsonResponse({ ok: true, text: "A7x2" });
+    },
+    {
+      captchaFormTimeoutMs: 200,
+      sendMessage: async () => {
+        clickCalls += 1;
+        return { ok: true };
+      },
+    },
+  ));
+
+  const inputs = [...dom.window.document.querySelectorAll("input")];
+  assert.deepEqual(result, { ok: false, error: "FORM_NOT_READY" });
+  assert.equal(inputs[0].value, "demo-account");
+  assert.equal(inputs[1].value, "demo-password");
+  assert.equal(inputs[2].value, "");
+  assert.equal(fetchCalls, 0);
+  assert.equal(clickCalls, 0);
+  dom.window.close();
+});
+
 test("doAutoLogin：OCR 服务不可达时返回 SERVICE_UNAVAILABLE，不提交表单", async () => {
   const dom = makeLoginDom();
   const clock = makeClock();
@@ -262,6 +344,8 @@ test("doAutoLogin：OCR 服务不可达时返回 SERVICE_UNAVAILABLE，不提交
 
   assert.deepEqual(result, { ok: false, error: "SERVICE_UNAVAILABLE" });
   assert.deepEqual(clickRequests, []);
+  assert.equal(dom.window.document.querySelector('input[aria-label="账号"]').value, "demo-account");
+  assert.equal(dom.window.document.querySelector('input[aria-label="密码"]').value, "demo-password");
   assert.equal(JSON.stringify(result).includes("demo-password"), false);
   dom.window.close();
 });
