@@ -421,6 +421,21 @@ test('browser control renders full session and creator names, separates LOGIN, a
       assert.equal(browserCommandPosts().length, qzRequestsBefore + 1);
       assert.equal(JSON.parse(String(browserCommandPosts().at(-1).body)).importBatchId, emptyQzBatch.id);
 
+      taskType.value = 'EXPORT_REPORT';
+      taskType.dispatchEvent(new dom.window.Event('change'));
+      taskAccount.value = ACCOUNT_ID;
+      assert.equal(taskAccount.required, true);
+      assert.equal(taskBatch.required, false);
+      const exportRequestsBefore = browserCommandPosts().length;
+      dom.window.document.querySelector('#browser-command-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(browserCommandPosts().length, exportRequestsBefore + 1);
+      assert.deepEqual(JSON.parse(String(browserCommandPosts().at(-1).body)), {
+        type: 'EXPORT_REPORT',
+        platformAccountId: ACCOUNT_ID,
+        importBatchId: null,
+      });
+
       await waitFor(() => dom.window.document.querySelector('#platform-login-account').value === ACCOUNT_ID);
       dom.window.document.querySelector('#platform-login-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
       await waitFor(() => requests.some((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands'));

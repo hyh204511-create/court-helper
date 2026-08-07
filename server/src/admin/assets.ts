@@ -1043,11 +1043,11 @@ function initBrowserControl() {
       setMessage($('[data-platform-login-message]'), errorMessage(error));
     } finally { setFormBusy(loginForm, false); }
   });
-  type?.addEventListener('change', () => { account.required = type.value.startsWith('QUERY_'); batch.required = type.value.startsWith('QUERY_'); });
+  type?.addEventListener('change', () => { account.required = true; batch.required = type.value.startsWith('QUERY_'); });
   type?.dispatchEvent(new Event('change'));
   commandForm?.addEventListener('submit', async (event) => {
-    event.preventDefault(); const selectedType = type.value; const platformAccountId = selectedType === 'EXPORT_REPORT' ? null : (account.value || null); const importBatchId = selectedType.startsWith('QUERY_') ? (batch.value || null) : null;
-    if (selectedType.startsWith('QUERY_') && !platformAccountId) { setMessage($('[data-browser-command-message]'), '请选择平台账号'); return; }
+    event.preventDefault(); const selectedType = type.value; const platformAccountId = account.value || null; const importBatchId = selectedType.startsWith('QUERY_') ? (batch.value || null) : null;
+    if (!platformAccountId) { setMessage($('[data-browser-command-message]'), '请选择平台账号'); return; }
     if (selectedType.startsWith('QUERY_') && !importBatchId) { setMessage($('[data-browser-command-message]'), '查询任务必须选择导入批次'); return; }
     setFormBusy(commandForm, true);
     try { await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: selectedType, platformAccountId, importBatchId }) }); setMessage($('[data-browser-command-message]'), '任务已创建', 'success'); await loadBrowserCommands(); }

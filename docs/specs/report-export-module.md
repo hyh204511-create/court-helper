@@ -1,6 +1,7 @@
 # 规格：report-export-module（报表导出记录与再下载）
 
-> 版本：0.2 ｜ 状态：已确认、待真实验收 ｜ 依据：Phase 11 后台控制台唯一入口决策、browser-command-module、server-module（存储/鉴权/错误模型复用）
+> 版本：0.3 ｜ 状态：已确认、待真实验收 ｜ 依据：Phase 11 后台控制台唯一入口决策、browser-command-module、server-module（存储/鉴权/错误模型复用）
+> v0.3 变更：导出任务必须绑定控制台显式选择的非敏感 `platformAccountId`。该 UUID 使用既有 `browser_commands.platform_account_id` 持久化，以抵御 MV3 Worker 回收；不写入 payload、扩展 storage、日志，也不包含账号明文或凭据。
 
 ## 1. 目标与边界
 
@@ -82,7 +83,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_uidx
 - 统一命令回写必须保留上传结果：`uploaded` → `succeeded/SUCCESS`；`not_configured` → `manual_required/NOT_CONFIGURED`；`failed` → `manual_required/<稳定上传错误码>`。后两者的安全摘要明确“本地文件已保存”，不得伪装成 `SUCCESS`，也不得触发自动重试。
 - **二进制交接用 base64**：Chromium 扩展消息为 JSON 序列化（官方 messaging 文档），Blob/ArrayBuffer 不保真；content 执行器把 xlsx 字节转 base64 字符串随消息发送，SW 侧 `atob` 解码为 Uint8Array 再构造 Blob 上传。base64 膨胀约 33%，单文件受服务器 20 MiB 上限约束（超出由服务器 413 拒绝）。测试必须模拟浏览器 JSON 序列化往返（`JSON.parse(JSON.stringify(message))`）。
 - 导出执行保持 single-flight；同一法院标签页不得并发生成两份报表。状态和安全摘要通过统一 browser command 回写，浮动面板只作状态提示。
-- 导出前按当前页面账号和当前运行期绑定的 `platformAccountId` 查询两张本地案件表；两表合计为 0 行时返回稳定错误 `REPORT_EMPTY`，不得创建 Blob、触发本地下载、上传服务器或回写 `SUCCESS`。非空记录即使为 `UNKNOWN` 或缺少部分证据，仍按既有红色待人工规则导出，不得猜测补齐。
+- 导出前按当前页面账号和命令绑定的 `platformAccountId` 查询两张本地案件表；两表合计为 0 行时返回稳定错误 `REPORT_EMPTY`，不得创建 Blob、触发本地下载、上传服务器或回写 `SUCCESS`。非空记录即使为 `UNKNOWN` 或缺少部分证据，仍按既有红色待人工规则导出，不得猜测补齐。
 - **SW 配置懒初始化**：`EXPORT_UPLOAD` 到达时若 SW 尚无 remote client，须重新读取 `chrome.storage.local` 同步配置并初始化（运行中新增/清除服务器配置立即生效）；相关 storage 键变化时重建 client，不得沿用过期配置。
 
 ### 6.2 列表页门禁

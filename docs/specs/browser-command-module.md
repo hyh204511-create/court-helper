@@ -1,8 +1,9 @@
 # 规格：browser-command-module（后台唯一业务入口与扩展执行代理）
 
-> 版本：0.3 ｜ 状态：已确认、待实现 ｜ 依据：用户明确要求“popup 全部功能转到后台并移除”；Phase 11 控制台唯一入口决策；现有 login-command-bridge、server-module、app-module、panel-module、report-export-module
+> 版本：0.4 ｜ 状态：已确认、待实现 ｜ 依据：用户明确要求“popup 全部功能转到后台并移除”；Phase 11 控制台唯一入口决策；现有 login-command-bridge、server-module、app-module、panel-module、report-export-module
 > v0.2 变更：固定 `/admin/browser-control` 为唯一业务入口；拆分控制台“一键登录”与通用任务区；补充完整名称/凭据查看权限；定义扩展 action 与独立 Options/Setup 路由；要求删除 Popup 源码、产物和测试。
 > v0.3 变更：补充已授权 MV3 Service Worker 冷启动时的命令轮询恢复契约，避免后台命令在扩展重载或 Worker 回收后无限停留 `pending`。
+> v0.4 变更：真实验收确认 MV3 Worker 回收会丢失仅内存的登录绑定。`EXPORT_REPORT` 因此必须绑定控制台显式选择的非敏感 `platformAccountId`，以便冷启动后仍可按同一账号隔离导出；不持久化平台账号明文、密码或任何业务行。
 
 ## 1. 目标与最终职责
 
@@ -73,7 +74,9 @@
 
 ### `EXPORT_REPORT`
 
-- Service Worker 只可使用同一运行期最近一次成功 `LOGIN` 的不透明 `platformAccountId` 执行导出；该 ID 不写入 storage、命令 payload 或服务端任务记录。没有这条绑定时必须回写 `PLATFORM_ACCOUNT_UNAVAILABLE` 并转人工。
+- 控制台创建导出任务时必须显式选择平台账号；服务端将其不透明 UUID 写入既有 `browser_commands.platform_account_id`。该 UUID 不是账号明文或凭据，禁止写入 payload、扩展 storage、日志或任务摘要。
+- Service Worker 以命令携带的 `platformAccountId` 执行导出，不依赖本运行期内存中的最近登录绑定；因此 Worker 冷启动、回收或扩展重载后仍可恢复已配对设备的导出任务。
+- content 必须同时使用当前真实页面顶栏账号和命令的 `platformAccountId` 过滤两张本地案件表；账户不一致或没有该账号隔离的数据时按既有稳定错误码失败，禁止混入其他账号 UUID 的记录。
 - content 必须同时按真实页面顶栏账号和该 `platformAccountId` 查询两张本地案件表；相同页面账号名但不同后台账号 UUID 的记录绝不能混入同一份报表。
 - 扩展从 IndexedDB 读取既有 `cases`/`enforcementCases`，复用 `xlsx-io.js` 生成工作簿。
 - 保持本地下载；随后复用 `EXPORT_UPLOAD` base64 交接上传服务器，后台 `report_exports` 记录可再次下载。

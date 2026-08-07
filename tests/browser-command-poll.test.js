@@ -323,28 +323,45 @@ test("browser command poller reports NO_COURT_TAB without dispatching content", 
   assert.equal(resultBody.status, "failed");
 });
 
-test("报表命令没有本运行期成功登录绑定时，不向 content 发出导出", async () => {
-  const command = { id: "00000000-0000-4000-8000-000000000406", type: "EXPORT_REPORT" };
-  const chromeApi = chromeMock(async () => assert.fail("export requires an active platform account binding"));
+test("报表命令在 Worker 冷启动后仍使用命令绑定的账号执行导出", async () => {
+  const platformAccountId = "00000000-0000-4000-8000-000000000407";
+  const command = {
+    id: "00000000-0000-4000-8000-000000000406",
+    type: "EXPORT_REPORT",
+    platformAccountId,
+  };
+  const dispatched = [];
+  const chromeApi = chromeMock(async (tabId, message) => {
+    dispatched.push({ tabId, message });
+    return { status: "uploaded", exportId: "synthetic-export" };
+  });
   let resultBody;
   const fetchImpl = async (url, init = {}) => {
     if (String(url).endsWith("/browser-commands/next")) return response({ command });
     if (String(url).endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim" });
     if (String(url).endsWith(`/browser-commands/${command.id}/result`)) {
       resultBody = JSON.parse(init.body);
-      return response({ command: { status: "manual_required" } });
+      return response({ command: { status: "succeeded" } });
     }
     throw new Error(`unexpected ${url}`);
   };
 
   const result = await createBrowserCommandPoller({ chromeApi, fetchImpl }).pollOnce();
-  assert.equal(result.error, "PLATFORM_ACCOUNT_UNAVAILABLE");
+  assert.equal(result.commandId, command.id);
+  assert.deepEqual(dispatched, [{
+    tabId: 7,
+    message: {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "EXPORT_REPORT",
+      platformAccountId,
+    },
+  }]);
   assert.deepEqual(resultBody, {
     deviceId: "device-test",
     claimToken: "claim",
-    status: "manual_required",
-    resultCode: "PLATFORM_ACCOUNT_UNAVAILABLE",
-    resultSummary: "需要人工接管",
+    status: "succeeded",
+    resultCode: "SUCCESS",
+    resultSummary: "报表已上传服务器",
     progress: null,
   });
 });
@@ -399,6 +416,7 @@ test("报表命令回写区分服务器上传成功、未配置与失败", async
     const command = {
       id: "00000000-0000-4000-8000-000000000404",
       type: "EXPORT_REPORT",
+      platformAccountId,
     };
     const commands = [loginCommand, command];
     let currentHash = "#/pagesGrxx/pc/login/index";

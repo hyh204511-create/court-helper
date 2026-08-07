@@ -153,6 +153,7 @@ test("已授权 Worker 冷启动无需 onStartup 事件也会领取待执行命�
   const command = {
     id: "00000000-0000-4000-8000-000000000501",
     type: "EXPORT_REPORT",
+    platformAccountId: "00000000-0000-4000-8000-000000000502",
   };
   let resultBody;
   const loaded = await loadWorker({

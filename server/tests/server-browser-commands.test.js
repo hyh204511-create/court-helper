@@ -125,7 +125,7 @@ function commandInput(type, overrides = {}) {
   const queryCommand = type === 'QUERY_LI' || type === 'QUERY_QZ';
   return {
     type,
-    platformAccountId: type === 'EXPORT_REPORT' ? null : ACCOUNT_ID,
+    platformAccountId: ACCOUNT_ID,
     ...(queryCommand ? { importBatchId: IMPORT_BATCH_ID } : {}),
     payload: type === 'LOGIN' ? {} : { batchId: 'batch-safe-1', kind: 'li' },
     requestedBy: ADMIN_ID,
@@ -400,7 +400,7 @@ test('browser command service accepts all four command types with safe payloads'
   const { service } = await makeService();
   for (const type of ['LOGIN', 'QUERY_LI', 'QUERY_QZ', 'EXPORT_REPORT']) {
     const command = await service.create(commandInput(type, {
-      platformAccountId: type === 'EXPORT_REPORT' ? null : randomUUID(),
+      platformAccountId: randomUUID(),
     }));
     assert.equal(command.type, type);
     assert.equal(command.status, 'pending');
@@ -409,6 +409,14 @@ test('browser command service accepts all four command types with safe payloads'
       ? IMPORT_BATCH_ID
       : null);
   }
+});
+
+test('browser command service requires a platform account for report exports', async () => {
+  const { service } = await makeService();
+  await assert.rejects(
+    service.create(commandInput('EXPORT_REPORT', { platformAccountId: null })),
+    (error) => error?.code === 'VALIDATION_ERROR' && error?.statusCode === 400,
+  );
 });
 
 test('browser query commands bind only an existing, unexpired import batch', async () => {
@@ -652,7 +660,7 @@ test('browser command routes require authentication and register both REST prefi
 
     const bare = await createCommand(app, admin, '', {
       type: 'EXPORT_REPORT',
-      platformAccountId: null,
+      platformAccountId: ACCOUNT_ID,
     });
     assert.equal(bare.statusCode, 201);
     assert.equal(bare.json().command.type, 'EXPORT_REPORT');
@@ -668,7 +676,7 @@ test('paired extension bearer cannot create, list, inspect, or cancel back-offic
     const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
     const created = await createCommand(app, admin, '/api/v1', {
       type: 'EXPORT_REPORT',
-      platformAccountId: null,
+      platformAccountId: ACCOUNT_ID,
     });
     assert.equal(created.statusCode, 201);
 
@@ -676,7 +684,7 @@ test('paired extension bearer cannot create, list, inspect, or cancel back-offic
       method: 'POST',
       url: '/api/v1/browser-commands',
       headers: { authorization: `Bearer ${token}` },
-      payload: { type: 'EXPORT_REPORT', platformAccountId: null },
+      payload: { type: 'EXPORT_REPORT', platformAccountId: ACCOUNT_ID },
     });
     assert.equal(deniedCreate.statusCode, 403);
 
@@ -855,7 +863,7 @@ test('browser command routes filter and cursor-paginate safely, rejecting malfor
   try {
     const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
     await createCommand(app, admin, '/api/v1', { type: 'QUERY_LI', platformAccountId: randomUUID() });
-    const second = await createCommand(app, admin, '/api/v1', { type: 'EXPORT_REPORT', platformAccountId: null });
+    const second = await createCommand(app, admin, '/api/v1', { type: 'EXPORT_REPORT', platformAccountId: randomUUID() });
 
     const firstPage = await app.inject({
       method: 'GET',
@@ -907,7 +915,7 @@ test('browser command routes reject malformed UUIDs and sensitive payload/result
     ]) {
       const response = await createCommand(app, admin, '/api/v1', {
         type: 'EXPORT_REPORT',
-        platformAccountId: null,
+        platformAccountId: ACCOUNT_ID,
         payload,
       });
       assert.equal(response.statusCode, 400, JSON.stringify(payload));

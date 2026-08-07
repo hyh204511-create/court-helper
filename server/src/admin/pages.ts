@@ -238,8 +238,8 @@ function browserControlPage(role: AdminRole): string {
         <form id="browser-command-form">
           <div class="field-grid">
             <div class="field"><label for="browser-command-type">任务类型</label><select id="browser-command-type"><option value="QUERY_LI">开始立案查询</option><option value="QUERY_QZ">开始强执查询</option><option value="EXPORT_REPORT">导出报表</option></select></div>
-            <div class="field"><label for="browser-command-account">平台账号</label><select id="browser-command-account"><option value="">加载中…</option></select></div>
-            <div class="field"><label for="browser-command-batch">导入批次（查询必选）</label><select id="browser-command-batch"><option value="">不选择</option></select></div>
+            <div class="field"><label for="browser-command-account">平台账号（必选）</label><select id="browser-command-account"><option value="">加载中…</option></select></div>
+            <div class="field"><label for="browser-command-batch">导入批次（仅查询必选）</label><select id="browser-command-batch"><option value="">不选择</option></select></div>
           </div>
           <div class="form-actions"><button class="primary" type="submit">创建任务</button><button class="secondary" id="browser-command-refresh" type="button">立即刷新</button></div>
         </form><p class="message" data-browser-command-message aria-live="polite"></p>

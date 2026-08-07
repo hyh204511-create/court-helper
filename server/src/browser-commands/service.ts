@@ -175,7 +175,7 @@ function normalizeCreate(input: BrowserCommandCreateInput): NormalizedBrowserCom
 
   const platformAccountId = input.platformAccountId ?? null;
   if (platformAccountId !== null) assertUuid(platformAccountId, 'platformAccountId');
-  if (input.type !== 'EXPORT_REPORT' && platformAccountId === null) {
+  if (platformAccountId === null) {
     throw new ValidationError([{ field: 'platformAccountId', code: 'required' }]);
   }
 

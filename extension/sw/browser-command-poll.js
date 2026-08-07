@@ -245,8 +245,10 @@ export function createBrowserCommandPoller({
         return { ok: false, error: "TEMPLATE_NOT_EMPTY" };
       }
     } else if (command.type === "EXPORT_REPORT") {
-      if (activePlatformAccountId === null) return { ok: false, error: "PLATFORM_ACCOUNT_UNAVAILABLE" };
-      message = { ...message, platformAccountId: activePlatformAccountId };
+      if (typeof command.platformAccountId !== "string" || !command.platformAccountId) {
+        return { ok: false, error: "PLATFORM_ACCOUNT_UNAVAILABLE" };
+      }
+      message = { ...message, platformAccountId: command.platformAccountId };
     }
     try {
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
