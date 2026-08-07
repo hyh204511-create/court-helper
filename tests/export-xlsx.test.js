@@ -61,30 +61,30 @@ test("导出双表块：布局/样式/日期格式/图片锚点", async () => {
   try {
     const info = verify(file, [
       "A1", "E1", "G1", "E2", "F2", "G2", "I3", "J3",
-      "E8", "E9", "F9", "G9", "L2",
+      "E9", "E10", "F10", "G10", "L2",
     ]);
-    // 双表块布局：立案表头第 1 行，强执表头 = 立案末行(3) + 5 = 8
+    // 双表块布局：立案不足 3 条时仍保留预留行，强执表头最低为第 9 行。
     assert.deepEqual(info.sheets, ["Sheet1"]);
     assert.equal(info.cells.A1, "原告");
     assert.equal(info.cells.E1, "立案状态");
     assert.equal(info.cells.G1, "案号");
-    assert.equal(info.cells.E8, "强执状态");
+    assert.equal(info.cells.E9, "强执状态");
     // 数据值
     assert.equal(info.cells.E2, "立案成功");
     assert.equal(info.cells.F2, "2026-07-22");
     assert.equal(info.cells.G2, "（2026）京0000民初00001号");
     assert.equal(info.cells.I3, "2026-07-28");
     assert.equal(info.cells.J3, "请补充材料。");
-    assert.equal(info.cells.E9, "强执成功");
-    assert.equal(info.cells.F9, "2026-06-03");
-    assert.equal(info.cells.G9, "（2026）京0000执00001号");
+    assert.equal(info.cells.E10, "强执成功");
+    assert.equal(info.cells.F10, "2026-06-03");
+    assert.equal(info.cells.G10, "（2026）京0000执00001号");
     assert.equal(info.cells.L2, "2026-08-03");
-    // 图片锚点：立案成功 H2、驳回 K3、强执成功 H9（0 基）
+    // 图片锚点：立案成功 H2、驳回 K3、强执成功 H10（0 基）
     assert.equal(info.image_count, 3);
     assert.deepEqual(info.anchors, [
       { col: 7, row: 1 },
       { col: 10, row: 2 },
-      { col: 7, row: 8 },
+      { col: 7, row: 9 },
     ]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -109,4 +109,35 @@ test("样式复刻：表头加粗/填充/行高、数据行高（ExcelJS 读回�
   assert.equal(ws.getRow(2).height, 28);
   assert.equal(ws.getColumn("J").width, 39.63);
   assert.equal(ws.getCell("F2").numFmt, "mm-dd-yy");
+});
+
+test("模板保真：保留三行空白表格、细边框、宋体、垂直居中和驳回原因换行", async () => {
+  const wb = await buildExportWorkbook({ cases: [rec()] });
+  const { dir, file } = await writeToTemp(wb);
+  try {
+    const reloaded = new ExcelJS.Workbook();
+    await reloaded.xlsx.readFile(file);
+    const ws = reloaded.getWorksheet("Sheet1");
+
+    // 立案不足三行时仍保留第 2–4 行；强执表头最低固定在第 9 行，随后也保留三行。
+    assert.equal(ws.getCell("E9").value, "强执状态");
+    assert.equal(ws.getRow(4).height, 28);
+    assert.equal(ws.getRow(10).height, 28);
+    assert.equal(ws.getCell("F4").numFmt, "mm-dd-yy");
+    assert.equal(ws.getCell("I4").numFmt, "mm-dd-yy");
+    assert.equal(ws.getCell("L4").numFmt, "mm-dd-yy");
+    assert.equal(ws.getCell("F12").numFmt, "mm-dd-yy");
+
+    for (const cell of ["A1", "A4", "J10"]) {
+      assert.equal(ws.getCell(cell).font.name, "宋体");
+      assert.equal(ws.getCell(cell).alignment.vertical, "middle");
+      assert.equal(ws.getCell(cell).border.left.style, "thin");
+      assert.equal(ws.getCell(cell).border.right.style, "thin");
+      assert.equal(ws.getCell(cell).border.top.style, "thin");
+      assert.equal(ws.getCell(cell).border.bottom.style, "thin");
+    }
+    assert.equal(ws.getCell("J10").alignment.wrapText, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

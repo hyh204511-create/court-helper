@@ -19,11 +19,26 @@ export const HEADER_QZ = [
 
 export const STYLE = {
   header: {
-    font: { bold: true, size: 11 },
+    font: { name: "宋体", bold: true, size: 11 },
     fill: { type: "pattern", pattern: "solid", fgColor: { argb: "FF92D050" } },
+    border: {
+      top: { style: "thin" }, right: { style: "thin" },
+      bottom: { style: "thin" }, left: { style: "thin" },
+    },
+    alignment: { horizontal: "center", vertical: "middle" },
     height: 27,
   },
-  dataRowHeight: 28,
+  data: {
+    font: { name: "宋体", size: 11 },
+    border: {
+      top: { style: "thin" }, right: { style: "thin" },
+      bottom: { style: "thin" }, left: { style: "thin" },
+    },
+    alignment: { vertical: "middle" },
+    wrapAlignment: { vertical: "middle", wrapText: true },
+    height: 28,
+    minRows: 3,
+  },
   colWidths: {
     A: 15, B: 14, C: 20.37, D: 15.5, E: 12, F: 13.25,
     G: 24.13, H: 12.87, I: 12, J: 39.63, K: 18, L: 10.75,
@@ -46,9 +61,21 @@ function writeHeader(ws, row, headers) {
     cell.value = headers[c];
     cell.font = STYLE.header.font;
     cell.fill = STYLE.header.fill;
-    cell.alignment = { horizontal: "center", vertical: "center" };
+    cell.border = STYLE.header.border;
+    cell.alignment = STYLE.header.alignment;
   }
   ws.getRow(row).height = STYLE.header.height;
+}
+
+function formatDataRow(ws, row) {
+  for (let col = 1; col <= HEADER_LI.length; col += 1) {
+    const cell = ws.getCell(row, col);
+    cell.font = STYLE.data.font;
+    cell.border = STYLE.data.border;
+    cell.alignment = col === 10 ? STYLE.data.wrapAlignment : STYLE.data.alignment;
+    if ([6, 9, 12].includes(col)) cell.numFmt = STYLE.dateFormat;
+  }
+  ws.getRow(row).height = STYLE.data.height;
 }
 
 /** 'YYYY-MM-DD' → Date（UTC 午夜，避免 ExcelJS 序列化后日期漂移一天）；空 → null */
@@ -60,6 +87,7 @@ function dateToCell(v) {
 
 function writeDataRow(ws, row, rec, kind, imageJobs) {
   const dateCols = kind === "li" ? { filed: 6, reject: 9 } : { filed: 6, reject: 9 };
+  formatDataRow(ws, row);
   ws.getCell(row, 1).value = rec.plaintiff ?? "";
   ws.getCell(row, 2).value = rec.defendant ?? "";
   ws.getCell(row, 3).value = rec.account ?? "";
@@ -69,7 +97,7 @@ function writeDataRow(ws, row, rec, kind, imageJobs) {
   if (rec.status === "UNKNOWN") {
     statusCell.value = "";
     statusCell.fill = STYLE.unknown.fill;
-    statusCell.font = STYLE.unknown.font;
+    statusCell.font = { ...STYLE.data.font, ...STYLE.unknown.font };
   } else {
     statusCell.value = rec.status ?? "";
   }
@@ -95,7 +123,6 @@ function writeDataRow(ws, row, rec, kind, imageJobs) {
   if (rec.rejectImage) {
     imageJobs.push({ blob: rec.rejectImage, ...STYLE.image.reject, row: row - 1 });
   }
-  ws.getRow(row).height = STYLE.dataRowHeight;
 }
 
 /**
@@ -117,13 +144,22 @@ export async function buildExportWorkbook({ cases = [], enforcementCases = [] } 
     writeDataRow(ws, row, c, "li", imageJobs);
     row += 1;
   }
-  // 强执表头 = 立案末行 + 5（row 此时 = 立案末行 + 1，故 +4）
-  const qzHeader = row + 4;
+  const liDataEnd = row - 1;
+  const reservedLiEnd = Math.max(liDataEnd, 1 + STYLE.data.minRows);
+  for (let reservedRow = row; reservedRow <= reservedLiEnd; reservedRow += 1) {
+    formatDataRow(ws, reservedRow);
+  }
+  // 强执表头 = max(立案末数据行, 模板预留第 4 行) + 5，最低为第 9 行。
+  const qzHeader = reservedLiEnd + 5;
   writeHeader(ws, qzHeader, HEADER_QZ);
   let qzRow = qzHeader + 1;
   for (const c of enforcementCases) {
     writeDataRow(ws, qzRow, c, "qz", imageJobs);
     qzRow += 1;
+  }
+  const reservedQzEnd = Math.max(qzRow - 1, qzHeader + STYLE.data.minRows);
+  for (let reservedRow = qzRow; reservedRow <= reservedQzEnd; reservedRow += 1) {
+    formatDataRow(ws, reservedRow);
   }
 
   for (const job of imageJobs) {
