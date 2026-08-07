@@ -1,12 +1,13 @@
 # 规格：login-module（登录状态、账号识别与自动登录）
 
-> 版本：1.0 ｜ 状态：已确认、待实现 ｜ 依据：计划 §Phase 2、自动登录真实会话验收、Phase 11 控制台唯一入口决策
+> 版本：1.1 ｜ 状态：已确认、待实现 ｜ 依据：计划 §Phase 2、自动登录真实会话验收、Phase 11 控制台唯一入口决策
 > v0.2 变更：登录全人工 → 登录自动化（可选）；新增自动登录范围、本地服务、验证码识别流程。
 > v0.3 变更：**自动登录凭据来源改为服务器**（`GET /platform-accounts` 列表 + `POST /platform-accounts/:id/credential` 取明文）；验证码 OCR 仍走本地 8765 服务（ddddocr）；本地 `accounts.txt` 降级为可选回退。
 > v0.4 变更：**本地服务支持 `--port` 参数**（默认 8765，测试用独立随机端口避免与既有实例冲突）；补充测试环境隔离说明（8765 残留实例历史坑）。
 > v0.5 变更：**真实输入驱动**——2026-08-05 真实会话实测确认：平台（uni-app H5）**只响应 `isTrusted=true` 的真实用户事件**，JS 合成 `click()`（isTrusted=false）被静默忽略 → 自动登录「点登录按钮」「点击验证码刷新」均不触发（表单可填、提交不执行）。修复：扩展经 **`chrome.debugger` API** 向平台页注入**真实输入事件**（`Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`），由 service worker 统一驱动；debugger 不可用时回退「待人工」。
 > v0.8 变更：自动登录入口迁移到 `/admin/browser-control` 的“平台账号与自动登录”区域；“一键登录”创建统一 `LOGIN` 命令。删除 Popup 登录/抓取流程；独立 Options/Setup 只保留服务配置和设备配对。
 > v1.0 变更：真实登录页为异步渲染。`AUTO_LOGIN` 到达登录路由后必须有界等待密码表单和验证码就绪；密码表单就绪即先填账号/密码，验证码不可用时不得阻塞这两个字段写入、不得提交，并回写既有稳定待人工码。
+> v1.1 变更：统一 `LOGIN` 命令在用户已打开法院页向登录路由切换时，Service Worker 必须先有界等待路由与 content script 就绪，再交付 `AUTO_LOGIN`；不得让瞬态消息端口断开消耗命令或泄露凭据。
 
 ## 1. 目标
 

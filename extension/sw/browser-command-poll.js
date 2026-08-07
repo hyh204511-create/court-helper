@@ -35,6 +35,8 @@ const MANUAL_CODES = new Set([
   "SCREENSHOT_CAPTURE_FAILED",
   "AUDIT_EVIDENCE_INCOMPLETE",
   "COURT_TAB_ACTIVATION_FAILED",
+  "LOGIN_PAGE_TIMEOUT",
+  "LOGIN_CONTENT_UNAVAILABLE",
 ]);
 
 function trim(value) {
@@ -45,13 +47,13 @@ function path(value) {
   return encodeURIComponent(String(value));
 }
 
-function courtTab(tabs, commandType) {
+function selectCourtTab(tabs, predicate) {
   const candidates = (Array.isArray(tabs) ? tabs : []).filter((tab) => {
     if (typeof tab?.id !== "number" || typeof tab.url !== "string") return false;
     try {
       const url = new URL(tab.url);
       if (url.hostname !== "zxfw.court.gov.cn") return false;
-      return commandType === "LOGIN" ? isLoginRoute(url.hash) : isCourtListRoute(url.hash);
+      return predicate(url, tab);
     } catch {
       return false;
     }
@@ -65,6 +67,17 @@ function courtTab(tabs, commandType) {
     return left.id - right.id;
   });
   return candidates[0] ?? null;
+}
+
+function courtTab(tabs, commandType) {
+  return selectCourtTab(
+    tabs,
+    (url) => commandType === "LOGIN" ? isLoginRoute(url.hash) : isCourtListRoute(url.hash),
+  );
+}
+
+function anyCourtTab(tabs) {
+  return selectCourtTab(tabs, () => true);
 }
 
 function tabAtCourtRoute(tab, route) {
@@ -88,6 +101,13 @@ function isNavigationPortClosure(error) {
   const normalized = message.trim().toLowerCase();
   return NAVIGATION_PORT_CLOSURE_MESSAGES.has(normalized)
     || NAVIGATION_PORT_CLOSURE_MESSAGES.has(`${normalized}.`);
+}
+
+function isContentReceiverUnavailable(error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const normalized = message.trim().toLowerCase();
+  return normalized.includes("could not establish connection. receiving end does not exist")
+    || isNavigationPortClosure(error);
 }
 
 function schedulerTimers(scheduler) {
@@ -124,6 +144,44 @@ function waitForContentRoute(scheduler, delayMs) {
   if (!Number.isFinite(delayMs) || delayMs <= 0) return Promise.resolve();
   const { schedule } = schedulerTimers(scheduler);
   return new Promise((resolve) => schedule(resolve, delayMs));
+}
+
+function retryAttempts(value) {
+  return Math.max(1, Math.min(20, Number.isInteger(value) ? value : 8));
+}
+
+async function waitForLoginRoute(chromeApi, tabId, scheduler, delayMs, attempts) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const tabs = await chromeApi.tabs.query({ url: COURT_URL_PATTERN });
+      const tab = (Array.isArray(tabs) ? tabs : []).find((candidate) => candidate?.id === tabId);
+      if (tab && courtTab([tab], "LOGIN")) return tab;
+    } catch {
+      // The SPA may be rebuilding the tab while the user-initiated navigation completes.
+    }
+    if (attempt + 1 < attempts) await waitForContentRoute(scheduler, delayMs);
+  }
+  return null;
+}
+
+async function waitForLoginContent(chromeApi, tabId, scheduler, delayMs, attempts, timeoutMs) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const probeResult = await withMessageTimeout(
+        chromeApi,
+        tabId,
+        { type: "PING" },
+        scheduler,
+        timeoutMs,
+      );
+      const route = probeResult.response?.route;
+      if (probeResult.response?.ok === true && typeof route === "string" && isLoginRoute(route)) return true;
+    } catch {
+      // A newly injected content script can still be registering its message listener.
+    }
+    if (attempt + 1 < attempts) await waitForContentRoute(scheduler, delayMs);
+  }
+  return false;
 }
 
 function resultFor(response) {
@@ -199,7 +257,14 @@ export function createBrowserCommandPoller({
     if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
     const tabs = await chromeApi.tabs.query({ url: COURT_URL_PATTERN });
     if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
-    const tab = courtTab(tabs, command.type);
+    let tab = courtTab(tabs, command.type);
+    if (command.type === "LOGIN" && !tab) {
+      const selectedTab = anyCourtTab(tabs);
+      if (!selectedTab) return { ok: false, error: "NO_COURT_TAB" };
+      const attempts = retryAttempts(contentRouteRetryAttempts);
+      tab = await waitForLoginRoute(chromeApi, selectedTab.id, scheduler, contentRouteRetryDelayMs, attempts);
+      if (!tab) return { ok: false, error: "LOGIN_PAGE_TIMEOUT" };
+    }
     if (!tab) return { ok: false, error: "NO_COURT_TAB" };
     if (typeof chromeApi.tabs.update === "function") {
       try {
@@ -211,6 +276,17 @@ export function createBrowserCommandPoller({
     if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
     let message = { type: "BROWSER_COMMAND_EXECUTE", commandType: command.type };
     if (command.type === "LOGIN") {
+      const attempts = retryAttempts(contentRouteRetryAttempts);
+      const contentReady = await waitForLoginContent(
+        chromeApi,
+        tab.id,
+        scheduler,
+        contentRouteRetryDelayMs,
+        attempts,
+        contentRoutePingTimeoutMs,
+      );
+      if (!contentReady) return { ok: false, error: "LOGIN_CONTENT_UNAVAILABLE" };
+      if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
       let credential;
       try {
         credential = await client.request(`/platform-accounts/${path(command.platformAccountId)}/credential`, { method: "POST", signal });
@@ -258,12 +334,31 @@ export function createBrowserCommandPoller({
       }
       return response;
     } catch (error) {
+      if (command.type === "LOGIN" && isContentReceiverUnavailable(error)) {
+        const attempts = retryAttempts(contentRouteRetryAttempts);
+        const contentReady = await waitForLoginContent(
+          chromeApi,
+          tab.id,
+          scheduler,
+          contentRouteRetryDelayMs,
+          attempts,
+          contentRoutePingTimeoutMs,
+        );
+        if (!contentReady) return { ok: false, error: "LOGIN_CONTENT_UNAVAILABLE" };
+        try {
+          const response = await chromeApi.tabs.sendMessage(tab.id, message);
+          if (response?.ok === true) activePlatformAccountId = command.platformAccountId;
+          return response;
+        } catch {
+          return { ok: false, error: "LOGIN_CONTENT_UNAVAILABLE" };
+        }
+      }
       const mayReattachAfterRouteHandoff = command.type === "QUERY_LI"
         && message.queryMode === "platform_discovery"
         && tabAtCourtRoute(tab, WSLA_LIST_ROUTE)
         && isNavigationPortClosure(error);
       if (mayReattachAfterRouteHandoff) {
-        const attempts = Math.max(1, Math.min(20, Number.isInteger(contentRouteRetryAttempts) ? contentRouteRetryAttempts : 8));
+          const attempts = retryAttempts(contentRouteRetryAttempts);
         for (let attempt = 0; attempt < attempts; attempt += 1) {
           if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
           try {

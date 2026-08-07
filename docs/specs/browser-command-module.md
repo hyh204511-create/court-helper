@@ -1,9 +1,10 @@
 # 规格：browser-command-module（后台唯一业务入口与扩展执行代理）
 
-> 版本：0.4 ｜ 状态：已确认、待实现 ｜ 依据：用户明确要求“popup 全部功能转到后台并移除”；Phase 11 控制台唯一入口决策；现有 login-command-bridge、server-module、app-module、panel-module、report-export-module
+> 版本：0.5 ｜ 状态：已确认、待实现 ｜ 依据：用户明确要求“popup 全部功能转到后台并移除”；Phase 11 控制台唯一入口决策；现有 login-command-bridge、server-module、app-module、panel-module、report-export-module
 > v0.2 变更：固定 `/admin/browser-control` 为唯一业务入口；拆分控制台“一键登录”与通用任务区；补充完整名称/凭据查看权限；定义扩展 action 与独立 Options/Setup 路由；要求删除 Popup 源码、产物和测试。
 > v0.3 变更：补充已授权 MV3 Service Worker 冷启动时的命令轮询恢复契约，避免后台命令在扩展重载或 Worker 回收后无限停留 `pending`。
 > v0.4 变更：真实验收确认 MV3 Worker 回收会丢失仅内存的登录绑定。`EXPORT_REPORT` 因此必须绑定控制台显式选择的非敏感 `platformAccountId`，以便冷启动后仍可按同一账号隔离导出；不持久化平台账号明文、密码或任何业务行。
+> v0.5 变更：`LOGIN` 命令在用户已打开的法院标签正跳转到精确登录路由、或新 content script 尚未就绪时，必须在同一已领取命令内有界等待并重连；不得因该瞬态竞态提前回写终态。
 
 ## 1. 目标与最终职责
 
@@ -52,7 +53,8 @@
 ### `LOGIN`
 
 - 后台只提交 `platformAccountId`。
-- 扩展领取后：检查法院登录页标签 → 取平台凭据 → content 执行既有 `AUTO_LOGIN` → OCR/可信点击链路不变 → 回写成功或稳定失败码。
+- 扩展领取后：检查用户已打开的法院标签 → 有界等待同一标签进入精确登录路由 → 取平台凭据 → 有界确认新 content script 就绪并执行既有 `AUTO_LOGIN` → OCR/可信点击链路不变 → 回写成功或稳定失败码。
+- 页面路由或 content script 的就绪等待仅允许复用同一已打开法院标签、同一 claim 和有界重试（默认最多 8 次、每次间隔 500ms）；扩展不得自行导航、刷新页面、创建标签页或无限重试。等待超时回写 `LOGIN_PAGE_TIMEOUT` 或 `LOGIN_CONTENT_UNAVAILABLE`，均为待人工；不得取凭据、记录凭据或伪造成功。
 - 密码只在服务器凭据出口到扩展运行时内存链路流转，不进入 command payload、storage、日志或后台 HTML。
 - Service Worker 仅在同一运行期内保存最近一次成功 `LOGIN` 的不透明 `platformAccountId`，不持久化、不记录真实账号或密码。该绑定存在时，后续 `QUERY_LI` / `QUERY_QZ` 的目标 ID 不一致必须在读取批次数据前回写 `ACCOUNT_MISMATCH` 并转人工；尚无该运行期自动登录绑定的手工登录兼容流程不据此猜测账号归属。
 
@@ -140,7 +142,7 @@
 ### 自动测试
 
 - server：迁移可重复、角色隔离、重复创建、领取/claimant、回写幂等、过期/取消、UUID/cursor 校验、payload 敏感字段拒绝。
-- extension：无法院标签、未登录、账号不匹配、LOGIN、QUERY_LI、QUERY_QZ 执行 tab 门禁、EXPORT_REPORT、claimant 回写、SW 配置重建；多法院列表标签必须选择活动标签或最近使用标签。
+- extension：无法院标签、未登录、账号不匹配、LOGIN、QUERY_LI、QUERY_QZ 执行 tab 门禁、EXPORT_REPORT、claimant 回写、SW 配置重建；多法院列表标签必须选择活动标签或最近使用标签；LOGIN 必须覆盖登录路由跳转期间的有界等待、content script 首次未就绪后的有界重连，以及两种超时的脱敏待人工回写。
 - extension：模拟已授权配置下的 Service Worker 冷启动（不触发 `onStartup` 或 `onInstalled`）时，必须立即请求 `/browser-commands/next` 并领取可执行命令；缺少/过期令牌时不得发起该请求。
 - admin：`/`、`/admin`、登录成功入口跳转；控制台独立一键登录；通用任务区无 LOGIN；完整当前用户名/创建者名称；两种角色凭据按需查看；跨域、未登录和 extension Bearer 拒绝；无缓存响应；任务轮询、隐藏页退避、错误/取消/重试、安全显示。
 - manifest：无 `default_popup`；不存在 popup 源码、构建入口、产物和测试；已授权 action 打开控制台，未授权 action 打开 Options/Setup；扩展仍能注入法院页面和运行 SW。

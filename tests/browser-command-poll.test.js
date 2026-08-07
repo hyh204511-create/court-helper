@@ -226,6 +226,7 @@ test("同一运行期自动登录绑定的后台账号与查询账号不一致�
   let currentHash = "#/pagesGrxx/pc/login/index";
   let extensionDataCalls = 0;
   const chromeApi = chromeMock(async (_tabId, message) => {
+    if (message.type === "PING") return { ok: true, route: "#/pagesGrxx/pc/login/index" };
     assert.equal(message.commandType, "LOGIN");
     currentHash = "#/pagesWsla/pc/list/index";
     return { ok: true };
@@ -301,6 +302,178 @@ test("历史非空模板任务只回写待人工，绝不将业务行发送给 c
     resultSummary: "需要人工接管",
     progress: null,
   });
+});
+
+test("LOGIN waits for the selected court tab to reach the login route before fetching credentials", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000301",
+    type: "LOGIN",
+    platformAccountId: "00000000-0000-4000-8000-000000000302",
+  };
+  let tabQueries = 0;
+  const dispatched = [];
+  let resultBody;
+  const chromeApi = chromeMock(async (_tabId, message) => {
+    if (message.type === "PING") return { ok: true, route: "#/pagesGrxx/pc/login/password?from=redirect" };
+    dispatched.push(message);
+    return { ok: true };
+  });
+  chromeApi.tabs.query = async () => {
+    tabQueries += 1;
+    const hash = tabQueries === 1 ? "#/pages/pc/index" : "#/pagesGrxx/pc/login/password?from=redirect";
+    return [{ id: 7, active: true, url: `https://zxfw.court.gov.cn/${hash}` }];
+  };
+  const fetchImpl = async (url, init = {}) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command });
+    if (value.endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim-login-route" });
+    if (value.endsWith(`/platform-accounts/${command.platformAccountId}/credential`)) {
+      return response({ account: "synthetic-account", password: "synthetic-password" });
+    }
+    if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+      resultBody = JSON.parse(init.body);
+      return response({ command: { status: "succeeded" } });
+    }
+    throw new Error(`unexpected ${value}`);
+  };
+
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl,
+    contentRouteRetryDelayMs: 0,
+    contentRouteRetryAttempts: 2,
+  }).pollOnce();
+
+  assert.equal(result.ok, true);
+  assert.ok(tabQueries >= 2);
+  assert.equal(dispatched.filter((message) => message.commandType === "LOGIN").length, 1);
+  assert.equal(resultBody.resultCode, "SUCCESS");
+  assert.equal(JSON.stringify(resultBody).includes("synthetic-password"), false);
+});
+
+test("LOGIN retries a transient missing content receiver without fetching credentials again", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000304",
+    type: "LOGIN",
+    platformAccountId: "00000000-0000-4000-8000-000000000305",
+  };
+  let commandDispatches = 0;
+  let credentialReads = 0;
+  let resultBody;
+  const chromeApi = chromeMock(async (_tabId, message) => {
+    if (message.type === "PING") return { ok: true, route: "#/pagesGrxx/pc/login/index" };
+    commandDispatches += 1;
+    if (commandDispatches === 1) throw new Error("Could not establish connection. Receiving end does not exist.");
+    return { ok: true };
+  });
+  chromeApi.tabs.query = async () => [{ id: 7, url: "https://zxfw.court.gov.cn/#/pagesGrxx/pc/login/index" }];
+  const fetchImpl = async (url, init = {}) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command });
+    if (value.endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim-login-content" });
+    if (value.endsWith(`/platform-accounts/${command.platformAccountId}/credential`)) {
+      credentialReads += 1;
+      return response({ account: "synthetic-account", password: "synthetic-password" });
+    }
+    if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+      resultBody = JSON.parse(init.body);
+      return response({ command: { status: "succeeded" } });
+    }
+    throw new Error(`unexpected ${value}`);
+  };
+
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl,
+    contentRouteRetryDelayMs: 0,
+    contentRouteRetryAttempts: 2,
+  }).pollOnce();
+
+  assert.equal(result.ok, true);
+  assert.equal(commandDispatches, 2);
+  assert.equal(credentialReads, 1);
+  assert.equal(resultBody.resultCode, "SUCCESS");
+  assert.equal(JSON.stringify(resultBody).includes("synthetic-password"), false);
+});
+
+test("LOGIN route timeout does not fetch credentials and reports a manual-required code", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000306",
+    type: "LOGIN",
+    platformAccountId: "00000000-0000-4000-8000-000000000307",
+  };
+  let credentialReads = 0;
+  let resultBody;
+  const chromeApi = chromeMock(async () => assert.fail("content must not be called before the login route is ready"));
+  chromeApi.tabs.query = async () => [{ id: 7, url: "https://zxfw.court.gov.cn/#/pages/pc/index" }];
+  const fetchImpl = async (url, init = {}) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command });
+    if (value.endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim-login-timeout" });
+    if (value.endsWith(`/platform-accounts/${command.platformAccountId}/credential`)) credentialReads += 1;
+    if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+      resultBody = JSON.parse(init.body);
+      return response({ command: { status: "manual_required" } });
+    }
+    throw new Error(`unexpected ${value}`);
+  };
+
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl,
+    contentRouteRetryDelayMs: 0,
+    contentRouteRetryAttempts: 2,
+  }).pollOnce();
+
+  assert.equal(result.error, "LOGIN_PAGE_TIMEOUT");
+  assert.equal(credentialReads, 0);
+  assert.equal(resultBody.status, "manual_required");
+  assert.equal(resultBody.resultCode, "LOGIN_PAGE_TIMEOUT");
+});
+
+test("LOGIN content timeout does not leak credentials in the result", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000308",
+    type: "LOGIN",
+    platformAccountId: "00000000-0000-4000-8000-000000000309",
+  };
+  let commandDispatches = 0;
+  let credentialReads = 0;
+  let resultBody;
+  const chromeApi = chromeMock(async (_tabId, message) => {
+    if (message.type === "PING") return { ok: false };
+    commandDispatches += 1;
+    throw new Error("Could not establish connection. Receiving end does not exist.");
+  });
+  chromeApi.tabs.query = async () => [{ id: 7, url: "https://zxfw.court.gov.cn/#/pagesGrxx/pc/login/index" }];
+  const fetchImpl = async (url, init = {}) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command });
+    if (value.endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim-login-content-timeout" });
+    if (value.endsWith(`/platform-accounts/${command.platformAccountId}/credential`)) {
+      credentialReads += 1;
+      return response({ account: "synthetic-account", password: "synthetic-password" });
+    }
+    if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+      resultBody = JSON.parse(init.body);
+      return response({ command: { status: "manual_required" } });
+    }
+    throw new Error(`unexpected ${value}`);
+  };
+
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl,
+    contentRouteRetryDelayMs: 0,
+    contentRouteRetryAttempts: 2,
+  }).pollOnce();
+
+  assert.equal(result.error, "LOGIN_CONTENT_UNAVAILABLE");
+  assert.equal(commandDispatches, 0);
+  assert.equal(credentialReads, 0);
+  assert.equal(resultBody.status, "manual_required");
+  assert.equal(resultBody.resultCode, "LOGIN_CONTENT_UNAVAILABLE");
+  assert.equal(JSON.stringify(resultBody).includes("synthetic-password"), false);
 });
 
 test("browser command poller reports NO_COURT_TAB without dispatching content", async () => {
@@ -422,6 +595,7 @@ test("报表命令回写区分服务器上传成功、未配置与失败", async
     let currentHash = "#/pagesGrxx/pc/login/index";
     let resultBody;
     const chromeApi = chromeMock(async (_tabId, message) => {
+      if (message.type === "PING") return { ok: true, route: currentHash };
       if (message.commandType === "LOGIN") {
         currentHash = "#/pagesWsla/pc/list/index";
         return { ok: true };
