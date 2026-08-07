@@ -120,6 +120,73 @@ test("多个非活动法院列表标签时选择最近使用标签并在执行�
   assert.deepEqual(dispatched, [8]);
 });
 
+test("活动法院标签优先于 lastAccessed 更新的非活动标签", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000122",
+    type: "QUERY_LI",
+    platformAccountId: "00000000-0000-4000-8000-000000000222",
+    clientBatchId: "00000000-0000-4000-8000-000000000322",
+  };
+  const activated = [];
+  const dispatched = [];
+  const chromeApi = chromeMock(async (tabId) => {
+    dispatched.push(tabId);
+    return { ok: true };
+  });
+  chromeApi.tabs.query = async () => [
+    { id: 7, active: true, lastAccessed: 100, url: "https://zxfw.court.gov.cn/#/pagesWsla/pc/list/index" },
+    { id: 8, active: false, lastAccessed: 500, url: "https://zxfw.court.gov.cn/#/pagesWsla/pc/list/index" },
+  ];
+  chromeApi.tabs.update = async (tabId, options) => {
+    activated.push([tabId, options]);
+    return { id: tabId, active: true };
+  };
+  const fetchImpl = async (url) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command });
+    if (value.endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim-active-priority" });
+    if (value.endsWith(`/import-batches/${command.clientBatchId}/extension-data`)) return response({ queryMode: "platform_discovery", rows: [] });
+    if (value.endsWith(`/browser-commands/${command.id}/result`)) return response({ command: { status: "succeeded" } });
+    throw new Error(`unexpected ${value}`);
+  };
+
+  assert.equal((await createBrowserCommandPoller({ chromeApi, fetchImpl }).pollOnce()).ok, true);
+  assert.deepEqual(activated, [[7, { active: true }]]);
+  assert.deepEqual(dispatched, [7]);
+});
+
+test("法院标签激活失败时不发送 content 命令并转人工", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000123",
+    type: "QUERY_LI",
+    platformAccountId: "00000000-0000-4000-8000-000000000223",
+    clientBatchId: "00000000-0000-4000-8000-000000000323",
+  };
+  let dispatched = 0;
+  let resultBody;
+  const chromeApi = chromeMock(async () => {
+    dispatched += 1;
+    return { ok: true };
+  });
+  chromeApi.tabs.update = async () => { throw new Error("synthetic activation failure"); };
+  const fetchImpl = async (url, init = {}) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command });
+    if (value.endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim-activation-failure" });
+    if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+      resultBody = JSON.parse(init.body);
+      return response({ command: { status: "manual_required" } });
+    }
+    throw new Error(`unexpected ${value}`);
+  };
+
+  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl }).pollOnce();
+  assert.deepEqual(result, { ok: false, error: "COURT_TAB_ACTIVATION_FAILED", commandId: command.id });
+  assert.equal(dispatched, 0);
+  assert.equal(resultBody.status, "manual_required");
+  assert.equal(resultBody.resultCode, "COURT_TAB_ACTIVATION_FAILED");
+});
+
 test("同一运行期自动登录绑定的后台账号与查询账号不一致时，不读取批次数据并转人工", async () => {
   const loginCommand = {
     id: "00000000-0000-4000-8000-000000000111",

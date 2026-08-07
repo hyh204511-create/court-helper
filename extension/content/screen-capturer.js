@@ -25,12 +25,12 @@ export function dataUrlToBlob(dataUrl) {
 /**
  * 截取 DOM 元素为 JPEG Blob（html2canvas，content script 内可用，无需扩展权限）。
  * @param {Element} el 目标元素（如审核结果区）
- * @param {{scale?: number}} [opts]
+ * @param {{scale?: number, renderer?: Function}} [opts]
  * @returns {Promise<Blob>}
  */
-export async function captureElement(el, { scale = 2 } = {}) {
-  const { default: html2canvas } = await import("html2canvas");
-  const canvas = await html2canvas(el, { scale, useCORS: true, backgroundColor: "#ffffff" });
+export async function captureElement(el, { scale = 2, renderer = null } = {}) {
+  const render = renderer ?? (await import("html2canvas")).default;
+  const canvas = await render(el, { scale, useCORS: true, backgroundColor: "#ffffff" });
   const dataUrl = canvas.toDataURL("image/jpeg", CAPTURE_OPTIONS.quality);
   return dataUrlToBlob(dataUrl);
 }

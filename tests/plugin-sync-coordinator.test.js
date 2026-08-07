@@ -466,9 +466,62 @@ test("带 rejectImage blobRef 的案件同步在 ACK 后上传 reject 截图", a
   assert.equal(uploads.length, 1);
   assert.equal(uploads[0].caseId, "00000000-0000-4000-8000-000000000501");
   assert.equal(uploads[0].input.type, "reject");
-  assert.equal(uploads[0].input.blob, rejectImage);
+  assert.equal(uploads[0].input.blob.type, rejectImage.type);
+  assert.equal(await uploads[0].input.blob.text(), await rejectImage.text());
   assert.match(uploads[0].input.sha256, /^[a-f0-9]{64}$/);
   assert.equal((await getOutbox(event.id)).status, "sent");
+});
+
+test("带截图的案件收到 200 conflicts 时转人工且不上传截图", async () => {
+  const uid = "uid-screenshot-conflict";
+  const eventId = "mutation-screenshot-conflict";
+  const successImage = new Blob(["synthetic-success-image"], { type: "image/jpeg" });
+  await upsertByUid(STORE_CASES, uid, {
+    uid,
+    account: "masked-account",
+    platformAccountId: "platform-1",
+    kind: "li",
+    plaintiff: "synthetic plaintiff",
+    defendant: "synthetic defendant",
+    status: "立案成功",
+    successImage,
+  });
+  const event = await enqueue({
+    id: "outbox-screenshot-conflict",
+    type: "case.sync",
+    clientMutationId: eventId,
+    payload: {
+      clientUid: uid,
+      platformAccountId: "platform-1",
+      kind: "li",
+      status: "立案成功",
+      queryTime: "2026-08-07",
+      needsHuman: false,
+      sourceUpdatedAt: "2026-08-07T00:00:00.000Z",
+    },
+    blobRef: { storeName: STORE_CASES, uid, field: "successImage" },
+  });
+  let uploads = 0;
+  const client = {
+    async healthCheck() { return { ok: true }; },
+    async listPlatformAccounts() { return { platformAccounts: [] }; },
+    async pullChanges() { return { cases: [], nextCursor: 1 }; },
+    async syncCases() {
+      return {
+        accepted: [],
+        conflicts: [{ clientUid: uid, eventId, code: "CONFLICT" }],
+        cursor: 1,
+      };
+    },
+    async uploadScreenshot() { uploads += 1; },
+  };
+
+  await createSyncCoordinator({ client }).syncNow();
+  const stored = await getOutbox(event.id);
+  assert.equal(uploads, 0);
+  assert.equal(stored.status, "needs_human");
+  assert.equal(stored.lastErrorCode, "CONFLICT");
+  assert.deepEqual(stored.conflicts, [{ clientUid: uid, eventId, code: "CONFLICT" }]);
 });
 
 test("SYNC_* 消息和面板同步区只展示白名单、脱敏账号与安全冲突摘要", () => {

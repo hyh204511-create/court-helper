@@ -3,9 +3,9 @@ import { test } from "node:test";
 
 import {
   CAPTURE_OPTIONS,
+  captureElement,
   captureVisibleTab,
   dataUrlToBlob,
-  requestVisibleTabCapture,
 } from "../extension/content/screen-capturer.js";
 
 test("captureVisibleTab 调用 chrome.tabs.captureVisibleTab 并返回 JPEG Blob", async () => {
@@ -40,18 +40,20 @@ test("dataUrlToBlob 解析 base64 数据", () => {
   assert.equal(blob.size, 5);
 });
 
-test("content 通过 Service Worker 截取消息发送方的活动法院标签", async () => {
+test("captureElement 只把目标 DOM 交给页面内渲染器", async () => {
+  const target = { id: "synthetic-evidence-region" };
+  const calls = [];
   const dataUrl = "data:image/jpeg;base64," + Buffer.from([1, 2, 3]).toString("base64");
-  const messages = [];
-  const blob = await requestVisibleTabCapture({
-    runtime: {
-      async sendMessage(message) {
-        messages.push(message);
-        return { ok: true, dataUrl };
-      },
+  const blob = await captureElement(target, {
+    scale: 3,
+    renderer: async (element, options) => {
+      calls.push({ element, options });
+      return { toDataURL: () => dataUrl };
     },
   });
-  assert.deepEqual(messages, [{ type: "CAPTURE_VISIBLE_TAB" }]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].element, target);
+  assert.deepEqual(calls[0].options, { scale: 3, useCORS: true, backgroundColor: "#ffffff" });
   assert.equal(blob.type, "image/jpeg");
   assert.equal(blob.size, 3);
 });

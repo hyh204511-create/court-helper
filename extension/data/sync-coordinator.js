@@ -45,6 +45,22 @@ function asIso(value) {
   return null;
 }
 
+async function sha256Hex(blob) {
+  if (typeof blob?.arrayBuffer !== "function" || !globalThis.crypto?.subtle) {
+    const error = new Error("SCREENSHOT_BLOB_UNAVAILABLE");
+    error.code = "SCREENSHOT_BLOB_UNAVAILABLE";
+    error.retryable = false;
+    throw error;
+  }
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function screenshotType(event) {
+  if (event?.blobRef?.field === "rejectImage" || event?.payload?.status === "已驳回") return "reject";
+  return event?.payload?.kind === "qz" ? "enforcement_success" : "success";
+}
+
 function makeNow(now) {
   return () => {
     const value = typeof now === "function" ? now() : now;
@@ -392,22 +408,57 @@ export function createSyncCoordinator({
     return { changes: changes.length, cursor: nextCursor };
   }
 
-  function sendEvent(event, context) {
+  async function uploadEventScreenshot(event, response) {
+    if (!event?.blobRef) return response;
+    const accepted = (Array.isArray(response?.accepted) ? response.accepted : []).find((item) => (
+      item?.clientUid === eventClientUid(event)
+      && (item?.eventId === event.clientMutationId || item?.eventId === event.payload?.eventId)
+    ));
+    if (typeof accepted?.id !== "string" || !accepted.id) {
+      const error = new Error("SCREENSHOT_CASE_UNAVAILABLE");
+      error.code = "SCREENSHOT_CASE_UNAVAILABLE";
+      error.retryable = false;
+      throw error;
+    }
+    const local = await db.getByUid(event.blobRef.storeName, event.blobRef.uid);
+    const blob = local?.[event.blobRef.field];
+    const type = screenshotType(event);
+    const capturedAt = asIso(event.payload?.sourceUpdatedAt ?? event.payload?.queryTime) ?? getNow();
+    const sha256 = await sha256Hex(blob);
+    const extension = blob.type === "image/png" ? "png" : "jpg";
+    await remote.uploadScreenshot(accepted.id, {
+      eventId: event.clientMutationId,
+      type,
+      capturedAt,
+      sha256,
+      blob,
+      filename: `screenshot.${extension}`,
+    }, { idempotencyKey: `${event.clientMutationId}-screenshot-${type}` });
+    return response;
+  }
+
+  async function sendEvent(event, context) {
     if (event.type !== "case.sync") {
       const unsupported = new Error("UNSUPPORTED_OUTBOX_EVENT");
       unsupported.code = "UNSUPPORTED_OUTBOX_EVENT";
       unsupported.retryable = false;
-      return Promise.reject(unsupported);
+      throw unsupported;
     }
-    return remote.syncCases({
-      batchId: event.clientMutationId,
-      items: [syncItem(event, state.accounts)],
-    }, { idempotencyKey: context?.idempotencyKey ?? event.clientMutationId }).catch((error) => {
+    let response;
+    try {
+      response = await remote.syncCases({
+        batchId: event.clientMutationId,
+        items: [syncItem(event, state.accounts)],
+      }, { idempotencyKey: context?.idempotencyKey ?? event.clientMutationId });
+    } catch (error) {
       if (!isConflict(error)) throw error;
       const details = conflictsOf(error.conflicts?.length ? error.conflicts : error.details);
-      const conflict = Object.assign(error, { conflicts: details });
-      throw conflict;
-    });
+      throw Object.assign(error, { conflicts: details });
+    }
+    if (Array.isArray(response?.conflicts) && response.conflicts.length > 0) {
+      return { ...response, conflicts: conflictsOf(response.conflicts) };
+    }
+    return uploadEventScreenshot(event, response);
   }
 
   async function markConflictsNeedsHuman() {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { collectFields, collectListRows, findField } from "../extension/content/case-collectors.js";
+import { collectFields, collectListRowEntries, collectListRows, findField } from "../extension/content/case-collectors.js";
 
 /** 迷你 DOM stub：按选择器返回预设元素 */
 function makeEl(selMap) {
@@ -86,6 +86,17 @@ test("collectListRows：多行与空列表容错", () => {
   assert.equal(rows[1].hasSpaceBtn, false);
 
   assert.deepEqual(collectListRows(makeEl({ ".fd-case-item": [] })), []);
+});
+
+test("collectListRowEntries 将结构化数据与原始 DOM 行一一配对", () => {
+  const first = rowEl({ status: "待审核" });
+  const second = rowEl({ status: "已立案" });
+  const entries = collectListRowEntries(makeEl({ ".fd-case-item": [first, second] }));
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0].element, first);
+  assert.equal(entries[0].data.statusText, "待审核");
+  assert.equal(entries[1].element, second);
+  assert.equal(entries[1].data.statusText, "已立案");
 });
 
 test("字段缺 value 时返回空字符串而非报错", () => {

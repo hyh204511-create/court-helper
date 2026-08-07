@@ -21,6 +21,12 @@ const MANUAL_CODES = new Set([
   "ACCOUNT_MISMATCH",
   "TEMPLATE_NOT_EMPTY",
   "PLATFORM_ACCOUNT_UNAVAILABLE",
+  "DISCOVERY_BASELINE_MISSING",
+  "NO_VISIBLE_CASES",
+  "REPORT_EMPTY",
+  "SCREENSHOT_CAPTURE_FAILED",
+  "AUDIT_EVIDENCE_INCOMPLETE",
+  "COURT_TAB_ACTIVATION_FAILED",
 ]);
 
 function trim(value) {
@@ -32,7 +38,7 @@ function path(value) {
 }
 
 function courtTab(tabs, commandType) {
-  return (Array.isArray(tabs) ? tabs : []).find((tab) => {
+  const candidates = (Array.isArray(tabs) ? tabs : []).filter((tab) => {
     if (typeof tab?.id !== "number" || typeof tab.url !== "string") return false;
     try {
       const url = new URL(tab.url);
@@ -41,7 +47,16 @@ function courtTab(tabs, commandType) {
     } catch {
       return false;
     }
-  }) ?? null;
+  });
+  candidates.sort((left, right) => {
+    const active = Number(right.active === true) - Number(left.active === true);
+    if (active !== 0) return active;
+    const recent = (Number.isFinite(right.lastAccessed) ? right.lastAccessed : -1)
+      - (Number.isFinite(left.lastAccessed) ? left.lastAccessed : -1);
+    if (recent !== 0) return recent;
+    return left.id - right.id;
+  });
+  return candidates[0] ?? null;
 }
 
 function resultFor(response) {
@@ -115,6 +130,14 @@ export function createBrowserCommandPoller({
     if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
     const tab = courtTab(tabs, command.type);
     if (!tab) return { ok: false, error: "NO_COURT_TAB" };
+    if (typeof chromeApi.tabs.update === "function") {
+      try {
+        await chromeApi.tabs.update(tab.id, { active: true });
+      } catch {
+        return { ok: false, error: "COURT_TAB_ACTIVATION_FAILED" };
+      }
+    }
+    if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
     let message = { type: "BROWSER_COMMAND_EXECUTE", commandType: command.type };
     if (command.type === "LOGIN") {
       let credential;

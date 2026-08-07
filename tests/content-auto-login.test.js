@@ -57,7 +57,7 @@ async function loadContent({ hash, html = "<main></main>" }) {
   globalThis.chrome = chrome;
   const module = await import(`../extension/content/court-content.js?auto-login-test=${importSequence++}`);
   assert.equal(typeof module.observePanelLogin, "function");
-  return { dom, chrome, listener: chrome.listeners.at(-1) };
+  return { dom, chrome, listener: chrome.listeners.at(-1), module };
 }
 
 async function dispatch(listener, message) {
@@ -320,7 +320,7 @@ test("START_BATCH qz：民事 tab 无执行类行时返回 EXECUTION_TAB_REQUIRE
   }
 });
 
-test("START_BATCH qz：存在执行类行时允许正常启动批量任务", async () => {
+test("START_BATCH qz：执行类 UNKNOWN 行完成批次但必须转人工", async () => {
   await db.resetDb();
   await db.upsert(db.STORE_ENFORCEMENT, {
     account: "demo-account",
@@ -340,10 +340,134 @@ test("START_BATCH qz：存在执行类行时允许正常启动批量任务", asy
   };
   try {
     const result = await dispatch(listener, { type: "START_BATCH", kind: "qz" });
-    assert.equal(result.response?.ok, true);
+    assert.equal(result.response?.ok, false);
+    assert.equal(result.response?.error, "NEEDS_HUMAN");
     assert.equal(result.response?.stats?.total, 1);
   } finally {
     globalThis.setTimeout = nativeSetTimeout;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("START_BATCH 驳回行使用真实 DOM 按钮触发详情取证", async () => {
+  await db.resetDb();
+  const uid = "synthetic-reject-row";
+  const sourceCaseName = "SYNTHETIC REJECTED CASE";
+  await db.upsertByUid(db.STORE_CASES, uid, {
+    uid,
+    account: "demo-account",
+    plaintiff: "synthetic plaintiff",
+    defendant: "synthetic defendant",
+    sourceCaseName,
+    kind: "li",
+    status: "UNKNOWN",
+  });
+  const { dom, listener } = await loadContent({
+    hash: "#/pagesWsla/pc/list/index",
+    html: `
+      <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
+      <div class="fd-case-item">
+        <div class="fd-header-status">审核不通过</div>
+        <div class="fd-header-ajmc">${sourceCaseName}</div>
+        <div class="fd-header-ajlx">民事一审案件</div>
+        <div class="fd-field-item"><span class="fd-field-lable">审核意见</span><span class="fd-field-value">synthetic current opinion</span></div>
+        <button class="fd-case-space-btn">案件空间</button>
+      </div>`,
+  });
+  let clicks = 0;
+  dom.window.document.querySelector(".fd-case-space-btn").addEventListener("click", async () => {
+    clicks += 1;
+    const current = await db.getByUid(db.STORE_CASES, uid);
+    await db.upsertByUid(db.STORE_CASES, uid, {
+      ...current,
+      rejectTime: "2026-08-07",
+      rejectReason: "synthetic current opinion",
+      rejectImage: new Blob(["synthetic-reject-image"], { type: "image/jpeg" }),
+      needsHuman: false,
+      errorCode: null,
+    });
+  });
+  const nativeSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, delay >= 1000 ? 0 : delay, ...args);
+  try {
+    const result = await dispatch(listener, { type: "START_BATCH", kind: "li" });
+    assert.equal(clicks, 1);
+    assert.equal(result.response?.ok, true);
+    const stored = await db.getByUid(db.STORE_CASES, uid);
+    assert.equal(stored.rejectTime, "2026-08-07");
+    assert.equal(stored.rejectReason, "synthetic current opinion");
+    assert.equal(stored.needsHuman, false);
+  } finally {
+    globalThis.setTimeout = nativeSetTimeout;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("详情页取第一条完整审核记录并在补图成功后清除旧失败标记", async () => {
+  await db.resetDb();
+  const uid = "synthetic-reject-recapture";
+  await db.upsertByUid(db.STORE_CASES, uid, {
+    uid,
+    account: "demo-account",
+    plaintiff: "synthetic plaintiff",
+    defendant: "synthetic defendant",
+    kind: "li",
+    status: "已驳回",
+    rejectTime: "2026-08-07",
+    rejectReason: "synthetic stale reason",
+    needsHuman: true,
+    errorCode: "SCREENSHOT_CAPTURE_FAILED",
+  });
+  const { dom, chrome, module } = await loadContent({
+    hash: "#/pagesWsla/common/wsla/detail/index",
+    html: `
+      <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
+      <div class="uni-forms-item"><span>审核结果</span><span>审核不通过</span></div>
+      <div class="uni-forms-item"><span>审核时间</span><span>2026-08-07 09:30:00</span></div>
+      <div class="uni-forms-item"><span>审核结果</span><span>审核不通过</span></div>
+      <div class="uni-forms-item"><span>审核时间</span><span>2026-08-01 10:00:00</span></div>
+      <div class="uni-forms-item"><span>审核意见</span><span>synthetic complete opinion</span></div>`,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  chrome.storage.session.get = async () => ({ pendingDetail: { uid, kind: "li" } });
+  try {
+    const ok = await module.runDetailCapture({
+      capture: async () => new Blob(["synthetic-recaptured-image"], { type: "image/jpeg" }),
+    });
+    assert.equal(ok, true);
+    const stored = await db.getByUid(db.STORE_CASES, uid);
+    assert.equal(stored.needsHuman, false);
+    assert.equal(stored.errorCode, null);
+    assert.equal(stored.rejectTime, "2026-08-01");
+    assert.equal(stored.rejectReason, "synthetic complete opinion");
+
+    const incompleteUid = "synthetic-incomplete-audit";
+    await db.upsertByUid(db.STORE_CASES, incompleteUid, {
+      uid: incompleteUid,
+      account: "demo-account",
+      plaintiff: "synthetic plaintiff 2",
+      defendant: "synthetic defendant 2",
+      kind: "li",
+      status: "已驳回",
+      needsHuman: false,
+      errorCode: null,
+    });
+    dom.window.document.body.innerHTML = `
+      <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
+      <div class="uni-forms-item"><span>审核结果</span><span>审核不通过</span></div>
+      <div class="uni-forms-item"><span>审核时间</span><span>2026-08-07 09:30:00</span></div>`;
+    chrome.storage.session.get = async () => ({ pendingDetail: { uid: incompleteUid, kind: "li" } });
+    let incompleteCaptures = 0;
+    assert.equal(await module.runDetailCapture({ capture: async () => { incompleteCaptures += 1; } }), true);
+    const incomplete = await db.getByUid(db.STORE_CASES, incompleteUid);
+    assert.equal(incompleteCaptures, 0);
+    assert.equal(incomplete.rejectTime, undefined);
+    assert.equal(incomplete.rejectReason, undefined);
+    assert.equal(incomplete.needsHuman, true);
+    assert.equal(incomplete.errorCode, "AUDIT_EVIDENCE_INCOMPLETE");
+  } finally {
     cleanup(dom);
     await db.resetDb();
   }

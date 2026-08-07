@@ -48,10 +48,18 @@ export function assertSelectors(root, selectors = SELECTORS, keys = CRITICAL_SEL
 }
 
 /** 采集列表行数组（每行结构化） */
-export function collectListRows(root, selectors = SELECTORS) {
+export function collectListRowEntries(root, selectors = SELECTORS) {
   assertSelectors(root, selectors);
   const rowEls = root.querySelectorAll(selectors.list.row);
-  return [...rowEls].map((rowEl) => collectRow(rowEl, selectors));
+  return [...rowEls].map((element) => ({
+    data: collectRow(element, selectors),
+    element,
+  }));
+}
+
+/** 采集列表行数组（纯结构化数据，不携带 DOM 节点）。 */
+export function collectListRows(root, selectors = SELECTORS) {
+  return collectListRowEntries(root, selectors).map((entry) => entry.data);
 }
 
 /** 采集单行 */
@@ -96,8 +104,8 @@ export function extractBusinessFields(fields) {
 /**
  * 采集详情页（案件空间 pagesWsla/common/wsla/detail）。
  * 表单项 .uni-forms-item 的 innerText 为「label\nvalue」结构（实测）；
- * 「审核结果」+「审核时间」成对构成审核记录（最新在前），「审核意见」= 驳回原因。
- * @returns {{auditRecords: Array<{status: string, time: string}>, fields: Record<string,string>, opinion: string|null}}
+ * 「审核结果」+「审核时间」+「审核意见」构成同一审核记录（最新在前）。
+ * @returns {{auditRecords: Array<{status: string, time?: string, opinion?: string}>, fields: Record<string,string>, opinion: string|null}}
  */
 export function collectDetail(root, selectors = SELECTORS) {
   const items = root.querySelectorAll(selectors.detail.formItem);
@@ -128,14 +136,16 @@ export function collectDetail(root, selectors = SELECTORS) {
       auditRecords.push(current);
     } else if (label === "审核时间" && current) {
       current.time = value;
+    } else if (label === "审核意见") {
+      if (current) current.opinion = value;
+      if (fields[label] === undefined) fields[label] = value;
     } else {
       fields[label] = value;
-      if (label === "审核意见") current = null;
     }
   }
   return {
     auditRecords,
     fields,
-    opinion: fields["审核意见"] ?? null,
+    opinion: auditRecords[0]?.opinion ?? null,
   };
 }

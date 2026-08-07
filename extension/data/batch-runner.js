@@ -50,12 +50,32 @@ export async function persistSyncRecord(record, { db = defaultDb, outbox = defau
   const storeName = record.kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
   const uid = typeof record.uid === "string" && record.uid ? record.uid : db.uidOf(record);
   const existing = await db.getByUid(storeName, uid);
-  const successImage = record.image ?? record.successImage ?? existing?.successImage ?? null;
+  const queryFailed = record.status === "UNKNOWN" && stableErrorCode(record.error ?? record.errorCode) !== null;
+  const status = queryFailed && existing?.status ? existing.status : record.status;
+  const successImage = record.successImage
+    ?? (status !== "已驳回" ? record.image : null)
+    ?? existing?.successImage
+    ?? null;
+  const rejectImage = record.rejectImage
+    ?? (status === "已驳回" ? record.image : null)
+    ?? existing?.rejectImage
+    ?? null;
+  const evidenceValue = (field) => record[field]
+    ?? existing?.[field]
+    ?? (Object.prototype.hasOwnProperty.call(record, field) ? null : undefined);
   const local = await db.upsertByUid(storeName, uid, {
     ...existing,
     ...record,
+    status,
+    filedTime: evidenceValue("filedTime"),
+    caseNumber: evidenceValue("caseNumber"),
+    rejectTime: evidenceValue("rejectTime"),
+    rejectReason: evidenceValue("rejectReason"),
     successImage,
-    needsHuman: record.needsHuman || (!successImage && ["立案成功", "强执成功"].includes(record.status)),
+    rejectImage,
+    needsHuman: record.needsHuman
+      || (!successImage && ["立案成功", "强执成功"].includes(status))
+      || (!rejectImage && status === "已驳回"),
   });
   const payload = {
     clientUid: local.uid,
@@ -79,11 +99,11 @@ export async function persistSyncRecord(record, { db = defaultDb, outbox = defau
     type: "case.sync",
     clientMutationId: mutationId,
     payload,
-    blobRef: record.image
+    blobRef: (local.status === "已驳回" ? local.rejectImage : local.successImage)?.arrayBuffer
       ? {
           storeName,
           uid,
-          field: record.status === "已驳回" ? "rejectImage" : "successImage",
+          field: local.status === "已驳回" ? "rejectImage" : "successImage",
         }
       : null,
   });
@@ -132,6 +152,8 @@ export async function runBatch({ cases = [], pageOps, onUpdate, timing = {}, per
       filedTime: null,
       rejectTime: null,
       rejectReason: null,
+      successImage: null,
+      rejectImage: null,
       image: null,
       queryTime: today(),
       needsHuman: false,
@@ -153,9 +175,19 @@ export async function runBatch({ cases = [], pageOps, onUpdate, timing = {}, per
         record.needsHuman = true;
       } else if (NEEDS_IMAGE.has(status)) {
         try {
-          record.image = raw.image ?? (await pageOps.capture());
+          const image = status === "已驳回"
+            ? raw.rejectImage ?? raw.image ?? (await pageOps.capture())
+            : raw.successImage ?? raw.image ?? (await pageOps.capture());
+          record.image = image ?? null;
+          if (status === "已驳回") record.rejectImage = record.image;
+          else record.successImage = record.image;
+          if (!record.image) {
+            record.needsHuman = true;
+            record.error = raw.evidenceError ?? "SCREENSHOT_CAPTURE_FAILED";
+          }
         } catch {
           record.needsHuman = true; // 截图失败 → 待人工补图
+          record.error = raw.evidenceError ?? "SCREENSHOT_CAPTURE_FAILED";
         }
       }
     } else {

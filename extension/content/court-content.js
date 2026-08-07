@@ -4,10 +4,11 @@
 // - 登录由后台统一命令驱动；批量执行前校验已登录 + 当前账号与案件账号一致（不一致 → 待人工切换）；
 // - 驳回案件：列表行直读审核意见（驳回原因），审核时间/截图由「案件空间」新标签的
 //   详情页实例自动采集（storage.session 传递待办，详情页回写 db）；
-// - 截图用 html2canvas captureElement（content script 内可用，无需扩展权限）。
+// - 截图只渲染已确认的案件行/审核区域，避免依赖 activeTab 临时授权或调试器。
 import { SELECTORS } from "./selectors.js";
 import {
   assertSelectors,
+  collectListRowEntries,
   collectListRows,
   extractBusinessFields,
   collectDetail,
@@ -304,6 +305,7 @@ function handlePanelExport({ platformAccountId = null } = {}) {
     const filter = { account, platformAccountId };
     const cases = await db.query(db.STORE_CASES, filter);
     const enforcementCases = await db.query(db.STORE_ENFORCEMENT, filter);
+    if (cases.length + enforcementCases.length === 0) throw new Error("REPORT_EMPTY");
     const wb = await buildExportWorkbook({ cases, enforcementCases });
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
@@ -422,7 +424,7 @@ function findAuditSection() {
 }
 
 // —— 详情页角色：读取待办并采集驳回凭证（审核时间/原因/截图） ——
-async function runDetailCapture() {
+export async function runDetailCapture({ capture = captureElement } = {}) {
   const { pendingDetail } = await chrome.storage.session.get("pendingDetail");
   if (!pendingDetail?.uid) return false;
   const { uid, kind } = pendingDetail;
@@ -438,24 +440,40 @@ async function runDetailCapture() {
   const detail = collectDetail(document);
   const rec = await db.getByUid(store, uid);
   if (!rec || !detail.auditRecords.length) return false;
-  const latest = detail.auditRecords[0];
+  const latest = detail.auditRecords.find((record) => (
+    typeof record?.time === "string" && record.time.trim()
+    && typeof record?.opinion === "string" && record.opinion.trim()
+  ));
+  if (!latest) {
+    await db.upsertByUid(store, uid, {
+      ...rec,
+      needsHuman: true,
+      errorCode: "AUDIT_EVIDENCE_INCOMPLETE",
+    });
+    await chrome.storage.session.set({ pendingDetail: null });
+    return true;
+  }
   let image = null;
   const section = findAuditSection();
   if (section) {
     try {
-      image = await captureElement(section);
+      image = await capture(section);
     } catch (e) {
       console.warn("[court-helper] captureElement failed", e);
     }
   }
-  await db.upsert(store, {
+  const rejectReason = latest.opinion ?? rec.rejectReason ?? null;
+  const recoveredCapture = Boolean(image) && rec.errorCode === "SCREENSHOT_CAPTURE_FAILED";
+  await db.upsertByUid(store, uid, {
     ...rec,
     status: rec.status === "UNKNOWN"
       ? recognizeStatus({ statusText: latest.status, caseType: rec.caseType ?? "", pageKind: "wsla" })
       : rec.status,
     rejectTime: (latest.time || "").slice(0, 10) || rec.rejectTime,
-    rejectReason: detail.opinion ?? rec.rejectReason,
+    rejectReason,
     rejectImage: image ?? rec.rejectImage,
+    needsHuman: image ? (recoveredCapture ? false : rec.needsHuman === true) : true,
+    errorCode: image ? (recoveredCapture ? null : rec.errorCode ?? null) : "SCREENSHOT_CAPTURE_FAILED",
   });
   await chrome.storage.session.set({ pendingDetail: null });
   showToast(`已采集驳回凭证（${uid.slice(0, 8)}…）：${latest.time || "时间未知"}`);
@@ -485,16 +503,16 @@ async function queryCase({ uid, kind }) {
     throw new Error("ACCOUNT_MISMATCH");
   }
   const pageKind = location.hash.includes("pagesWsla") ? "wsla" : "mycase";
-  const rows = collectListRows(document);
-  if (!rows.length) throw new Error("LIST_EMPTY");
+  const rowEntries = collectListRowEntries(document);
+  if (!rowEntries.length) throw new Error("LIST_EMPTY");
   const candidates = rec.sourceCaseName
-    ? rows.filter((row) => row.caseName === rec.sourceCaseName)
+    ? rowEntries.filter(({ data }) => data.caseName === rec.sourceCaseName)
     : rec.caseNumber
-      ? rows.filter((row) => extractBusinessFields(row.fields).caseNumber === rec.caseNumber)
+      ? rowEntries.filter(({ data }) => extractBusinessFields(data.fields).caseNumber === rec.caseNumber)
       : [];
   if (!candidates.length) throw new Error("CASE_NOT_FOUND_IN_LIST");
   if (candidates.length !== 1) throw new Error("CASE_MATCH_AMBIGUOUS");
-  const [target] = candidates;
+  const [{ data: target, element: targetElement }] = candidates;
 
   const biz = extractBusinessFields(target.fields);
   const raw = {
@@ -509,20 +527,22 @@ async function queryCase({ uid, kind }) {
   const status = recognizeStatus({ statusText: raw.statusText, caseType: raw.caseType, pageKind });
   if (status === "已驳回") {
     raw.rejectReason = biz.auditOpinion ?? null;
-    await triggerDetailCapture({ uid, kind, target });
+    await triggerDetailCapture({ uid, kind, target: targetElement });
     const ok = await waitFor(async () => {
       const updated = await db.getByUid(store, uid);
-      return !!(updated?.rejectTime && updated.rejectImage);
+      return !!updated?.rejectTime || updated?.errorCode === "AUDIT_EVIDENCE_INCOMPLETE";
     }, 30000, 1000);
     const updated = await db.getByUid(store, uid);
     if (ok && updated) {
       raw.rejectTime = updated.rejectTime;
-      raw.rejectImage = updated.rejectImage;
+      raw.rejectReason = updated.rejectReason ?? raw.rejectReason ?? null;
+      raw.rejectImage = updated.rejectImage ?? null;
+      raw.evidenceError = updated.errorCode ?? null;
     } else {
       throw new Error("DETAIL_TIMEOUT");
     }
   } else if (status === "立案成功" || status === "强执成功") {
-    raw.image = await captureRow(target);
+    raw.image = await captureRow(targetElement);
   }
   return raw;
 }
@@ -530,6 +550,7 @@ async function queryCase({ uid, kind }) {
 /** 截图（成功类状态在列表页截行） */
 async function captureRow(target) {
   try {
+    if (!target?.isConnected) throw new Error("SCREENSHOT_TARGET_UNAVAILABLE");
     return await captureElement(target);
   } catch (e) {
     console.warn("[court-helper] 行截图失败", e);
@@ -560,6 +581,7 @@ async function startBatch(kind, { account = null, platformAccountId = null } = {
   _panel?.setProgress({ done: 0, total, groups: groupByAccount(all) });
 
   let done = 0;
+  let firstManualError = null;
   const stats = await runBatch({
     cases: all.map((r) => ({
       uid: r.uid,
@@ -577,13 +599,34 @@ async function startBatch(kind, { account = null, platformAccountId = null } = {
     },
     timing: { delay: delayWithPause },
     onUpdate: async (record) => {
+      if (record.needsHuman && firstManualError === null) {
+        const code = record.error ?? record.errorCode;
+        firstManualError = typeof code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(code)
+          ? code
+          : "NEEDS_HUMAN";
+      }
       const storeName = record.kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
       const existing = await db.getByUid(storeName, record.uid);
+      const successImage = record.successImage
+        ?? (record.status !== "已驳回" ? record.image : null)
+        ?? existing?.successImage
+        ?? null;
+      const rejectImage = record.rejectImage
+        ?? (record.status === "已驳回" ? record.image : null)
+        ?? existing?.rejectImage
+        ?? null;
       await db.upsertByUid(storeName, record.uid, {
         ...existing,
         ...record,
-        successImage: record.image ?? existing?.successImage ?? null,
-        needsHuman: record.needsHuman || !record.image && ["立案成功", "强执成功"].includes(record.status),
+        filedTime: record.filedTime ?? existing?.filedTime ?? null,
+        caseNumber: record.caseNumber ?? existing?.caseNumber ?? null,
+        rejectTime: record.rejectTime ?? existing?.rejectTime ?? null,
+        rejectReason: record.rejectReason ?? existing?.rejectReason ?? null,
+        successImage,
+        rejectImage,
+        needsHuman: record.needsHuman
+          || (!successImage && ["立案成功", "强执成功"].includes(record.status))
+          || (!rejectImage && record.status === "已驳回"),
       });
       done += 1;
       _panel?.setProgress({ done, total, groups: groupByAccount(all) });
@@ -591,7 +634,9 @@ async function startBatch(kind, { account = null, platformAccountId = null } = {
     },
   });
   _batchRunning = false;
-  return { ok: true, stats };
+  return stats.needsHuman > 0
+    ? { ok: false, error: firstManualError ?? "NEEDS_HUMAN", stats }
+    : { ok: true, stats };
 }
 
 /** 空白模板：当前真实列表是案件事实源，先验证完再替换当前账号本地记录。 */
@@ -705,7 +750,10 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
   if (typeof platformAccountId !== "string" || !platformAccountId) throw new Error("PLATFORM_ACCOUNT_UNAVAILABLE");
   const account = getCurrentAccount(document);
   if (!account) throw new Error("ACCOUNT_UNDETECTED");
+  const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
   if (location.hash.split("?", 1)[0] === MY_CASE_ROUTE) {
+    const baseline = await db.query(store, { account, platformAccountId });
+    if (!baseline.length) throw new Error("DISCOVERY_BASELINE_MISSING");
     _batchRunning = true;
     try {
       const evidence = await completeMyCaseEvidence(kind, { account, platformAccountId });
@@ -717,15 +765,15 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
     }
   }
   const rows = collectListRows(document);
+  if (!rows.length) throw new Error("NO_VISIBLE_CASES");
   if (kind === "qz" && !rows.some((row) => isEnforcementCaseType(row.caseType))) {
     throw new Error("EXECUTION_TAB_REQUIRED");
   }
   const records = buildPlatformDiscoveryRecords({ account, platformAccountId, kind, rows });
-  const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
   await db.replaceAccountRecords(store, account, records, { platformAccountId });
-  if (!records.length) return { ok: true, stats: { total: 0, success: 0, unknown: 0, needsHuman: 0 } };
   const initial = await startBatch(kind, { account, platformAccountId });
   if (kind === "qz") {
+    if (!initial.ok) return initial;
     const pendingEvidence = (await db.query(store, { account, platformAccountId }))
       .some((record) => record.status === expectedSuccessStatus(kind)
         && (!record.caseNumber || !record.filedTime));
@@ -736,7 +784,9 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
   _batchRunning = true;
   try {
     const evidence = await completeMyCaseEvidence(kind, { account, platformAccountId, navigate: true });
-    return evidence.needsHuman
+    return !initial.ok
+      ? { ...initial, evidence }
+      : evidence.needsHuman
       ? { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE", stats: initial.stats, evidence }
       : { ok: true, stats: initial.stats, evidence };
   } finally {

@@ -175,7 +175,7 @@ test("平台发现从网上立案跨页取证时，以平台唯一搜索回执�
     });
 
     assert.equal(readSearchValue(), "SYNTHETIC SOURCE TITLE");
-    assert.equal(response.error, "MYCASE_EVIDENCE_UNAVAILABLE", "jsdom 无法取得真实截图时必须待人工");
+    assert.equal(response.error, "SCREENSHOT_CAPTURE_FAILED", "首轮截图失败不得被后续补证结果掩盖");
     const records = await db.query(db.STORE_CASES, {
       account: "PLATFORM-ACCOUNT",
       platformAccountId: "00000000-0000-4000-8000-000000000010",
@@ -212,7 +212,7 @@ test("强执平台发现：执行列表首轮有待补 F/G 的成功记录时，
     });
 
     assert.equal(response.ok, false);
-    assert.equal(response.error, "MYCASE_PAGE_REQUIRED");
+    assert.equal(response.error, "SCREENSHOT_CAPTURE_FAILED");
     assert.notEqual(response.error, "EXECUTION_TAB_REQUIRED");
   } finally {
     globalThis.setTimeout = nativeSetTimeout;
@@ -222,7 +222,7 @@ test("强执平台发现：执行列表首轮有待补 F/G 的成功记录时，
   }
 });
 
-test("强执平台发现：执行列表没有待补 F/G 的成功记录时正常完成", async () => {
+test("强执平台发现：UNKNOWN 即使没有待补 F/G 也必须转人工", async () => {
   await db.resetDb();
   const nativeSetTimeout = globalThis.setTimeout;
   globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, delay >= 250 ? 0 : delay, ...args);
@@ -235,8 +235,8 @@ test("强执平台发现：执行列表没有待补 F/G 的成功记录时正常
       platformAccountId: "00000000-0000-4000-8000-000000000021",
     });
 
-    assert.equal(response.ok, true);
-    assert.equal(response.error, undefined);
+    assert.equal(response.ok, false);
+    assert.equal(response.error, "NEEDS_HUMAN");
   } finally {
     globalThis.setTimeout = nativeSetTimeout;
     cleanup(dom);

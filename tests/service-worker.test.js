@@ -131,24 +131,19 @@ function invoke(listener, message, sender = {}) {
   } };
 }
 
-test("CAPTURE_VISIBLE_TAB 只截取消息发送方法院标签所在窗口", async () => {
-  const calls = [];
-  const dataUrl = "data:image/jpeg;base64," + Buffer.from([1, 2, 3]).toString("base64");
-  const loaded = await loadWorker({
-    captureVisibleTab: async (windowId, options) => {
-      calls.push({ windowId, options });
-      return dataUrl;
-    },
-  });
+test("Service Worker 不暴露需要 activeTab 临时授权的截图消息", async () => {
+  const loaded = await loadWorker();
   try {
     const request = invoke(
       loaded.runtimeListener,
       { type: "CAPTURE_VISIBLE_TAB" },
       { tab: { id: 17, windowId: 23, url: "https://zxfw.court.gov.cn/zxfw/#/pagesWsla/pc/list/index" } },
     );
-    assert.equal(request.returned, true);
-    assert.deepEqual(await request.readResponse(), { ok: true, dataUrl });
-    assert.deepEqual(calls, [{ windowId: 23, options: { format: "jpeg", quality: 85 } }]);
+    assert.equal(request.returned, false);
+    assert.deepEqual(await request.readResponse(), {
+      type: "ERROR",
+      payload: { code: "UNKNOWN_TYPE", type: "CAPTURE_VISIBLE_TAB" },
+    });
   } finally {
     loaded.cleanup();
   }

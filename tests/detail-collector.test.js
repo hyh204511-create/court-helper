@@ -56,7 +56,8 @@ test("已立案详情：多条审核记录，最新在前", () => {
   assert.equal(d.auditRecords[0].status, "已立案");
   assert.equal(d.auditRecords[0].time, "2026-07-22 17:13:12");
   assert.equal(d.auditRecords[1].status, "审查通过");
-  assert.equal(d.opinion, "决定立案");
+  assert.equal(d.auditRecords[1].opinion, "决定立案");
+  assert.equal(d.opinion, null, "最新记录缺意见时不得回退拼接历史意见");
 });
 
 test("多条审核历史：最新时间只绑定同组最新意见", () => {
