@@ -219,6 +219,12 @@ export function registerBrowserCommandRoutes(
     };
   });
 
+  app.delete(route(prefix, '/browser-commands'), async (request) => {
+    const context = await requireBackOfficeWrite(request, authService, config);
+    const requestedBy = context.user.role === 'admin' ? undefined : context.user.id;
+    return { deletedCount: await service.deleteTerminal(requestedBy) };
+  });
+
   app.get(route(prefix, '/browser-commands/next'), { preHandler: extensionPreHandler }, async () => {
     const page = await service.list({ status: 'pending', limit: 1 });
     return { command: page.items[0] ? publicBrowserCommand(page.items[0]) : null };

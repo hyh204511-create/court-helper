@@ -225,6 +225,16 @@ export class PgBrowserCommandRepository implements BrowserCommandRepository {
     return existing.rows[0] ? commandFromRow(existing.rows[0]) : null;
   }
 
+  async deleteTerminal(requestedBy?: string): Promise<number> {
+    const ownerCondition = requestedBy === undefined ? '' : 'AND requested_by = $1';
+    const result = await this.database.query(`
+      DELETE FROM browser_commands
+      WHERE status IN ('succeeded', 'failed', 'expired', 'manual_required', 'cancelled')
+      ${ownerCondition}
+    `, requestedBy === undefined ? [] : [requestedBy]);
+    return Number(result.rowCount ?? 0);
+  }
+
   async expireStale(now: Date): Promise<number> {
     const result = await this.database.query(`
       UPDATE browser_commands

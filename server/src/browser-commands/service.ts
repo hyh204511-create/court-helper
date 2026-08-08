@@ -511,4 +511,10 @@ export class BrowserCommandService {
     }
     return afterRace;
   }
+
+  async deleteTerminal(requestedBy?: string): Promise<number> {
+    if (requestedBy !== undefined) assertUuid(requestedBy, 'requestedBy');
+    await this.repository.expireStale(this.now());
+    return this.repository.deleteTerminal(requestedBy);
+  }
 }

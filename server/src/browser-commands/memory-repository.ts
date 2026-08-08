@@ -173,6 +173,17 @@ export class MemoryBrowserCommandRepository implements BrowserCommandRepository 
     return copyCommand(command);
   }
 
+  async deleteTerminal(requestedBy?: string): Promise<number> {
+    let count = 0;
+    for (const [id, command] of this.commands) {
+      if (!active(command) && (requestedBy === undefined || command.requestedBy === requestedBy)) {
+        this.commands.delete(id);
+        count += 1;
+      }
+    }
+    return count;
+  }
+
   async expireStale(now: Date): Promise<number> {
     let count = 0;
     for (const command of this.commands.values()) {

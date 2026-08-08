@@ -103,5 +103,6 @@ export interface BrowserCommandRepository {
     now: Date,
   ): Promise<BrowserCommandRecord | null>;
   cancel(id: string, requestedBy: string, now: Date): Promise<BrowserCommandRecord | null>;
+  deleteTerminal(requestedBy?: string): Promise<number>;
   expireStale(now: Date): Promise<number>;
 }
