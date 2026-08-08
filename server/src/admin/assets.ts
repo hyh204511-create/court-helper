@@ -113,6 +113,15 @@ button:disabled { cursor: not-allowed; opacity: .48; transform: none; }
 .field label { color: var(--ink-soft); font-size: 12px; font-weight: 700; letter-spacing: .04em; }
 .field input, .field select { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: var(--paper-bright); }
 .field input::placeholder { color: #9ca3a7; }
+.account-picker { display: flex; align-items: center; position: relative; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-bright); }
+.account-picker:focus-within { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(211, 148, 50, .22); }
+.account-picker input { min-width: 0; flex: 1 1 auto; width: auto; border: 0; background: transparent; }
+.account-picker input:focus-visible { outline: 0; }
+.account-picker-toggle { flex: 0 0 auto; margin-right: 5px; padding: 7px 9px; border: 0; border-radius: 7px; color: var(--ink); background: transparent; }
+.account-picker-toggle:hover { background: var(--amber-soft); transform: none; }
+.account-picker-menu { position: absolute; z-index: 20; top: calc(100% + 4px); right: 0; left: 0; max-height: 240px; overflow-y: auto; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-bright); box-shadow: var(--shadow); }
+.account-picker-option { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: 7px; color: var(--ink); background: transparent; text-align: left; }
+.account-picker-option:hover { background: var(--amber-soft); transform: none; }
 .form-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .primary { padding: 11px 18px; color: #fff; background: var(--navy); box-shadow: 0 8px 18px rgba(16,42,67,.18); }
 .primary:hover { background: #173c5d; }
@@ -859,17 +868,21 @@ function fillPlatformAccountLabelList(input, list, accounts) {
   const normalizedSelected = String(selected || '').trim().toLocaleLowerCase('zh-CN');
   clear(list);
   accounts.forEach((account) => {
-    const option = document.createElement('option');
-    option.value = account.label || '未命名';
+    const option = element('button', account.label || '未命名', 'account-picker-option');
+    option.type = 'button';
+    option.setAttribute('role', 'option');
+    option.dataset.platformAccountLabel = account.label || '';
     list.appendChild(option);
   });
   if (!accounts.some((account) => String(account.label || '').trim().toLocaleLowerCase('zh-CN') === normalizedSelected)) input.value = accounts[0]?.label || '';
+  list.hidden = true;
+  input.setAttribute('aria-expanded', 'false');
 }
 
 async function loadBrowserControlAccounts() {
   const taskSelect = $('#browser-command-account');
   const loginInput = $('#platform-login-account');
-  const loginLabels = $('#platform-login-account-labels');
+  const loginLabels = $('#platform-login-account-menu');
   if (!taskSelect && !loginInput) return;
   try {
     const result = await api('/platform-accounts');
@@ -1115,6 +1128,9 @@ function initBrowserControl() {
   const commandForm = $('#browser-command-form');
   const loginForm = $('#platform-login-form');
   const loginAccount = $('#platform-login-account');
+  const loginAccountPicker = $('#platform-login-account-picker');
+  const loginAccountToggle = $('#platform-login-account-toggle');
+  const loginAccountMenu = $('#platform-login-account-menu');
   const importForm = $('#import-batch-form');
   const account = $('#browser-command-account');
   const batch = $('#browser-command-batch');
@@ -1125,10 +1141,51 @@ function initBrowserControl() {
     credentialRequestGeneration += 1;
     clearPlatformCredential();
   };
+  const filterLoginAccountMenu = (useQuery = true) => {
+    if (!loginAccountMenu) return;
+    const query = useQuery ? String(loginAccount?.value || '').trim().toLocaleLowerCase('zh-CN') : '';
+    loginAccountMenu.querySelectorAll('[role="option"]').forEach((option) => {
+      const label = String(option.dataset.platformAccountLabel || '').toLocaleLowerCase('zh-CN');
+      option.hidden = Boolean(query) && !label.includes(query);
+    });
+  };
+  const closeLoginAccountMenu = () => {
+    if (!loginAccountMenu) return;
+    loginAccountMenu.hidden = true;
+    loginAccount?.setAttribute('aria-expanded', 'false');
+    loginAccountToggle?.setAttribute('aria-expanded', 'false');
+  };
+  const openLoginAccountMenu = (showAll = false) => {
+    if (!loginAccountMenu) return;
+    filterLoginAccountMenu(!showAll);
+    loginAccountMenu.hidden = false;
+    loginAccount?.setAttribute('aria-expanded', 'true');
+    loginAccountToggle?.setAttribute('aria-expanded', 'true');
+  };
   document.addEventListener('visibilitychange', () => { browserControlVisible = document.visibilityState === 'visible'; if (browserControlVisible) void loadBrowserCommands(); });
   window.addEventListener('pagehide', invalidatePlatformCredential);
   loginAccount?.addEventListener('input', invalidatePlatformCredential);
   loginAccount?.addEventListener('change', invalidatePlatformCredential);
+  loginAccount?.addEventListener('input', () => {
+    if (loginAccount.value.trim()) openLoginAccountMenu();
+    else closeLoginAccountMenu();
+  });
+  loginAccountToggle?.addEventListener('click', (event) => {
+    event.preventDefault();
+    if (loginAccountMenu?.hidden) openLoginAccountMenu(true);
+    else closeLoginAccountMenu();
+    loginAccount?.focus();
+  });
+  loginAccountMenu?.addEventListener('click', (event) => {
+    const option = event.target.closest('[role="option"]');
+    if (!option || !loginAccount) return;
+    loginAccount.value = option.dataset.platformAccountLabel || '';
+    loginAccount.dispatchEvent(new Event('input', { bubbles: true }));
+    closeLoginAccountMenu();
+  });
+  document.addEventListener('click', (event) => {
+    if (loginAccountPicker && !loginAccountPicker.contains(event.target)) closeLoginAccountMenu();
+  });
   $('#platform-credential-hide')?.addEventListener('click', invalidatePlatformCredential);
   $('#platform-credential-show')?.addEventListener('click', async () => {
     const selected = selectedEnabledBrowserAccount(loginAccount?.value);

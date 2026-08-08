@@ -224,7 +224,7 @@ function browserControlPage(role: AdminRole): string {
       <div class="panel-head"><div><h3 id="platform-login-title">平台账号与自动登录</h3><p>选择启用账号后创建统一 LOGIN 命令；完整凭据只在本页按需查看，不进入任务负载。</p></div></div>
       <div class="panel-body">
         <form id="platform-login-form">
-          <div class="field-grid"><div class="field"><label for="platform-login-account">平台账号</label><input id="platform-login-account" type="search" list="platform-login-account-labels" autocomplete="off" placeholder="输入账号标签或关键词" required><datalist id="platform-login-account-labels"></datalist></div></div>
+          <div class="field-grid"><div class="field"><label for="platform-login-account">平台账号</label><div class="account-picker" id="platform-login-account-picker"><input id="platform-login-account" type="search" autocomplete="off" placeholder="输入账号标签或关键词" role="combobox" aria-autocomplete="list" aria-controls="platform-login-account-menu" aria-expanded="false" required><button id="platform-login-account-toggle" class="account-picker-toggle" type="button" aria-label="展开平台账号列表" aria-controls="platform-login-account-menu" aria-expanded="false">▼</button><div id="platform-login-account-menu" class="account-picker-menu" role="listbox" hidden></div></div></div></div>
           <div class="form-actions"><button class="primary" type="submit">一键登录</button><button class="secondary" id="platform-credential-show" type="button">查看账号与密码</button><button class="secondary" id="platform-credential-hide" type="button">关闭凭据</button></div>
         </form>
         <div id="platform-credential-view" class="detail-grid" hidden><dl class="detail-item"><dt>平台账号</dt><dd id="platform-credential-account"></dd></dl><dl class="detail-item"><dt>平台密码</dt><dd id="platform-credential-password"></dd></dl></div>

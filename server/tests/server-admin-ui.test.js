@@ -19,6 +19,7 @@ const ADMIN_ID = '00000000-0000-0000-0000-000000000001';
 const WORKER_ID = '00000000-0000-0000-0000-000000000002';
 const ACCOUNT_ID = '00000000-0000-0000-0000-000000000010';
 const ARCHIVED_ACCOUNT_ID = '00000000-0000-0000-0000-000000000011';
+const SECOND_ACCOUNT_ID = '00000000-0000-0000-0000-000000000012';
 const CASE_ID = '00000000-0000-0000-0000-000000000100';
 const NOW = new Date('2026-08-31T12:00:00.000Z');
 
@@ -367,6 +368,7 @@ test('browser control renders full session and creator names, separates LOGIN, a
         if (requestUrl.pathname === '/api/v1/platform-accounts') {
           return jsonResponse({ platformAccounts: [
             { id: ACCOUNT_ID, label: 'synthetic-account', enabled: true },
+            { id: SECOND_ACCOUNT_ID, label: 'second-account', enabled: true },
             { id: ARCHIVED_ACCOUNT_ID, label: 'archived-account', enabled: false },
           ] });
         }
@@ -435,16 +437,31 @@ test('browser control renders full session and creator names, separates LOGIN, a
       const accountSearch = dom.window.document.querySelector('#browser-account-search');
       assert.deepEqual(
         [...dom.window.document.querySelector('#browser-account-labels').options].map((option) => option.value),
-        ['synthetic-account', 'archived-account'],
+        ['synthetic-account', 'second-account', 'archived-account'],
       );
       assert.deepEqual(
         dom.window.document.querySelector('#platform-login-account').tagName,
         'INPUT',
       );
+      assert.equal(dom.window.document.querySelector('#platform-login-account').getAttribute('list'), null);
       assert.deepEqual(
-        [...dom.window.document.querySelector('#platform-login-account-labels').options].map((option) => option.value),
-        ['synthetic-account'],
+        [...dom.window.document.querySelectorAll('#platform-login-account-menu [role="option"]')].map((option) => option.textContent),
+        ['synthetic-account', 'second-account'],
       );
+      const loginAccount = dom.window.document.querySelector('#platform-login-account');
+      const loginAccountToggle = dom.window.document.querySelector('#platform-login-account-toggle');
+      const loginAccountMenu = dom.window.document.querySelector('#platform-login-account-menu');
+      assert.equal(loginAccountMenu.hidden, true);
+      loginAccountToggle.click();
+      assert.equal(loginAccountMenu.hidden, false);
+      const secondAccountOption = loginAccountMenu.querySelector('[data-platform-account-label="second-account"]');
+      assert.equal(secondAccountOption.hidden, false);
+      secondAccountOption.click();
+      assert.equal(loginAccount.value, 'second-account');
+      assert.equal(loginAccountMenu.hidden, true);
+      loginAccountToggle.click();
+      loginAccountMenu.querySelector('[data-platform-account-label="synthetic-account"]').click();
+      assert.equal(loginAccount.value, 'synthetic-account');
       accountSearch.value = 'synthetic-account';
       dom.window.document.querySelector('#browser-account-keyword').value = 'synthetic plaintiff';
       dom.window.document.querySelector('#browser-account-search-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
@@ -488,8 +505,7 @@ test('browser control renders full session and creator names, separates LOGIN, a
       assert.equal(taskAccount.required, true);
       assert.equal(taskBatch.required, true);
 
-      await waitFor(() => dom.window.document.querySelector('#platform-login-account-labels').options.length === 1);
-      const loginAccount = dom.window.document.querySelector('#platform-login-account');
+      await waitFor(() => dom.window.document.querySelectorAll('#platform-login-account-menu [role="option"]').length === 2);
       loginAccount.value = 'synthetic';
       loginAccount.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
       dom.window.document.querySelector('#platform-login-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
