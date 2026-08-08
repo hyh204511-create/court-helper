@@ -2,6 +2,22 @@
 // 依据 docs/specs/excel-module.md 与计划 Task 4.1；DOM 就绪握手由批量执行器（Phase 6）负责。
 export const CAPTURE_OPTIONS = { format: "jpeg", quality: 0.85 };
 
+const CAPTURE_ROOT_ATTR = "data-court-helper-capture-root";
+const DECORATIVE_BACKGROUND = "yja-status-bg.png";
+let captureSequence = 0;
+
+function stripUnsupportedDecorativeBackgrounds(clonedDocument, captureId) {
+  const root = clonedDocument.querySelector(`[${CAPTURE_ROOT_ATTR}="${captureId}"]`);
+  if (!root) return;
+  const nodes = [root, ...root.querySelectorAll("*")];
+  for (const node of nodes) {
+    const backgroundImage = clonedDocument.defaultView?.getComputedStyle(node)?.backgroundImage ?? "";
+    if (backgroundImage.includes(DECORATIVE_BACKGROUND)) {
+      node.style.setProperty("background-image", "none", "important");
+    }
+  }
+}
+
 /**
  * 截取指定窗口当前可视区域。
  * @param {number} [windowId] 省略时截当前窗口
@@ -30,7 +46,19 @@ export function dataUrlToBlob(dataUrl) {
  */
 export async function captureElement(el, { scale = 2, renderer = null } = {}) {
   const render = renderer ?? (await import("html2canvas")).default;
-  const canvas = await render(el, { scale, useCORS: true, backgroundColor: "#ffffff" });
-  const dataUrl = canvas.toDataURL("image/jpeg", CAPTURE_OPTIONS.quality);
-  return dataUrlToBlob(dataUrl);
+  const captureId = String(++captureSequence);
+  el.setAttribute(CAPTURE_ROOT_ATTR, captureId);
+  try {
+    const canvas = await render(el, {
+      scale,
+      useCORS: true,
+      backgroundColor: "#ffffff",
+      logging: false,
+      onclone: (clonedDocument) => stripUnsupportedDecorativeBackgrounds(clonedDocument, captureId),
+    });
+    const dataUrl = canvas.toDataURL("image/jpeg", CAPTURE_OPTIONS.quality);
+    return dataUrlToBlob(dataUrl);
+  } finally {
+    el.removeAttribute(CAPTURE_ROOT_ATTR);
+  }
 }
