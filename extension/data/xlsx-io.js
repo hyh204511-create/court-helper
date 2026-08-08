@@ -45,7 +45,7 @@ export const STYLE = {
   colWidths: {
     A: 15, B: 14, C: 20.37, D: 15.5, F: 13.25,
     G: 24.13, H: 12.87, I: 12.87, J: 39.63, K: 18, L: 10.75,
-    N: 12.13, T: 12.78,
+    N: 12.13, Q: 12.87, T: 12.78,
   },
   dateFormat: "mm-dd-yy",
   unknown: {

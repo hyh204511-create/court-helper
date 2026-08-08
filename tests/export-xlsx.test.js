@@ -123,6 +123,7 @@ test("样式复刻：表头加粗/填充/行高、数据行高（ExcelJS 读回�
   assert.equal(ws.getRow(1).height, 27);
   assert.equal(ws.getRow(2).height, 28);
   assert.equal(ws.getColumn("J").width, 39.63);
+  assert.equal(ws.getColumn("Q").width, 12.87);
   assert.equal(ws.getCell("F2").numFmt, "mm-dd-yy");
 });
 
