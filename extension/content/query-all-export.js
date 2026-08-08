@@ -18,16 +18,25 @@ function isUsable(element) {
   return style?.display !== "none" && style?.visibility !== "hidden" && style?.pointerEvents !== "none";
 }
 
+function listRowSnapshot(rows) {
+  return rows.map((row) => String(row.textContent ?? "").trim()).join("\u001e");
+}
+
 function trackListMutations(root) {
   const container = root.querySelector(SELECTORS.list.container);
   const MutationObserverImpl = root.defaultView?.MutationObserver ?? root.ownerDocument?.defaultView?.MutationObserver;
+  const baselineRows = [...root.querySelectorAll(SELECTORS.list.row)];
+  const baselineSnapshot = listRowSnapshot(baselineRows);
   let lastMutationAt = null;
+  const hasFreshRows = (rows) => rows.length !== baselineRows.length
+    || rows.some((row, index) => row !== baselineRows[index])
+    || listRowSnapshot(rows) !== baselineSnapshot;
   if (!container || typeof MutationObserverImpl !== "function") {
-    return { container, lastMutationAt: () => lastMutationAt, disconnect() {} };
+    return { container, lastMutationAt: () => lastMutationAt, hasFreshRows, disconnect() {} };
   }
   const observer = new MutationObserverImpl(() => { lastMutationAt = Date.now(); });
   observer.observe(container, { childList: true, subtree: true, characterData: true });
-  return { container, lastMutationAt: () => lastMutationAt, disconnect: () => observer.disconnect() };
+  return { container, lastMutationAt: () => lastMutationAt, hasFreshRows, disconnect: () => observer.disconnect() };
 }
 
 async function defaultWaitForList(root, kind, tracker, { timeoutMs = 10_000, intervalMs = 100, settleMs = 200 } = {}) {
@@ -40,10 +49,11 @@ async function defaultWaitForList(root, kind, tracker, { timeoutMs = 10_000, int
     });
     const changedAt = tracker.lastMutationAt();
     const changedAndSettled = changedAt !== null && Date.now() - changedAt >= settleMs;
-    const isConfirmedEmpty = changedAndSettled
+    const freshRows = tracker.hasFreshRows(rows);
+    const isConfirmedEmpty = freshRows
       && tracker.container
       && String(tracker.container.textContent ?? "").includes("暂无数据");
-    if ((changedAndSettled && isExpected) || isConfirmedEmpty) return true;
+    if (changedAndSettled && freshRows && (isExpected || isConfirmedEmpty)) return true;
     await sleep(intervalMs);
   }
   return false;

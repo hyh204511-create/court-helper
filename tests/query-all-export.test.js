@@ -163,3 +163,31 @@ test("默认等待器不会把旧目标分类行当作本次查询已完成", as
   assert.deepEqual(result, { ok: true });
   assert.match(dom.window.document.querySelector(".fd-com-list-container").textContent, /NEW ROW/);
 });
+
+test("默认等待器不会把加载提示变更和旧同分类案件行当作新查询结果", async () => {
+  const dom = new JSDOM(`<!doctype html><body>
+    <div class="fd-com-tab"><button>审判</button><button>执行</button></div>
+    <button class="fd-com-search-btn">查询</button>
+    <div class="fd-com-list-container">
+      <div class="fd-case-item"><div class="fd-header-ajmc">OLD ROW</div><div class="fd-header-ajlx">民事一审案件</div></div>
+    </div>
+  </body>`);
+  dom.window.document.querySelector(".fd-com-search-btn").addEventListener("click", () => {
+    const container = dom.window.document.querySelector(".fd-com-list-container");
+    container.insertAdjacentHTML("beforeend", '<span class="loading">加载中</span>');
+    dom.window.setTimeout(() => {
+      container.innerHTML = `
+        <div class="fd-case-item"><div class="fd-header-ajmc">NEW ROW</div><div class="fd-header-ajlx">民事一审案件</div></div>`;
+    }, 60);
+  });
+
+  const result = await switchQueryCategory(dom.window.document, "li", {
+    afterTabClick: async () => undefined,
+    timeoutMs: 300,
+    intervalMs: 5,
+    settleMs: 10,
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.match(dom.window.document.querySelector(".fd-com-list-container").textContent, /NEW ROW/);
+});
