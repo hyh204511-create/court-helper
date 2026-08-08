@@ -234,10 +234,12 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
     assert.doesNotMatch(browserControl.body, /id="browser-connection-status"|id="court-tab-status"|id="court-login-status"/);
     assert.doesNotMatch(browserControl.body, /扩展运行状态/);
     const browserControlScript = await app.inject({ method: 'GET', url: '/admin/assets/admin.js' });
+    const browserControlStyles = await app.inject({ method: 'GET', url: '/admin/assets/admin.css' });
     assert.match(browserControlScript.body, /\/browser-commands/);
     assert.match(browserControlScript.body, /\/import-batches/);
     assert.match(browserControlScript.body, /visibilitychange/);
     assert.match(browserControlScript.body, /window\.location\.assign\('\/admin\/browser-control'\)/);
+    assert.match(browserControlStyles.body, /\.detail-grid\[hidden\]\s*\{\s*display:\s*none/);
 
     const workerCases = await app.inject({
       method: 'GET',
