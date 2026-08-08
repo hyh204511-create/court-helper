@@ -853,23 +853,36 @@ function fillPlatformAccountSelect(select, accounts, includeEmpty) {
   });
 }
 
+function fillPlatformAccountLabelList(input, list, accounts) {
+  if (!input || !list) return;
+  const selected = input.value;
+  const normalizedSelected = String(selected || '').trim().toLocaleLowerCase('zh-CN');
+  clear(list);
+  accounts.forEach((account) => {
+    const option = document.createElement('option');
+    option.value = account.label || '未命名';
+    list.appendChild(option);
+  });
+  if (!accounts.some((account) => String(account.label || '').trim().toLocaleLowerCase('zh-CN') === normalizedSelected)) input.value = accounts[0]?.label || '';
+}
+
 async function loadBrowserControlAccounts() {
   const taskSelect = $('#browser-command-account');
-  const loginSelect = $('#platform-login-account');
-  if (!taskSelect && !loginSelect) return;
+  const loginInput = $('#platform-login-account');
+  const loginLabels = $('#platform-login-account-labels');
+  if (!taskSelect && !loginInput) return;
   try {
     const result = await api('/platform-accounts');
     const allAccounts = result.platformAccounts || [];
     const enabledAccounts = allAccounts.filter((account) => account.enabled !== false);
     browserControlAccounts = allAccounts;
     fillPlatformAccountSelect(taskSelect, enabledAccounts, true);
-    fillPlatformAccountSelect(loginSelect, enabledAccounts, false);
+    fillPlatformAccountLabelList(loginInput, loginLabels, enabledAccounts);
     const labels = $('#browser-account-labels');
     if (labels) {
       clear(labels);
       allAccounts.forEach((account) => { const option = document.createElement('option'); option.value = account.label || '未命名'; labels.appendChild(option); });
     }
-    if (loginSelect && !loginSelect.value && enabledAccounts[0]) loginSelect.value = enabledAccounts[0].id;
     clearPlatformCredential();
   } catch (error) {
     setMessage($('[data-browser-command-message]'), errorMessage(error));
@@ -881,13 +894,17 @@ function browserAccountLabel(platformAccountId) {
   return browserControlAccounts.find((account) => account.id === platformAccountId)?.label || '未指定';
 }
 
-function selectedBrowserAccount(query) {
+function selectedBrowserAccount(query, accounts = browserControlAccounts) {
   const normalized = String(query || '').trim().toLocaleLowerCase('zh-CN');
   if (!normalized) return null;
-  const exact = browserControlAccounts.find((account) => String(account.label || '').trim().toLocaleLowerCase('zh-CN') === normalized);
+  const exact = accounts.find((account) => String(account.label || '').trim().toLocaleLowerCase('zh-CN') === normalized);
   if (exact) return exact;
-  const matches = browserControlAccounts.filter((account) => String(account.label || '').toLocaleLowerCase('zh-CN').includes(normalized));
+  const matches = accounts.filter((account) => String(account.label || '').toLocaleLowerCase('zh-CN').includes(normalized));
   return matches.length === 1 ? matches[0] : null;
+}
+
+function selectedEnabledBrowserAccount(query) {
+  return selectedBrowserAccount(query, browserControlAccounts.filter((account) => account.enabled !== false));
 }
 
 function filterBrowserCommandRows() {
@@ -1110,16 +1127,18 @@ function initBrowserControl() {
   };
   document.addEventListener('visibilitychange', () => { browserControlVisible = document.visibilityState === 'visible'; if (browserControlVisible) void loadBrowserCommands(); });
   window.addEventListener('pagehide', invalidatePlatformCredential);
+  loginAccount?.addEventListener('input', invalidatePlatformCredential);
   loginAccount?.addEventListener('change', invalidatePlatformCredential);
   $('#platform-credential-hide')?.addEventListener('click', invalidatePlatformCredential);
   $('#platform-credential-show')?.addEventListener('click', async () => {
-    const platformAccountId = loginAccount?.value || '';
-    if (!platformAccountId) { setMessage($('[data-platform-login-message]'), '请选择平台账号'); return; }
+    const selected = selectedEnabledBrowserAccount(loginAccount?.value);
+    const platformAccountId = selected?.id || '';
+    if (!selected) { setMessage($('[data-platform-login-message]'), '请从启用平台账号标签提示中选择'); return; }
     const requestGeneration = ++credentialRequestGeneration;
     clearPlatformCredential();
     try {
       const credential = await api('/platform-accounts/' + encodeURIComponent(platformAccountId) + '/credential-view');
-      if (requestGeneration !== credentialRequestGeneration || loginAccount?.value !== platformAccountId) return;
+      if (requestGeneration !== credentialRequestGeneration || selectedEnabledBrowserAccount(loginAccount?.value)?.id !== platformAccountId) return;
       $('#platform-credential-account').textContent = credential.account || '';
       $('#platform-credential-password').textContent = credential.password || '';
       $('#platform-credential-view').hidden = false;
@@ -1132,8 +1151,10 @@ function initBrowserControl() {
   });
   loginForm?.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const platformAccountId = loginAccount?.value || '';
-    if (!platformAccountId) { setMessage($('[data-platform-login-message]'), '请选择平台账号'); return; }
+    const selected = selectedEnabledBrowserAccount(loginAccount?.value);
+    const platformAccountId = selected?.id || '';
+    if (!selected) { setMessage($('[data-platform-login-message]'), '请从启用平台账号标签提示中选择'); return; }
+    loginAccount.value = selected.label || '';
     setFormBusy(loginForm, true);
     try {
       await api('/browser-commands', {

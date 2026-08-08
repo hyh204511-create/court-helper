@@ -438,8 +438,12 @@ test('browser control renders full session and creator names, separates LOGIN, a
         ['synthetic-account', 'archived-account'],
       );
       assert.deepEqual(
-        [...dom.window.document.querySelector('#platform-login-account').options].map((option) => option.value),
-        [ACCOUNT_ID],
+        dom.window.document.querySelector('#platform-login-account').tagName,
+        'INPUT',
+      );
+      assert.deepEqual(
+        [...dom.window.document.querySelector('#platform-login-account-labels').options].map((option) => option.value),
+        ['synthetic-account'],
       );
       accountSearch.value = 'synthetic-account';
       dom.window.document.querySelector('#browser-account-keyword').value = 'synthetic plaintiff';
@@ -484,10 +488,13 @@ test('browser control renders full session and creator names, separates LOGIN, a
       assert.equal(taskAccount.required, true);
       assert.equal(taskBatch.required, true);
 
-      await waitFor(() => dom.window.document.querySelector('#platform-login-account').value === ACCOUNT_ID);
+      await waitFor(() => dom.window.document.querySelector('#platform-login-account-labels').options.length === 1);
+      const loginAccount = dom.window.document.querySelector('#platform-login-account');
+      loginAccount.value = 'synthetic';
+      loginAccount.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
       dom.window.document.querySelector('#platform-login-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
-      await waitFor(() => requests.some((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands'));
-      const loginRequest = requests.find((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands' && JSON.parse(String(request.body)).type === 'LOGIN');
+      await waitFor(() => browserCommandPosts().some((request) => JSON.parse(String(request.body)).type === 'LOGIN'));
+      const loginRequest = browserCommandPosts().find((request) => JSON.parse(String(request.body)).type === 'LOGIN');
       assert.deepEqual(JSON.parse(String(loginRequest.body)), { type: 'LOGIN', platformAccountId: ACCOUNT_ID });
 
       const failedQueryIndex = commands.findIndex((command) => command.id === '00000000-0000-0000-0000-000000000301');
