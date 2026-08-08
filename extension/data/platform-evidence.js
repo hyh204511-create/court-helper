@@ -60,3 +60,56 @@ export function selectMyCaseEvidence({ record, kind = "li", rows = [] } = {}) {
   if (!caseNumber || !filedTime) return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
   return { ok: true, value: { uid: record.uid, caseNumber, filedTime } };
 }
+
+function apiDay(value) {
+  const match = /^(\d{4}-\d{2}-\d{2})(?:[T\s].*)?$/.exec(text(value));
+  return match?.[1] ?? null;
+}
+
+function titleHasExactParties(title, cause, plaintiff, defendant) {
+  const suffix = `${cause}一案`;
+  if (!title.endsWith(suffix)) return false;
+  const partyTokens = title.slice(0, -suffix.length)
+    .split(/与|,|，|、/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return partyTokens.includes(plaintiff) && partyTokens.includes(defendant);
+}
+
+/**
+ * 直接校验 ajlist 结构化补证。两个接口没有案件级共享 ID，必须由全部
+ * 已确认结构键共同形成唯一候选；标题只按分隔后的完整当事人 token 校验。
+ */
+export function selectMyCaseApiEvidence({ record, sourceApiRow, rows = [] } = {}) {
+  if (!record?.uid || record.status !== "立案成功" || !sourceApiRow || !Array.isArray(rows)) {
+    return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
+  }
+  const plaintiff = text(record.plaintiff);
+  const defendant = text(record.defendant);
+  const cause = text(record.sourceCause);
+  const sourceAccount = text(sourceApiRow.sfBh);
+  const sourceCourt = text(sourceApiRow.fyid);
+  const sourceType = text(sourceApiRow.ajlx);
+  const sourceCause = text(sourceApiRow.laay);
+  const sourceDate = apiDay(sourceApiRow.updateTime);
+  if (!plaintiff || !defendant || !cause || cause !== sourceCause
+    || !sourceAccount || !sourceCourt || !sourceType || !sourceDate) {
+    return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
+  }
+  const candidates = rows.filter((row) => {
+    const title = text(row?.cajmc);
+    const filedTime = apiDay(row?.clarq);
+    return text(row?.csfid) === sourceAccount
+      && text(row?.nfydm) === sourceCourt
+      && text(row?.cywlx) === sourceType
+      && text(row?.claay) === sourceCause
+      && filedTime === sourceDate
+      && titleHasExactParties(title, sourceCause, plaintiff, defendant);
+  });
+  if (!candidates.length) return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
+  if (candidates.length !== 1) return { ok: false, error: "MYCASE_EVIDENCE_AMBIGUOUS" };
+  const caseNumber = text(candidates[0].cah);
+  const filedTime = apiDay(candidates[0].clarq);
+  if (!caseNumber || !filedTime) return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
+  return { ok: true, value: { uid: record.uid, caseNumber, filedTime } };
+}

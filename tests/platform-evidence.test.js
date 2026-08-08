@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { selectMyCaseEvidence } from "../extension/data/platform-evidence.js";
+import { selectMyCaseApiEvidence, selectMyCaseEvidence } from "../extension/data/platform-evidence.js";
 
 const successfulLiRecord = {
   uid: "li-platform-record",
@@ -85,4 +85,63 @@ test("我的案件成功取证：平台搜索的唯一结果标题不全等时�
     rows: [civilSuccess({ caseName: "different title containing source title" })],
   });
   assert.deepEqual(result, { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" });
+});
+
+const apiRecord = {
+  ...successfulLiRecord,
+  plaintiff: "SYNTHETIC PLAINTIFF",
+  defendant: "SYNTHETIC DEFENDANT",
+  sourceCause: "SYNTHETIC CAUSE",
+};
+const sourceApiRow = {
+  sfBh: "SYNTHETIC-ACCOUNT-ID",
+  fyid: "SYNTHETIC-COURT-ID",
+  ajlx: "SYNTHETIC-TYPE-ID",
+  laay: apiRecord.sourceCause,
+  updateTime: "2026-08-07T08:30:00Z",
+};
+function apiEvidence(overrides = {}) {
+  return {
+    csfid: sourceApiRow.sfBh,
+    nfydm: sourceApiRow.fyid,
+    cywlx: sourceApiRow.ajlx,
+    claay: sourceApiRow.laay,
+    clarq: "2026-08-07",
+    cajmc: "SYNTHETIC PLAINTIFF与SYNTHETIC EXTRA,SYNTHETIC DEFENDANTSYNTHETIC CAUSE一案",
+    cah: "SYNTHETIC-LI-API-001",
+    ...overrides,
+  };
+}
+
+test("ajlist 成功补证使用跨接口严格结构，不要求两个页面标题全等且不跳转 DOM", () => {
+  assert.deepEqual(selectMyCaseApiEvidence({
+    record: apiRecord,
+    sourceApiRow,
+    rows: [apiEvidence()],
+  }), {
+    ok: true,
+    value: { uid: apiRecord.uid, caseNumber: "SYNTHETIC-LI-API-001", filedTime: "2026-08-07" },
+  });
+});
+
+test("ajlist 补证缺少任一结构键或出现重复候选时转人工", () => {
+  for (const row of [
+    apiEvidence({ csfid: "OTHER" }),
+    apiEvidence({ nfydm: "OTHER" }),
+    apiEvidence({ cywlx: "OTHER" }),
+    apiEvidence({ claay: "OTHER" }),
+    apiEvidence({ clarq: "2026-08-08" }),
+    apiEvidence({ cajmc: "SYNTHETIC PLAINTIFF与OTHER SYNTHETIC CAUSE一案" }),
+    apiEvidence({ cah: "" }),
+  ]) {
+    assert.deepEqual(selectMyCaseApiEvidence({ record: apiRecord, sourceApiRow, rows: [row] }), {
+      ok: false,
+      error: "MYCASE_EVIDENCE_UNAVAILABLE",
+    });
+  }
+  assert.deepEqual(selectMyCaseApiEvidence({
+    record: apiRecord,
+    sourceApiRow,
+    rows: [apiEvidence(), apiEvidence({ cah: "SYNTHETIC-LI-API-002" })],
+  }), { ok: false, error: "MYCASE_EVIDENCE_AMBIGUOUS" });
 });

@@ -145,8 +145,29 @@ function responseRows(data) {
 }
 
 function responseTotal(data) {
-  const value = data?.data?.total ?? data?.total ?? data?.data;
-  return Number.isInteger(value) ? value : Number(value);
+  let value;
+  if (data?.data && !Array.isArray(data.data) && Object.hasOwn(data.data, "total")) {
+    value = data.data.total;
+  } else if (data && !Array.isArray(data) && Object.hasOwn(data, "total")) {
+    value = data.total;
+  } else if (typeof data?.data === "number" || typeof data?.data === "string") {
+    value = data.data;
+  } else {
+    return Number.NaN;
+  }
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) return Number(value);
+  return Number.NaN;
+}
+
+function myCaseResponseTotal(data) {
+  if (!data?.data || Array.isArray(data.data) || !Object.hasOwn(data.data, "total")) {
+    return Number.NaN;
+  }
+  const value = data.data.total;
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) return Number(value);
+  return Number.NaN;
 }
 
 /** Fetch the documented 我的立案列表/count pair page by page. */
@@ -220,16 +241,35 @@ export async function fetchLayyPages({ filters = {}, pageSize = 50, expectedFiel
 }
 
 /** Fetch 我的案件 using the documented POST contract. */
-export async function fetchMyCases({ body = {}, fetchImpl } = {}) {
-  const result = await fetchStructuredJson("/yzw/yzw-zxfw-ajfw/api/v1/ajlist", {
-    fetchImpl,
-    init: { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
-  });
-  if (!result.ok) return result;
-  const rows = responseRows(result.data);
-  const total = responseTotal(result.data);
-  if (!rows || !Number.isInteger(total)) return MANUAL("API_SCHEMA_DRIFT");
-  return assertPaginationConservation({ total, pages: [rows] }).ok
-    ? { ok: true, total, rows }
-    : MANUAL("PAGINATION_TOTAL_MISMATCH");
+export async function fetchMyCases({ body = {}, pageSize = 50, fetchImpl } = {}) {
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 50) return MANUAL("PAGINATION_INVALID");
+  const baseBody = { ...body, pageSize };
+  delete baseBody.pageNum;
+  const pages = [];
+  let total = null;
+  let page = 1;
+  do {
+    const result = await fetchStructuredJson("/yzw/yzw-zxfw-ajfw/api/v1/ajlist", {
+      fetchImpl,
+      init: {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...baseBody, pageNum: page }),
+      },
+    });
+    if (!result.ok) return result;
+    const rows = responseRows(result.data);
+    const responsePageTotal = myCaseResponseTotal(result.data);
+    if (!rows || !Number.isInteger(responsePageTotal) || responsePageTotal < 0) return MANUAL("API_SCHEMA_DRIFT");
+    if (total === null) {
+      total = responsePageTotal;
+      if (total > 50) return MANUAL("BATCH_LIMIT_EXCEEDED");
+    } else if (responsePageTotal !== total) {
+      return MANUAL("PAGINATION_TOTAL_MISMATCH");
+    }
+    pages.push(rows);
+    page += 1;
+  } while ((page - 1) * pageSize < total);
+  const conservation = assertPaginationConservation({ total, pages });
+  return conservation.ok ? { ok: true, total, rows: pages.flat(), pages } : conservation;
 }

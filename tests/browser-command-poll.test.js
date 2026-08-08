@@ -142,6 +142,55 @@ test("多个非活动法院列表标签时选择最近使用标签并在执行�
   assert.deepEqual(dispatched, [8]);
 });
 
+test("QUERY_LI 始终选择网上立案列表，即使我的案件标签处于活动状态", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000124",
+    type: "QUERY_LI",
+    platformAccountId: "00000000-0000-4000-8000-000000000224",
+    clientBatchId: "00000000-0000-4000-8000-000000000324",
+  };
+  const dispatched = [];
+  const chromeApi = chromeMock(async (tabId) => {
+    dispatched.push(tabId);
+    return { ok: true };
+  });
+  chromeApi.tabs.query = async () => [
+    { id: 7, active: true, lastAccessed: 500, url: "https://zxfw.court.gov.cn/#/pages/pc/case-list/index" },
+    { id: 8, active: false, lastAccessed: 100, url: "https://zxfw.court.gov.cn/#/pagesWsla/pc/list/index" },
+  ];
+  chromeApi.tabs.update = async (tabId) => ({ id: tabId, active: true });
+  const harness = platformDiscoveryHarness(command);
+
+  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl: harness.fetchImpl }).pollOnce();
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(dispatched, [8]);
+});
+
+test("QUERY_LI 只有我的案件标签时转人工且不下发 content 命令", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000125",
+    type: "QUERY_LI",
+    platformAccountId: "00000000-0000-4000-8000-000000000225",
+    clientBatchId: "00000000-0000-4000-8000-000000000325",
+  };
+  let dispatched = 0;
+  const chromeApi = chromeMock(async () => {
+    dispatched += 1;
+    return { ok: true };
+  });
+  chromeApi.tabs.query = async () => [
+    { id: 7, active: true, url: "https://zxfw.court.gov.cn/#/pages/pc/case-list/index" },
+  ];
+  const harness = platformDiscoveryHarness(command);
+
+  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl: harness.fetchImpl }).pollOnce();
+
+  assert.equal(result.ok, false);
+  assert.equal(dispatched, 0);
+  assert.equal(harness.resultBody().resultCode, "ONLINE_FILING_PAGE_REQUIRED");
+});
+
 test("活动法院标签优先于 lastAccessed 更新的非活动标签", async () => {
   const command = {
     id: "00000000-0000-4000-8000-000000000122",
@@ -733,7 +782,7 @@ test("QUERY_LI does not reconnect after a non-navigation content error", async (
     commandSendCount += 1;
     throw new Error("Could not establish connection. Receiving end does not exist.");
   });
-  chromeApi.tabs.query = async () => [{ id: 7, url: "https://zxfw.court.gov.cn/#/pages/pc/case-list/index" }];
+  chromeApi.tabs.query = async () => [{ id: 7, url: "https://zxfw.court.gov.cn/#/pagesWsla/pc/list/index" }];
   const fetchImpl = async (url, init = {}) => {
     const value = String(url);
     if (value.endsWith("/browser-commands/next")) return response({ command });
@@ -754,7 +803,7 @@ test("QUERY_LI does not reconnect after a non-navigation content error", async (
   assert.equal(resultBody.status, "failed");
 });
 
-test("QUERY_LI only reconnects once after the same court tab hands off to my-case route", async () => {
+test("QUERY_LI does not reconnect after an unexpected route handoff", async () => {
   const command = {
     id: "00000000-0000-4000-8000-000000000801",
     type: "QUERY_LI",
@@ -807,17 +856,10 @@ test("QUERY_LI only reconnects once after the same court tab hands off to my-cas
   });
   const result = await poller.pollOnce();
 
-  assert.equal(commandSendCount, 2);
-  assert.equal(pingCount, 1);
-  assert.equal(result.error, "UNKNOWN");
-  assert.deepEqual(resultBody, {
-    deviceId: "device-test",
-    claimToken: "claim-once",
-    status: "manual_required",
-    resultCode: "UNKNOWN",
-    resultSummary: "需要人工接管",
-    progress: null,
-  });
+  assert.equal(commandSendCount, 1);
+  assert.equal(pingCount, 0);
+  assert.equal(result.error, "CONTENT_UNAVAILABLE");
+  assert.equal(resultBody.status, "failed");
 });
 
 test("QUERY_LI does not reattach when a message closes from an initial my-case route", async () => {
@@ -837,9 +879,9 @@ test("QUERY_LI does not reattach when a message closes from an initial my-case r
 
   const result = await createBrowserCommandPoller({ chromeApi, fetchImpl: harness.fetchImpl }).pollOnce();
 
-  assert.equal(commandSendCount, 1);
-  assert.equal(result.error, "CONTENT_UNAVAILABLE");
-  assert.equal(harness.resultBody()?.status, "failed");
+  assert.equal(commandSendCount, 0);
+  assert.equal(result.error, "ONLINE_FILING_PAGE_REQUIRED");
+  assert.equal(harness.resultBody()?.status, "manual_required");
 });
 
 test("QUERY_LI bounds a pending my-case PING before reporting the route timeout", { timeout: 1000 }, async () => {
@@ -873,16 +915,9 @@ test("QUERY_LI bounds a pending my-case PING before reporting the route timeout"
     contentRoutePingTimeoutMs: 1,
   }).pollOnce();
 
-  assert.equal(pingCount, 1);
-  assert.equal(result.error, "MYCASE_PAGE_TIMEOUT");
-  assert.deepEqual(harness.resultBody(), {
-    deviceId: "device-test",
-    claimToken: "claim-once",
-    status: "manual_required",
-    resultCode: "MYCASE_PAGE_TIMEOUT",
-    resultSummary: "需要人工接管",
-    progress: null,
-  });
+  assert.equal(pingCount, 0);
+  assert.equal(result.error, "CONTENT_UNAVAILABLE");
+  assert.equal(harness.resultBody()?.status, "failed");
 });
 
 test("QUERY_LI bounds a pending my-case evidence phase and returns a manual code", { timeout: 1000 }, async () => {
@@ -916,9 +951,9 @@ test("QUERY_LI bounds a pending my-case evidence phase and returns a manual code
     contentRoutePhaseTimeoutMs: 1,
   }).pollOnce();
 
-  assert.equal(phaseSendCount, 1);
-  assert.equal(result.error, "MYCASE_EVIDENCE_UNAVAILABLE");
-  assert.equal(harness.resultBody()?.status, "manual_required");
+  assert.equal(phaseSendCount, 0);
+  assert.equal(result.error, "CONTENT_UNAVAILABLE");
+  assert.equal(harness.resultBody()?.status, "failed");
 });
 
 test("QUERY_LI maps a second-phase port closure to a manual code without a third dispatch", async () => {
@@ -951,9 +986,9 @@ test("QUERY_LI maps a second-phase port closure to a manual code without a third
     contentRouteRetryDelayMs: 0,
   }).pollOnce();
 
-  assert.equal(commandSendCount, 2);
-  assert.equal(result.error, "MYCASE_EVIDENCE_UNAVAILABLE");
-  assert.equal(harness.resultBody()?.status, "manual_required");
+  assert.equal(commandSendCount, 1);
+  assert.equal(result.error, "CONTENT_UNAVAILABLE");
+  assert.equal(harness.resultBody()?.status, "failed");
 });
 
 test("QUERY_LI normalizes an unknown second-phase content error to a manual code", async () => {
@@ -982,13 +1017,6 @@ test("QUERY_LI normalizes an unknown second-phase content error to a manual code
     contentRouteRetryDelayMs: 0,
   }).pollOnce();
 
-  assert.equal(result.error, "MYCASE_EVIDENCE_UNAVAILABLE");
-  assert.deepEqual(harness.resultBody(), {
-    deviceId: "device-test",
-    claimToken: "claim-once",
-    status: "manual_required",
-    resultCode: "MYCASE_EVIDENCE_UNAVAILABLE",
-    resultSummary: "需要人工接管",
-    progress: null,
-  });
+  assert.equal(result.error, "CONTENT_UNAVAILABLE");
+  assert.equal(harness.resultBody()?.status, "failed");
 });

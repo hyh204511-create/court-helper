@@ -10,6 +10,7 @@ import {
   takeoverCaseSpaceTab,
   selectLatestAudit,
   fetchLayyPages,
+  fetchMyCases,
 } from "../extension/content/query-api.js";
 
 const jsonResponse = (body, status = 200, extra = {}) => ({
@@ -183,4 +184,49 @@ test("fetchLayyPages 对 total 不守恒和字段签名漂移统一转人工", a
   ]);
   assert.equal(drift.code, "FIELD_SIGNATURE_DRIFT");
   assert.equal(drift.status, "UNKNOWN");
+});
+
+test("fetchMyCases 按 data.total 分页守恒并保留固定查询体", async () => {
+  const calls = [];
+  const fetchImpl = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    return jsonResponse({
+      data: {
+        total: 3,
+        data: body.pageNum === 1 ? [{ cajmc: "A" }, { cajmc: "B" }] : [{ cajmc: "C" }],
+      },
+    });
+  };
+  const result = await fetchMyCases({
+    fetchImpl,
+    pageSize: 2,
+    body: { ajlb: "SYNTHETIC-CATEGORY", searchtext: "SYNTHETIC PLAINTIFF", ajzt: "", sfid: "", sort: "" },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.total, 3);
+  assert.deepEqual(result.rows.map((row) => row.cajmc), ["A", "B", "C"]);
+  assert.deepEqual(calls.map(({ pageNum, pageSize }) => ({ pageNum, pageSize })), [
+    { pageNum: 1, pageSize: 2 },
+    { pageNum: 2, pageSize: 2 },
+  ]);
+  assert.equal(calls.every((body) => body.searchtext === "SYNTHETIC PLAINTIFF"), true);
+});
+
+test("fetchMyCases 缺失或伪造 total 时按字段签名漂移转人工", async () => {
+  for (const payload of [
+    { data: [] },
+    { total: 0, data: [] },
+    { data: { data: [] } },
+    { data: { total: null, data: [] } },
+    { data: { total: [], data: [] } },
+  ]) {
+    const result = await fetchMyCases({
+      fetchImpl: async () => jsonResponse(payload),
+      body: { ajlb: "SYNTHETIC-CATEGORY", searchtext: "SYNTHETIC PLAINTIFF" },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "API_SCHEMA_DRIFT");
+    assert.equal(result.needsHuman, true);
+  }
 });

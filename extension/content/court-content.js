@@ -32,12 +32,14 @@ import { importXlsx } from "../data/import-xlsx.js";
 import { buildExportWorkbook } from "../data/xlsx-io.js";
 import { exportUploadMessage, exportWorkbookToServer } from "../data/export-uploader.js";
 import { buildPlatformDiscoveryRecords, parseParticipantField, selectDiscoveredListRow } from "../data/platform-discovery.js";
-import { selectMyCaseEvidence } from "../data/platform-evidence.js";
-import { createMainWorldFetch, fetchLayyPages, matchApiDomRows } from "./query-api.js";
+import { selectMyCaseApiEvidence, selectMyCaseEvidence } from "../data/platform-evidence.js";
+import { createMainWorldFetch, fetchLayyPages, fetchMyCases, matchApiDomRows } from "./query-api.js";
 import * as db from "../data/db.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const MY_CASE_ROUTE = "#/pages/pc/case-list/index";
+const ONLINE_FILING_ROUTE = "#/pagesWsla/pc/list/index";
+const CIVIL_CASE_CATEGORIES = "1501_000001-0100;1501_000001-0200;1501_000001-0300;1501_000001-0400;1501_000001-0500";
 const isDetailPage = () => location.hash.includes("wsla/detail");
 const isListPage = () => isCourtListRoute(location.hash);
 
@@ -802,7 +804,53 @@ async function completeMyCaseEvidence(kind, { account, platformAccountId, naviga
   return { total: candidates.length, completed, needsHuman };
 }
 
+function sourceApiRowForRecord(record, rows = []) {
+  const matches = rows.filter((row) => row.caseName === record.sourceCaseName
+    && row.applicant === record.plaintiff
+    && row.respondent === record.defendant
+    && row.cause === record.sourceCause
+    && row.applicationDate === record.sourceApplicationDate);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+async function completeMyCaseEvidenceFromApi({ account, platformAccountId, sourceApiRows, fetchImpl }) {
+  const candidates = (await db.query(db.STORE_CASES, { account, platformAccountId }))
+    .filter((record) => record.status === expectedSuccessStatus("li"))
+    .filter((record) => !record.caseNumber || !record.filedTime);
+  let completed = 0;
+  let needsHuman = 0;
+  for (const record of candidates) {
+    const sourceApiRow = sourceApiRowForRecord(record, sourceApiRows);
+    let selection = { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
+    if (sourceApiRow && record.plaintiff) {
+      const result = await fetchMyCases({
+        fetchImpl,
+        pageSize: 50,
+        body: {
+          ajlb: CIVIL_CASE_CATEGORIES,
+          searchtext: record.plaintiff,
+          ajzt: "",
+          sfid: "",
+          sort: "",
+        },
+      });
+      selection = result.ok
+        ? selectMyCaseApiEvidence({ record, sourceApiRow, rows: result.rows })
+        : { ok: false, error: result.code ?? "MYCASE_EVIDENCE_UNAVAILABLE" };
+    }
+    const updated = await persistMyCaseEvidence(record, selection);
+    if (selection.ok && !updated.needsHuman) completed += 1;
+    else needsHuman += 1;
+    await delayWithPause();
+  }
+  return { total: candidates.length, completed, needsHuman };
+}
+
 async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
+  const currentRoute = location.hash.split("?", 1)[0];
+  if (kind === "li" && currentRoute !== ONLINE_FILING_ROUTE) {
+    throw new Error("ONLINE_FILING_PAGE_REQUIRED");
+  }
   if (!ensureListReady()) throw new Error("NOT_READY");
   if (typeof platformAccountId !== "string" || !platformAccountId) throw new Error("PLATFORM_ACCOUNT_UNAVAILABLE");
   const account = getCurrentAccount(document);
@@ -832,6 +880,8 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
   const structuredFetch = kind === "li" && typeof chrome?.runtime?.id === "string"
     ? createMainWorldFetch(chrome.runtime.sendMessage.bind(chrome.runtime))
     : (typeof globalThis.fetch === "function" && globalThis.fetch.name !== "fetch" ? globalThis.fetch : null);
+  if (kind === "li" && !structuredFetch) throw new Error("BRIDGE_UNAVAILABLE");
+  let sourceApiRows = [];
   if (structuredFetch) {
     const apiResult = await fetchLayyPages({
       filters: { cxtj: "", kssj: "", jssj: "", zt: "", ajlb: "sp", sfid: "", sqrsf: "" },
@@ -839,6 +889,7 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
       fetchImpl: structuredFetch,
     });
     if (!apiResult.ok) throw new Error(apiResult.code ?? "UNKNOWN");
+    sourceApiRows = apiResult.rows;
     let domIdentityRows;
     try {
       domIdentityRows = rows.map((row) => {
@@ -874,7 +925,7 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
   }
   _batchRunning = true;
   try {
-    const evidence = await completeMyCaseEvidence(kind, { account, platformAccountId, navigate: true });
+    const evidence = await completeMyCaseEvidenceFromApi({ account, platformAccountId, sourceApiRows, fetchImpl: structuredFetch });
     return !initial.ok
       ? { ...initial, evidence }
       : evidence.needsHuman

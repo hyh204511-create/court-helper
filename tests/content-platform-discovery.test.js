@@ -220,6 +220,26 @@ test("QUERY_LI 优先调用结构化 layy API；API 与 DOM 签名不一致时�
   const { dom, chrome } = await loadContent({
     runtimeSendMessage: async (message) => {
       if (message?.type !== "QUERY_API_REQUEST") return undefined;
+      if (message.path.includes("/ajlist")) {
+        return {
+          ok: true,
+          status: 200,
+          data: {
+            data: {
+              total: 1,
+              data: [{
+                csfid: "SYNTHETIC-ACCOUNT-ID",
+                nfydm: "SYNTHETIC-COURT-ID",
+                cywlx: "SYNTHETIC-TYPE-ID",
+                claay: "SYNTHETIC CAUSE",
+                clarq: "2026-08-07",
+                cajmc: "SYNTHETIC PLAINTIFF与SYNTHETIC EXTRA,SYNTHETIC DEFENDANTSYNTHETIC CAUSE一案",
+                cah: "SYNTHETIC-LI-API-001",
+              }],
+            },
+          },
+        };
+      }
       return message.path.includes("/count")
         ? { ok: true, status: 200, data: { data: 1 } }
         : { ok: true, status: 200, data: { data: [{ id: "SYNTHETIC-API-ID", zt: "11800007-4", ajmc: "DIFFERENT API TITLE", dsrMc: "原告：SYNTHETIC PLAINTIFF；被告：SYNTHETIC DEFENDANT", laay: "SYNTHETIC CAUSE", tjsj: "2026-08-01" }] } };
@@ -256,6 +276,26 @@ test("QUERY_LI 仅在 API 与 DOM 五字段双向唯一匹配后继续采集", a
   const { dom, chrome } = await loadContent({
     runtimeSendMessage: async (message) => {
       if (message?.type !== "QUERY_API_REQUEST") return undefined;
+      if (message.path.includes("/ajlist")) {
+        return {
+          ok: true,
+          status: 200,
+          data: {
+            data: {
+              total: 1,
+              data: [{
+                csfid: "SYNTHETIC-ACCOUNT-ID",
+                nfydm: "SYNTHETIC-COURT-ID",
+                cywlx: "SYNTHETIC-TYPE-ID",
+                claay: "SYNTHETIC CAUSE",
+                clarq: "2026-08-07",
+                cajmc: "SYNTHETIC PLAINTIFF与SYNTHETIC EXTRA,SYNTHETIC DEFENDANTSYNTHETIC CAUSE一案",
+                cah: "SYNTHETIC-LI-API-001",
+              }],
+            },
+          },
+        };
+      }
       return message.path.includes("/count")
         ? { ok: true, status: 200, data: { data: 1 } }
         : {
@@ -270,6 +310,10 @@ test("QUERY_LI 仅在 API 与 DOM 五字段双向唯一匹配后继续采集", a
               laay: "SYNTHETIC CAUSE",
               laayMz: "NOT THE DOM CAUSE",
               tjsj: "2026-08-01T08:00:00Z",
+              sfBh: "SYNTHETIC-ACCOUNT-ID",
+              fyid: "SYNTHETIC-COURT-ID",
+              ajlx: "SYNTHETIC-TYPE-ID",
+              updateTime: "2026-08-07T09:00:00Z",
               platformMetadata: "allowed",
             }],
           },
@@ -289,9 +333,42 @@ test("QUERY_LI 仅在 API 与 DOM 五字段双向唯一匹配后继续采集", a
       platformAccountId: "00000000-0000-4000-8000-000000000098",
     });
     assert.equal(records.length, 1);
+    assert.equal(records[0].caseNumber, "SYNTHETIC-LI-API-001");
+    assert.equal(dom.window.location.hash, "#/pagesWsla/pc/list/index");
   } finally {
     console.warn = nativeWarn;
     globalThis.setTimeout = nativeSetTimeout;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("QUERY_LI 在我的案件路由失败关闭且不调用接口或页面搜索", async () => {
+  await db.resetDb();
+  const { dom, chrome, readSearchValue } = await loadContent({
+    runtimeSendMessage: async (message) => {
+      if (message?.type === "QUERY_API_REQUEST") {
+        throw new Error("QUERY_LI must not request APIs from the my-case route");
+      }
+      return undefined;
+    },
+  });
+  try {
+    dom.window.location.hash = "#/pages/pc/case-list/index";
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_LI",
+      queryMode: "platform_discovery",
+      platformAccountId: "00000000-0000-4000-8000-000000000097",
+    });
+
+    assert.equal(response.ok, false);
+    assert.equal(response.error, "ONLINE_FILING_PAGE_REQUIRED");
+    assert.equal(dom.window.location.hash, "#/pages/pc/case-list/index");
+    assert.equal(readSearchValue(), null);
+    assert.equal(chrome.sentMessages.filter(({ type }) => type === "QUERY_API_REQUEST").length, 0);
+  } finally {
     cleanup(dom);
     await db.resetDb();
   }
@@ -305,7 +382,7 @@ function cleanup(dom) {
   delete globalThis.chrome;
 }
 
-test("平台发现从网上立案跨页取证时，以平台唯一搜索回执补齐同一记录的案号和成功时间", async () => {
+test("QUERY_LI 缺少结构化接口桥时失败关闭且不跳转我的案件", async () => {
   await db.resetDb();
   const nativeSetTimeout = globalThis.setTimeout;
   const nativeWarn = console.warn;
@@ -315,14 +392,6 @@ test("平台发现从网上立案跨页取证时，以平台唯一搜索回执�
     nativeWarn(...args);
   };
   const { dom, chrome, readSearchValue } = await loadContent({ placeholderSearch: true });
-  const expectedStableUid = db.uidOf({
-    platformAccountId: "00000000-0000-4000-8000-000000000010",
-    plaintiff: "SYNTHETIC PLAINTIFF",
-    defendant: "SYNTHETIC DEFENDANT",
-    sourceCaseName: "SYNTHETIC SOURCE TITLE",
-    sourceCause: "SYNTHETIC CAUSE",
-    sourceApplicationDate: "2026-08-01",
-  });
   try {
     const response = await dispatch(chrome.listeners.at(-1), {
       type: "BROWSER_COMMAND_EXECUTE",
@@ -331,17 +400,14 @@ test("平台发现从网上立案跨页取证时，以平台唯一搜索回执�
       platformAccountId: "00000000-0000-4000-8000-000000000010",
     });
 
-    assert.equal(readSearchValue(), "SYNTHETIC SOURCE TITLE");
-    assert.equal(response.error, "SCREENSHOT_CAPTURE_FAILED", "首轮截图失败不得被后续补证结果掩盖");
+    assert.equal(readSearchValue(), null);
+    assert.equal(response.error, "BRIDGE_UNAVAILABLE");
+    assert.equal(dom.window.location.hash, "#/pagesWsla/pc/list/index");
     const records = await db.query(db.STORE_CASES, {
       account: "PLATFORM-ACCOUNT",
       platformAccountId: "00000000-0000-4000-8000-000000000010",
     });
-    assert.equal(records.length, 1);
-    assert.equal(records[0].caseNumber, "SYNTHETIC-LI-001");
-    assert.equal(records[0].filedTime, "2026-08-07");
-    assert.equal(records[0].needsHuman, true);
-    assert.equal(records[0].uid, expectedStableUid, "补齐案号不能生成第二条 UID");
+    assert.equal(records.length, 0);
   } finally {
     globalThis.setTimeout = nativeSetTimeout;
     console.warn = nativeWarn;
@@ -350,7 +416,7 @@ test("平台发现从网上立案跨页取证时，以平台唯一搜索回执�
   }
 });
 
-test("平台发现同标题重传案件：按最新申请日采状态，并按最新立案日补 F/G", async () => {
+test("QUERY_LI 不以 DOM 同标题重传结果代替结构化接口", async () => {
   await db.resetDb();
   const nativeSetTimeout = globalThis.setTimeout;
   const nativeWarn = console.warn;
@@ -367,16 +433,13 @@ test("平台发现同标题重传案件：按最新申请日采状态，并按�
       queryMode: "platform_discovery",
       platformAccountId: "00000000-0000-4000-8000-000000000030",
     });
-    assert.equal(response.error, "SCREENSHOT_CAPTURE_FAILED");
+    assert.equal(response.error, "BRIDGE_UNAVAILABLE");
+    assert.equal(dom.window.location.hash, "#/pagesWsla/pc/list/index");
     const records = await db.query(db.STORE_CASES, {
       account: "PLATFORM-ACCOUNT",
       platformAccountId: "00000000-0000-4000-8000-000000000030",
     });
-    assert.equal(records.length, 1);
-    assert.equal(records[0].sourceApplicationDate, "2026-08-07");
-    assert.equal(records[0].status, "立案成功");
-    assert.equal(records[0].filedTime, "2026-08-09");
-    assert.equal(records[0].caseNumber, "SYNTHETIC-LI-LATEST");
+    assert.equal(records.length, 0);
   } finally {
     globalThis.setTimeout = nativeSetTimeout;
     console.warn = nativeWarn;
