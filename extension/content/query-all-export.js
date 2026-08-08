@@ -13,8 +13,9 @@ function exactLeafMatches(container, label) {
 function isUsable(element) {
   if (!element || element.hidden || element.getAttribute?.("aria-hidden") === "true") return false;
   if (element.matches?.(":disabled")) return false;
+  if (element.getAttribute?.("aria-disabled") === "true") return false;
   const style = element.ownerDocument?.defaultView?.getComputedStyle?.(element);
-  return style?.display !== "none" && style?.visibility !== "hidden";
+  return style?.display !== "none" && style?.visibility !== "hidden" && style?.pointerEvents !== "none";
 }
 
 function trackListMutations(root) {
@@ -46,6 +47,15 @@ async function defaultWaitForList(root, kind, tracker, { timeoutMs = 10_000, int
     await sleep(intervalMs);
   }
   return false;
+}
+
+export function isQueryControlsReady(root) {
+  const containers = [...root.querySelectorAll(SELECTORS.list.tab)];
+  const buttons = [...root.querySelectorAll(SELECTORS.list.searchBtn)];
+  if (containers.length !== 1 || buttons.length !== 1 || !isUsable(buttons[0])) return false;
+  return Object.values(LABELS).every((label) => (
+    exactLeafMatches(containers[0], label).filter(isUsable).length === 1
+  ));
 }
 
 export async function switchQueryCategory(root, kind, options = {}) {

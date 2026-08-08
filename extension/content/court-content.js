@@ -39,7 +39,7 @@ import {
   selectSourceApiRow,
 } from "../data/platform-evidence.js";
 import { createMainWorldFetch, fetchLayyPages, fetchMyCases, matchApiDomRows } from "./query-api.js";
-import { runQueryAllExport, switchQueryCategory } from "./query-all-export.js";
+import { isQueryControlsReady, runQueryAllExport, switchQueryCategory } from "./query-all-export.js";
 import * as db from "../data/db.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -422,6 +422,11 @@ function ensureListReady() {
     throw new Error("SESSION_EXPIRED");
   }
   return state === "logged-in";
+}
+
+function isBrowserCommandReady() {
+  if (!isListPage() || !_panel || !getCurrentAccount(document)) return false;
+  return isQueryControlsReady(document);
 }
 
 /** 审核结果区元素（截图目标） */
@@ -911,8 +916,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({
       ok: true,
       role: isDetailPage() ? "detail" : "list",
-      route: location.hash,
+      route: location.hash.split("?", 1)[0],
       state: detectLoginState({ hash: location.hash, root: document }),
+      ready: isBrowserCommandReady(),
     });
     return false;
   }

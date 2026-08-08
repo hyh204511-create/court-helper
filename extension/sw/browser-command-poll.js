@@ -217,6 +217,27 @@ async function waitForLoginContent(chromeApi, tabId, scheduler, delayMs, attempt
   return false;
 }
 
+async function waitForQueryAllExportContent(chromeApi, tabId, scheduler, delayMs, attempts, timeoutMs) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const probeResult = await withMessageTimeout(
+        chromeApi,
+        tabId,
+        { type: "PING" },
+        scheduler,
+        timeoutMs,
+      );
+      const route = probeResult.response?.route;
+      const routeReady = typeof route === "string" && route.split("?", 1)[0] === WSLA_LIST_ROUTE;
+      if (probeResult.response?.ok === true && routeReady && probeResult.response?.ready === true) return true;
+    } catch {
+      // The SPA/content script can still be registering while the list controls render.
+    }
+    if (attempt + 1 < attempts) await waitForContentRoute(scheduler, delayMs);
+  }
+  return false;
+}
+
 function resultFor(response) {
   if (response?.status === "uploaded") {
     return { status: "succeeded", resultCode: "SUCCESS", resultSummary: "报表已上传服务器" };
@@ -369,6 +390,19 @@ export function createBrowserCommandPoller({
         return { ok: false, error: "PLATFORM_ACCOUNT_UNAVAILABLE" };
       }
       message = { ...message, platformAccountId: command.platformAccountId };
+    }
+    if (command.type === "QUERY_ALL_EXPORT") {
+      const attempts = retryAttempts(contentRouteRetryAttempts);
+      const contentReady = await waitForQueryAllExportContent(
+        chromeApi,
+        tab.id,
+        scheduler,
+        contentRouteRetryDelayMs,
+        attempts,
+        contentRoutePingTimeoutMs,
+      );
+      if (!contentReady) return { ok: false, error: "CONTENT_UNAVAILABLE" };
+      if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
     }
     try {
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };

@@ -111,6 +111,7 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
   const messages = [];
   const chromeApi = chromeMock(async (_tabId, message) => {
     messages.push(message);
+    if (message.type === "PING") return { ok: true, route: "#/pagesWsla/pc/list/index", ready: true };
     return { ok: true, progress: { stage: "exported" } };
   });
   const fetchImpl = async (url, init = {}) => {
@@ -129,12 +130,48 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
 
   assert.equal(result.ok, true);
   assert.equal(batchReads, 1);
-  assert.deepEqual(messages, [{
+  assert.deepEqual(messages.filter((message) => message.type === "BROWSER_COMMAND_EXECUTE"), [{
     type: "BROWSER_COMMAND_EXECUTE",
     commandType: "QUERY_ALL_EXPORT",
     queryMode: "platform_discovery",
     platformAccountId: command.platformAccountId,
   }]);
+});
+
+test("QUERY_ALL_EXPORT waits for the list content to become ready before dispatching", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000113",
+    type: "QUERY_ALL_EXPORT",
+    platformAccountId: "00000000-0000-4000-8000-000000000313",
+    clientBatchId: "00000000-0000-4000-8000-000000000213",
+  };
+  const messages = [];
+  let pingCount = 0;
+  const chromeApi = chromeMock(async (_tabId, message) => {
+    messages.push(message);
+    if (message.type === "PING") {
+      pingCount += 1;
+      return {
+        ok: true,
+        route: "#/pagesWsla/pc/list/index",
+        ready: pingCount >= 2,
+      };
+    }
+    return { ok: true, progress: { stage: "exported" } };
+  });
+  const harness = platformDiscoveryHarness(command);
+
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl: harness.fetchImpl,
+    contentRouteRetryDelayMs: 0,
+    contentRouteRetryAttempts: 2,
+    contentRoutePingTimeoutMs: 10,
+  }).pollOnce();
+
+  assert.equal(result.ok, true);
+  assert.equal(pingCount, 2);
+  assert.deepEqual(messages.map((message) => message.type), ["PING", "PING", "BROWSER_COMMAND_EXECUTE"]);
 });
 
 test("QUERY_ALL_EXPORT 分类切换超时按待人工回写", async () => {
@@ -145,7 +182,11 @@ test("QUERY_ALL_EXPORT 分类切换超时按待人工回写", async () => {
     clientBatchId: "00000000-0000-4000-8000-000000000212",
   };
   const harness = platformDiscoveryHarness(command);
-  const chromeApi = chromeMock(async () => ({ ok: false, error: "QUERY_TAB_TIMEOUT" }));
+  const chromeApi = chromeMock(async (_tabId, message) => (
+    message.type === "PING"
+      ? { ok: true, route: "#/pagesWsla/pc/list/index", ready: true }
+      : { ok: false, error: "QUERY_TAB_TIMEOUT" }
+  ));
 
   const result = await createBrowserCommandPoller({ chromeApi, fetchImpl: harness.fetchImpl }).pollOnce();
 

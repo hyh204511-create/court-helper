@@ -213,6 +213,35 @@ async function dispatch(listener, message) {
   return response;
 }
 
+test("PING only reports browser command readiness after the panel and list controls are mounted", async () => {
+  const { dom, chrome } = await loadContent();
+  const listener = chrome.listeners.at(-1);
+  let response;
+  listener({ type: "PING" }, {}, (value) => { response = value; });
+  assert.equal(response?.ok, true);
+  assert.equal(response?.ready, false);
+
+  dom.window.document.body.insertAdjacentHTML("beforeend", `<div class="fd-com-tab"><span>${"\u5ba1\u5224"}</span><span>${"\u6267\u884c"}</span></div><button class="fd-com-search-btn">${"\u67e5\u8be2"}</button>`);
+  const searchButton = dom.window.document.querySelector(".fd-com-search-btn");
+  searchButton.hidden = true;
+  listener({ type: "PING" }, {}, (value) => { response = value; });
+  assert.equal(response?.ready, false);
+  searchButton.hidden = false;
+  searchButton.setAttribute("aria-disabled", "true");
+  listener({ type: "PING" }, {}, (value) => { response = value; });
+  assert.equal(response?.ready, false);
+  searchButton.removeAttribute("aria-disabled");
+  dom.window.document.querySelector(".fd-com-tab span:last-child").remove();
+  listener({ type: "PING" }, {}, (value) => { response = value; });
+  assert.equal(response?.ready, false);
+  dom.window.document.querySelector(".fd-com-tab").insertAdjacentHTML("beforeend", `<span>${"\u6267\u884c"}</span>`);
+  dom.window.location.hash = "#/pagesWsla/pc/list/index?case=synthetic";
+  listener({ type: "PING" }, {}, (value) => { response = value; });
+  assert.equal(response?.ready, true);
+  assert.equal(response?.route, "#/pagesWsla/pc/list/index");
+  await db.resetDb();
+});
+
 test("QUERY_LI 优先调用结构化 layy API；API 与 DOM 签名不一致时转人工", async () => {
   await db.resetDb();
   const nativeSetTimeout = globalThis.setTimeout;

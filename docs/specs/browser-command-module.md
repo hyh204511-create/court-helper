@@ -230,3 +230,8 @@ extension 生成稳定 deviceId + 随机 32-byte exchangeSecret
 - 未批准、过期、已消费、已撤销、重放和并发兑换不得获得第二个 token。
 - 管理员配对的 extension token 调用每个 `/users*` 路径均为 403，同时仍可运行 browser-command 轮询和既有执行 API。
 - 设备撤销及管理员停用、删除、重置密码须使 token 在下一请求失效，且不泄漏 token 或 secret。
+### QUERY_ALL_EXPORT 就绪闸门（v0.9）
+
+- Service Worker 在同一已领取命令内，向精确“网上立案”标签发送有界 `PING`，必须确认 content script 已注册、面板已挂载、当前平台账号可识别且列表分类/查询控件唯一可用后，才下发唯一一次 `BROWSER_COMMAND_EXECUTE`。
+- 就绪探测默认最多 8 次、每次间隔 500ms、单次响应最多 2s；探测期间不得导航、刷新、创建标签或重复领取命令。超时回写 `CONTENT_UNAVAILABLE`，不得把未执行误报为成功。
+- content 的 `PING` 仅返回脱敏路由、登录状态和布尔 `ready`；不得返回账号明文、业务行、凭据或 DOM 内容。该闸门只解决 SPA/content script 初始化竞态，不改变查询分类切换、采集、导出和租约规则。
