@@ -91,6 +91,7 @@ test("MAIN bridge 只允许已确认 lafw GET 与 ajfw POST 路径", async () =>
     { method: "GET", path: "/yzw/unconfirmed/api" },
     { method: "GET", path: "https://example.invalid/steal" },
     { method: "GET", path: "/yzw/yzw-zxfw-lafw/api/v3/layy/../admin" },
+    { method: "GET", path: "/yzw/yzw-zxfw-lafw/api/v3/layy?ajlb=evil&limit=10" },
     { method: "GET", path: "/yzw/yzw-zxfw-lafw/api/v3/layy?ajlb=sp&ajlb=evil&limit=10" },
     { method: "GET", path: "/yzw/yzw-zxfw-lafw/api/v3/layy?ajlb=sp&limit=10&limit=999" },
     { method: "GET", path: "/yzw/yzw-zxfw-lafw/api/v3/layy?page=1&page=2" },
@@ -105,6 +106,24 @@ test("MAIN bridge 只允许已确认 lafw GET 与 ajfw POST 路径", async () =>
     assert.equal(result.ok, false, request.path);
     assert.equal(result.code, "QUERY_API_NOT_ALLOWED");
   }
+});
+
+test("MAIN bridge 允许强执 layy 与 layy/count 使用 ajlb=zx", async () => {
+  const { chromeApi, injections } = chromeHarness(async () => jsonResponse({ data: [] }));
+
+  for (const path of [
+    "/yzw/yzw-zxfw-lafw/api/v3/layy?ajlb=zx&page=1&limit=50",
+    "/yzw/yzw-zxfw-lafw/api/v3/layy/count?ajlb=zx&limit=50",
+  ]) {
+    const result = await handleMainWorldQueryRequest({
+      message: { type: QUERY_API_REQUEST, method: "GET", path },
+      sender: courtSender,
+      chromeApi,
+    });
+    assert.equal(result.ok, true, path);
+  }
+
+  assert.equal(injections.length, 2);
 });
 
 test("MAIN bridge 必须由 zxfw court tab sender 调用", async () => {

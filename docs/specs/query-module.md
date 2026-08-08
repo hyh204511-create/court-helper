@@ -4,7 +4,7 @@
 
 - 真实页面验收确认：隔离世界中的 content script 直接 `fetch` 会得到 401；MAIN world 原生 `fetch` 仍不会经过法院页面请求适配器，因缺少页面适配器注入的鉴权头同样得到 401。结构化接口请求必须由 content script 发送内部消息，经 service worker 调用 `chrome.scripting.executeScript`，并显式指定 `world: "MAIN"`，在已登录的法院标签页主世界调用页面已经加载的请求适配器。插件只向适配器传受控 path/method/body，不读取、复制、返回或持久化鉴权值。
 - service worker 只允许已确认的法院接口路径：`/yzw/yzw-zxfw-lafw/api/v3/layy`、`/layy/count`、`/layy/layyxq/{layyid}/0`、`/pz/layymb/{fyid}/{ajlx}`，以及 `/yzw/yzw-zxfw-ajfw/api/v1/ajlist`。禁止任意 URL、跨域 URL、路径穿越和未确认接口。
-- 方法白名单：lafw 列表、总数、详情和模板仅允许 `GET`；ajfw `ajlist` 仅允许 `POST`。主世界原生探测请求必须使用 `credentials: "include"` 和 `redirect: "manual"`；遇到 401/403 时只允许改走页面自身已加载的受控请求适配器，不得接收或拼接 Cookie、Token、Authorization 等凭据参数。受限 query 键不得重复；详情/模板路径不得带 query；路径参数只接受受限字符且拒绝编码后的斜杠、反斜杠与点段。3xx/opaque redirect 必须在跟随前转 `LOGIN_REDIRECT`，避免 POST body 被转发。
+- 方法白名单：lafw 列表、总数、详情和模板仅允许 `GET`；`layy` 与 `layy/count` 的 `ajlb` 只允许立案 `sp` 或强执 `zx`；ajfw `ajlist` 仅允许 `POST`。主世界原生探测请求必须使用 `credentials: "include"` 和 `redirect: "manual"`；遇到 401/403 时只允许改走页面自身已加载的受控请求适配器，不得接收或拼接 Cookie、Token、Authorization 等凭据参数。受限 query 键不得重复；详情/模板路径不得带 query；路径参数只接受受限字符且拒绝编码后的斜杠、反斜杠与点段。3xx/opaque redirect 必须在跟随前转 `LOGIN_REDIRECT`，避免 POST body 被转发。
 - sender 必须来自已确认的 `zxfw.court.gov.cn` 法院标签页；缺少 tab、来源 host 不符或非 http(s) 页面均拒绝执行。
 - 401、403、登录重定向、非 JSON、网络异常必须映射为稳定的待人工结果，禁止回退 DOM 猜测或把失败包装成空成功。
 - 桥返回只包含业务 JSON、HTTP 状态和稳定错误码；响应对象及日志不得包含 Cookie、Token、Authorization 或其他请求凭据。

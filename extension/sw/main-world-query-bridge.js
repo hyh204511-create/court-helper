@@ -12,6 +12,7 @@ const GET_PATHS = [
 const POST_PATHS = [/^\/yzw\/yzw-zxfw-ajfw\/api\/v1\/ajlist$/];
 const AJLIST_KEYS = new Set(["pageNum", "pageSize", "ajlb", "searchtext", "ajzt", "sfid", "sort"]);
 const LAYY_QUERY_KEYS = new Set(["cxtj", "kssj", "jssj", "zt", "limit", "page", "ajlb", "sfid", "sqrsf"]);
+const LAYY_CASE_CATEGORIES = new Set(["sp", "zx"]);
 const MY_CASE_CATEGORIES = new Set([
   "1501_000001-0100;1501_000001-0200;1501_000001-0300;1501_000001-0400;1501_000001-0500",
   "1501_000001-1000",
@@ -48,7 +49,7 @@ function safeRequest(message) {
   if (method === "GET") {
     if (url.pathname.endsWith("/layy") || url.pathname.endsWith("/layy/count")) {
       if ([...url.searchParams.keys()].some((key) => !LAYY_QUERY_KEYS.has(key))) return null;
-      if (url.searchParams.has("ajlb") && url.searchParams.get("ajlb") !== "sp") return null;
+      if (url.searchParams.has("ajlb") && !LAYY_CASE_CATEGORIES.has(url.searchParams.get("ajlb"))) return null;
       const limit = url.searchParams.get("limit");
       const page = url.searchParams.get("page");
       if (limit !== null && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > 50)) return null;
