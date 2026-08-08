@@ -149,6 +149,7 @@ button:disabled { cursor: not-allowed; opacity: .48; transform: none; }
 #case-retry { display: none; }
 
 .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.detail-grid[hidden] { display: none; }
 .detail-item { padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: rgba(244,240,232,.55); }
 .detail-item dt { margin-bottom: 7px; color: var(--ink-soft); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
 .detail-item dd { margin: 0; color: var(--ink); font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
