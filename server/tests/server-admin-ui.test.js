@@ -299,6 +299,8 @@ test('browser control renders full session and creator names, separates LOGIN, a
     const worker = await login(app, 'worker', WORKER_PASSWORD);
     const script = await app.inject({ method: 'GET', url: '/admin/assets/admin.js' });
     assert.match(script.body, /TEMPLATE_NOT_EMPTY/);
+    assert.match(script.body, /template_limit_exceeded/);
+    assert.match(script.body, /delete-import-batch/);
     const emptyLiBatch = {
       id: '00000000-0000-0000-0000-000000000401',
       fileName: 'synthetic-empty.xlsx',
@@ -306,6 +308,7 @@ test('browser control renders full session and creator names, separates LOGIN, a
       qzRows: 0,
       skippedRows: 0,
       createdAt: NOW.toISOString(),
+      canDelete: true,
     };
     const emptyQzBatch = {
       id: '00000000-0000-0000-0000-000000000402',
@@ -314,6 +317,7 @@ test('browser control renders full session and creator names, separates LOGIN, a
       qzRows: 0,
       skippedRows: 0,
       createdAt: NOW.toISOString(),
+      canDelete: false,
     };
 
     const sessions = [
@@ -347,6 +351,7 @@ test('browser control renders full session and creator names, separates LOGIN, a
         createdAt: NOW.toISOString(),
       }];
       let stallCasePagination = false;
+      let importBatches = [emptyLiBatch, emptyQzBatch];
       const jsonResponse = (body, status = 200) => ({
         ok: status >= 200 && status < 300,
         status,
@@ -377,7 +382,11 @@ test('browser control renders full session and creator names, separates LOGIN, a
           return jsonResponse({ account: 'synthetic-view-account', password: 'synthetic-view-password' });
         }
         if (requestUrl.pathname === '/api/v1/import-batches') {
-          return jsonResponse({ importBatches: [emptyLiBatch, emptyQzBatch], nextCursor: null });
+          return jsonResponse({ importBatches, nextCursor: null });
+        }
+        if (requestUrl.pathname === `/api/v1/import-batches/${emptyLiBatch.id}` && method === 'DELETE') {
+          importBatches = importBatches.filter((batch) => batch.id !== emptyLiBatch.id);
+          return jsonResponse(null, 204);
         }
         if (requestUrl.pathname === '/api/v1/cases') {
           assert.equal(requestUrl.searchParams.get('platformAccountId'), ACCOUNT_ID);
@@ -483,6 +492,7 @@ test('browser control renders full session and creator names, separates LOGIN, a
       const taskBatch = dom.window.document.querySelector('#browser-command-batch');
       assert.match(taskBatch.options[1].textContent, /平台发现/);
       assert.match(dom.window.document.querySelector('#import-batch-rows').textContent, /0（平台发现）/);
+      assert.equal(dom.window.document.querySelectorAll('[data-action="delete-import-batch"]').length, 1);
       const browserCommandPosts = () => requests.filter((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands');
       taskAccount.value = ACCOUNT_ID;
       taskBatch.value = emptyLiBatch.id;
@@ -497,6 +507,11 @@ test('browser control renders full session and creator names, separates LOGIN, a
       });
 
       dom.window.confirm = () => true;
+      dom.window.document.querySelector('[data-action="delete-import-batch"]').click();
+      await waitFor(() => requests.some((request) => request.method === 'DELETE' && request.path === `/api/v1/import-batches/${emptyLiBatch.id}`));
+      await waitFor(() => dom.window.document.querySelector('#browser-command-batch').options.length === 2);
+      assert.doesNotMatch(dom.window.document.querySelector('#import-batch-rows').textContent, /synthetic-empty\.xlsx/);
+      assert.match(dom.window.document.querySelector('[data-import-batch-message]').textContent, /已删除/);
       dom.window.document.querySelector('#browser-command-clear').click();
       await waitFor(() => requests.some((request) => request.method === 'DELETE' && request.path === '/api/v1/browser-commands'));
       await waitFor(() => dom.window.document.querySelector('[data-browser-command-status]').textContent.includes('已清理 1 条'));

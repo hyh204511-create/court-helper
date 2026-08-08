@@ -6,6 +6,7 @@ import {
   AppError,
   ConflictError,
   DependencyUnavailableError,
+  ForbiddenError,
   NotFoundError,
   PayloadTooLargeError,
   ValidationError,
@@ -26,13 +27,18 @@ import {
 export const MAX_IMPORT_BATCH_BYTES = 20 * 1024 * 1024;
 export const MAX_IMPORT_BATCH_WORKSHEETS = 2;
 export const MAX_IMPORT_BATCH_ROWS = 5_000;
-export const MAX_IMPORT_BATCH_COLUMNS = 12;
+export const MAX_IMPORT_BATCH_COLUMNS = 20;
 export const IMPORT_BATCH_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const XLSX_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 const LI_HEADERS = [
   '原告', '被告', '账号', '密码', '立案状态', '立案成功时间', '案号',
   '成功图片', '驳回时间', '驳回原因', '驳回图片', '查询时间',
+] as const;
+const COMBINED_HEADERS = [
+  ...LI_HEADERS.slice(0, 11), '立案查询时间',
+  '强执状态', '强执成功时间', '强执案号', '成功图片',
+  '驳回时间', '驳回原因', '驳回图片', '强执查询时间',
 ] as const;
 
 export interface ImportBatchUploadInput {
@@ -177,6 +183,10 @@ function hasLiHeader(sheet: ExcelJS.Worksheet): boolean {
   return LI_HEADERS.every((header, index) => cellText(sheet.getCell(1, index + 1).value) === header);
 }
 
+function hasCombinedHeader(sheet: ExcelJS.Worksheet): boolean {
+  return COMBINED_HEADERS.every((header, index) => cellText(sheet.getCell(1, index + 1).value) === header);
+}
+
 function enforcementHeaderRow(sheet: ExcelJS.Worksheet): number | null {
   for (let row = 2; row <= sheet.rowCount; row += 1) {
     if (
@@ -225,6 +235,15 @@ export async function summarizeImportBatch(buffer: Buffer): Promise<ImportBatchS
   if (sheet.rowCount > MAX_IMPORT_BATCH_ROWS || sheet.columnCount > MAX_IMPORT_BATCH_COLUMNS) {
     throw validation('template_limit_exceeded');
   }
+  if (sheet.columnCount > LI_HEADERS.length) {
+    if (!hasCombinedHeader(sheet)) throw validation('template_mismatch');
+    const combined = summarizeRows(sheet, 2, sheet.rowCount);
+    return {
+      liRows: combined.validRows,
+      qzRows: combined.validRows,
+      skippedRows: combined.skippedRows,
+    };
+  }
   if (!hasLiHeader(sheet)) throw validation('template_mismatch');
 
   const qzHeaderRow = enforcementHeaderRow(sheet);
@@ -238,7 +257,7 @@ export async function summarizeImportBatch(buffer: Buffer): Promise<ImportBatchS
   };
 }
 
-export function publicImportBatch(value: ImportBatchRecord) {
+export function publicImportBatch(value: ImportBatchRecord, access: ImportBatchAccess) {
   return {
     id: value.id,
     fileName: value.fileName,
@@ -250,6 +269,7 @@ export function publicImportBatch(value: ImportBatchRecord) {
     liRows: value.liRows,
     qzRows: value.qzRows,
     skippedRows: value.skippedRows,
+    canDelete: access.role === 'admin' || value.createdBy === access.userId,
   };
 }
 
@@ -329,8 +349,15 @@ export class ImportBatchService {
     return { importBatch, stream };
   }
 
+  async delete(id: string, access: ImportBatchAccess): Promise<void> {
+    const importBatch = await this.get(id, access);
+    if (access.role !== 'admin' && importBatch.createdBy !== access.userId) throw new ForbiddenError();
+    await storageDeleteCall(() => this.storage.delete(importBatch.objectKey));
+    await this.repository.delete(importBatch.id);
+  }
+
   async readExecutionData(id: string): Promise<{ importBatch: ImportBatchRecord; rows: ImportBatchExecutionRow[] }> {
-    const importBatch = await this.get(id, { userId: 'extension' });
+    const importBatch = await this.get(id, { userId: 'extension', role: 'extension' });
     if (importBatch.expiresAt.getTime() <= this.clock().getTime()) {
       throw new ConflictError('Import batch expired', 'IMPORT_BATCH_EXPIRED');
     }
@@ -342,10 +369,8 @@ export class ImportBatchService {
     });
     const sheet = workbook.getWorksheet('Sheet1');
     if (!sheet) throw validation('sheet_required');
-    const qzHeader = enforcementHeaderRow(sheet);
-    if (qzHeader === null) throw validation('enforcement_header_required');
     const rows: ImportBatchExecutionRow[] = [];
-    const collect = (start: number, end: number, kind: 'li' | 'qz') => {
+    const collect = (start: number, end: number, kind: 'li' | 'qz', statusColumn = 5) => {
       for (let row = start; row <= end; row += 1) {
         const plaintiff = cellText(sheet.getCell(row, 1).value);
         const account = cellText(sheet.getCell(row, 3).value);
@@ -363,17 +388,25 @@ export class ImportBatchService {
           account,
           plaintiff,
           defendant: cellText(sheet.getCell(row, 2).value),
-          status: cellText(sheet.getCell(row, 5).value) || 'UNKNOWN',
-          filedTime: date(6),
-          caseNumber: cellText(sheet.getCell(row, 7).value) || null,
-          rejectTime: date(9),
-          rejectReason: cellText(sheet.getCell(row, 10).value) || null,
-          queryTime: date(12),
+          status: cellText(sheet.getCell(row, statusColumn).value) || 'UNKNOWN',
+          filedTime: date(statusColumn + 1),
+          caseNumber: cellText(sheet.getCell(row, statusColumn + 2).value) || null,
+          rejectTime: date(statusColumn + 4),
+          rejectReason: cellText(sheet.getCell(row, statusColumn + 5).value) || null,
+          queryTime: date(statusColumn + 7),
         });
       }
     };
-    collect(2, qzHeader - 1, 'li');
-    collect(qzHeader + 1, sheet.rowCount, 'qz');
+    if (sheet.columnCount > LI_HEADERS.length) {
+      if (!hasCombinedHeader(sheet)) throw validation('template_mismatch');
+      collect(2, sheet.rowCount, 'li', 5);
+      collect(2, sheet.rowCount, 'qz', 13);
+    } else {
+      const qzHeader = enforcementHeaderRow(sheet);
+      if (qzHeader === null) throw validation('enforcement_header_required');
+      collect(2, qzHeader - 1, 'li');
+      collect(qzHeader + 1, sheet.rowCount, 'qz');
+    }
     return { importBatch, rows };
   }
 }

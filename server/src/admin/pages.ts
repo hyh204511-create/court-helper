@@ -246,7 +246,7 @@ function browserControlPage(role: AdminRole): string {
     </section>
     <section class="panel" aria-labelledby="import-batch-title">
       <div class="panel-head"><div><h3 id="import-batch-title">导入查询批次</h3><p>上传 xlsx 后选择批次绑定查询任务。服务端仅返回批次摘要。</p></div></div>
-      <div class="panel-body"><form id="import-batch-form" enctype="multipart/form-data"><div class="field"><label for="import-batch-file">Excel 模板</label><input id="import-batch-file" name="file" type="file" accept=".xlsx" required></div><div class="form-actions"><button class="primary" type="submit">上传批次</button></div></form><p class="message" data-import-batch-message aria-live="polite"></p><div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>立案行</th><th>强执行</th><th>跳过</th><th>创建时间</th></tr></thead><tbody id="import-batch-rows"></tbody></table></div></div>
+      <div class="panel-body"><form id="import-batch-form" enctype="multipart/form-data"><div class="field"><label for="import-batch-file">Excel 模板（新版 20 列）</label><input id="import-batch-file" name="file" type="file" accept=".xlsx" required></div><div class="form-actions"><button class="primary" type="submit">上传批次</button></div></form><p class="message" data-import-batch-message aria-live="polite"></p><div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>立案行</th><th>强执行</th><th>跳过</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="import-batch-rows"></tbody></table></div></div>
     </section>
     <section class="panel" aria-labelledby="browser-account-search-title">
       <div class="panel-head"><div><h3 id="browser-account-search-title">账号查询与案件状态</h3><p>按平台账号标签搜索定位，可再按原告、被告或案号关键词筛选；关键词只在本次页面内存中使用，案件状态来自台账精确结果。</p></div></div>

@@ -227,11 +227,12 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
 class ApiError extends Error {
-  constructor(status, code, requestId) {
+  constructor(status, code, requestId, details = []) {
     super(code || 'REQUEST_FAILED');
     this.status = status;
     this.code = code || 'REQUEST_FAILED';
     this.requestId = requestId || '';
+    this.details = Array.isArray(details) ? details : [];
   }
 }
 
@@ -261,6 +262,12 @@ function errorMessage(error) {
     if (error.status === 401 || error.code === 'ACCOUNT_DISABLED') return '账号或密码错误/账号不可用';
     if (error.code === 'DUPLICATE_PENDING') return '已有进行中的统一登录任务，请前往浏览器控制查看';
     if (error.code === 'TEMPLATE_NOT_EMPTY') return '当前查询表块必须为空，请上传仅含表头的模板';
+    const detailCode = error.details[0]?.code;
+    if (detailCode === 'template_limit_exceeded') return '模板超过限制：最多 5,000 行、20 列';
+    if (detailCode === 'template_mismatch') return '模板不匹配，请使用新版 20 列立案与强执查询表';
+    if (detailCode === 'sheet_required') return '模板缺少 Sheet1 工作表';
+    if (detailCode === 'enforcement_header_required') return '旧版模板缺少强执表头，请改用新版 20 列模板';
+    if (detailCode === 'mime_mismatch' || detailCode === 'magic_not_allowed') return '文件不是有效的 xlsx 模板';
     if (error.requestId) return '请求失败，请提供请求编号 ' + error.requestId;
   }
   return '请求失败，请稍后重试';
@@ -282,7 +289,7 @@ async function api(path, options = {}) {
     throw new ApiError(401, 'AUTH_REQUIRED', body?.error?.requestId);
   }
   if (!response.ok) {
-    throw new ApiError(response.status, body?.error?.code, body?.error?.requestId);
+    throw new ApiError(response.status, body?.error?.code, body?.error?.requestId, body?.error?.details);
   }
   return body;
 }
@@ -1027,9 +1034,12 @@ async function loadImportBatches() {
       select.appendChild(option);
       const row = element('tr');
       row.append(element('td', batch.fileName), element('td', batch.liRows === 0 ? '0（平台发现）' : batch.liRows), element('td', batch.qzRows === 0 ? '0（平台发现）' : batch.qzRows), element('td', batch.skippedRows), element('td', dateLabel(batch.createdAt)));
+      const actions = element('td', null, 'row-actions');
+      if (batch.canDelete) actions.append(actionButton('删除', 'delete-import-batch', batch.id, 'small-button danger'));
+      row.appendChild(actions);
       target.appendChild(row);
     });
-    if (!target.firstChild) { const row = element('tr'); const cell = element('td', '暂无导入批次'); cell.colSpan = 5; row.appendChild(cell); target.appendChild(row); }
+    if (!target.firstChild) { const row = element('tr'); const cell = element('td', '暂无导入批次'); cell.colSpan = 6; row.appendChild(cell); target.appendChild(row); }
   } catch (error) { browserControlImportBatches = []; setMessage($('[data-import-batch-message]'), errorMessage(error)); }
 }
 
@@ -1238,8 +1248,22 @@ function initBrowserControl() {
     event.preventDefault(); const file = $('#import-batch-file')?.files?.[0]; if (!file) return;
     const formData = new FormData(); formData.append('file', file); const headers = new Headers(); if (csrfToken) headers.set('X-CSRF-Token', csrfToken);
     setFormBusy(importForm, true);
-    try { const response = await fetch(API_BASE + '/import-batches', { method: 'POST', body: formData, headers, credentials: 'same-origin' }); const body = await response.json().catch(() => null); if (!response.ok) throw new ApiError(response.status, body?.error?.code, body?.error?.requestId); importForm.reset(); setMessage($('[data-import-batch-message]'), '批次已上传', 'success'); await loadImportBatches(); }
+    try { const response = await fetch(API_BASE + '/import-batches', { method: 'POST', body: formData, headers, credentials: 'same-origin' }); const body = await response.json().catch(() => null); if (!response.ok) throw new ApiError(response.status, body?.error?.code, body?.error?.requestId, body?.error?.details); importForm.reset(); setMessage($('[data-import-batch-message]'), '批次已上传', 'success'); await loadImportBatches(); }
     catch (error) { setMessage($('[data-import-batch-message]'), errorMessage(error)); } finally { setFormBusy(importForm, false); }
+  });
+  $('#import-batch-rows')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-action="delete-import-batch"]');
+    if (!button) return;
+    if (!window.confirm('确认删除此导入文件？删除后无法用于新查询任务。')) return;
+    try {
+      button.disabled = true;
+      await api('/import-batches/' + encodeURIComponent(button.dataset.id), { method: 'DELETE' });
+      await loadImportBatches();
+      setMessage($('[data-import-batch-message]'), '导入文件已删除', 'success');
+    } catch (error) {
+      setMessage($('[data-import-batch-message]'), errorMessage(error));
+      button.disabled = false;
+    }
   });
   $('#browser-command-refresh')?.addEventListener('click', () => { void loadBrowserCommands(); void loadImportBatches(); });
   accountSearch?.addEventListener('input', filterBrowserCommandRows);

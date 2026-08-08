@@ -57,4 +57,5 @@ export interface ImportBatchRepository {
 
 export interface ImportBatchAccess {
   userId: string;
+  role: 'admin' | 'user' | 'extension';
 }

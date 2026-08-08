@@ -46,7 +46,7 @@ function route(prefix: string, path: string): string {
 
 function accessOf(request: FastifyRequest): ImportBatchAccess {
   const auth = request.auth as NonNullable<typeof request.auth>;
-  return { userId: auth.user.id };
+  return { userId: auth.user.id, role: auth.session.clientType === 'extension' ? 'extension' : auth.user.role };
 }
 
 async function readFilePart(part: MultipartFile): Promise<Buffer> {
@@ -140,7 +140,10 @@ export function registerImportBatchRoutes(
   options: RegisterImportBatchOptions,
 ): void {
   const { authService, browserCommandService, config, prefix, service } = options;
-  const protectedPreHandler = async (request: FastifyRequest) => authenticateRequest(request, authService);
+  const protectedPreHandler = async (request: FastifyRequest) => {
+    await authenticateRequest(request, authService);
+    if (request.auth?.session.clientType !== 'admin_ui') throw new ForbiddenError();
+  };
   const extensionPreHandler = async (request: FastifyRequest) => {
     await authenticateRequest(request, authService);
     if (request.auth?.session.clientType !== 'extension' || !request.auth.extensionDevice) throw new ForbiddenError();
@@ -148,19 +151,21 @@ export function registerImportBatchRoutes(
 
   app.post(route(prefix, '/import-batches'), { preHandler: protectedPreHandler }, async (request, reply) => {
     assertCookieWrite(request, authService, config);
-    const result = await service.upload(await multipartUpload(request), accessOf(request));
+    const access = accessOf(request);
+    const result = await service.upload(await multipartUpload(request), access);
     reply.code(201);
-    return publicImportBatch(result);
+    return publicImportBatch(result, access);
   });
 
   app.get(route(prefix, '/import-batches'), { preHandler: protectedPreHandler }, async (request) => {
     const query = queryOf(request);
+    const access = accessOf(request);
     const page = await service.list({
       limit: queryLimit(query.limit),
       cursor: queryCursor(query.cursor),
-    }, accessOf(request));
+    }, access);
     return {
-      importBatches: page.items.map(publicImportBatch),
+      importBatches: page.items.map((item) => publicImportBatch(item, access)),
       nextCursor: page.nextCursor ? encodeImportBatchCursor(page.nextCursor) : null,
     };
   });
@@ -175,6 +180,12 @@ export function registerImportBatchRoutes(
       .header('x-content-sha256', importBatch.sha256)
       .header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(importBatch.fileName)}`);
     return reply.send(stream);
+  });
+
+  app.delete(route(prefix, '/import-batches/:id'), { preHandler: protectedPreHandler }, async (request, reply) => {
+    assertCookieWrite(request, authService, config);
+    await service.delete(importBatchId(request), accessOf(request));
+    return reply.code(204).send();
   });
 
   if (browserCommandService) {

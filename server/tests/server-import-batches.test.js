@@ -29,6 +29,11 @@ const QZ_HEADERS = [
   '原告', '被告', '账号', '密码', '强执状态', '强执成功时间', '强执案号',
   '成功图片', '驳回时间', '驳回原因', '驳回图片', '查询时间',
 ];
+const COMBINED_HEADERS = [
+  ...LI_HEADERS.slice(0, 11), '立案查询时间',
+  '强执状态', '强执成功时间', '强执案号', '成功图片',
+  '驳回时间', '驳回原因', '驳回图片', '强执查询时间',
+];
 const FIXTURE_ACCOUNT = 'fixture-account';
 const FIXTURE_PASSWORD = 'fixture-password';
 
@@ -98,6 +103,21 @@ async function workbookBuffer(options = {}) {
     workbook.addWorksheet('Sheet3');
   }
 
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+
+async function combinedWorkbookBuffer(options = {}) {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Sheet1');
+  sheet.getRow(1).values = options.headers ?? COMBINED_HEADERS;
+  if (options.withRows) {
+    sheet.getRow(2).values = [
+      'fixture-combined-plaintiff', 'fixture-combined-defendant', FIXTURE_ACCOUNT, FIXTURE_PASSWORD,
+    ];
+    sheet.getRow(3).values = ['fixture-combined-skipped'];
+  } else {
+    sheet.getCell(11, 20).style = { alignment: { horizontal: 'center' } };
+  }
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
@@ -232,8 +252,9 @@ test('admin_ui Cookie upload creates a safe global import batch and any signed-i
     assert.equal(response.statusCode, 201);
     const created = response.json();
     assert.deepEqual(Object.keys(created).sort(), [
-      'byteSize', 'createdAt', 'expiresAt', 'fileName', 'id', 'liRows', 'qzRows', 'sha256', 'skippedRows', 'updatedAt',
+      'byteSize', 'canDelete', 'createdAt', 'expiresAt', 'fileName', 'id', 'liRows', 'qzRows', 'sha256', 'skippedRows', 'updatedAt',
     ]);
+    assert.equal(created.canDelete, true);
     assert.equal(created.fileName, '批次fixture（一）.xlsx');
     assert.equal(created.byteSize, content.length);
     assert.equal(created.sha256, createHash('sha256').update(content).digest('hex'));
@@ -263,6 +284,7 @@ test('admin_ui Cookie upload creates a safe global import batch and any signed-i
     assert.equal(listed.statusCode, 200);
     assert.deepEqual(Object.keys(listed.json()).sort(), ['importBatches', 'nextCursor']);
     assert.deepEqual(listed.json().importBatches.map((item) => item.id), [created.id]);
+    assert.equal(listed.json().importBatches[0].canDelete, false);
     assert.equal(listed.body.includes(FIXTURE_ACCOUNT), false);
     assert.equal(listed.body.includes(FIXTURE_PASSWORD), false);
     assert.equal(listed.body.includes('objectKey'), false);
@@ -296,7 +318,78 @@ test('admin_ui Cookie upload creates a safe global import batch and any signed-i
   }
 });
 
-test('import batch routes require authentication; extension bearer writes do not use cookie CSRF', async () => {
+test('combined 20-column templates upload with independent layout validation and safe summaries', async () => {
+  const { app } = await makeApp();
+  try {
+    const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
+    const blank = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer()));
+    assert.equal(blank.statusCode, 201);
+    assert.equal(blank.json().liRows, 0);
+    assert.equal(blank.json().qzRows, 0);
+    assert.equal(blank.json().skippedRows, 0);
+
+    const populated = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer({ withRows: true })));
+    assert.equal(populated.statusCode, 201);
+    assert.equal(populated.json().liRows, 1);
+    assert.equal(populated.json().qzRows, 1);
+    assert.equal(populated.json().skippedRows, 1);
+    assert.equal(populated.body.includes(FIXTURE_ACCOUNT), false);
+    assert.equal(populated.body.includes(FIXTURE_PASSWORD), false);
+
+    const invalidHeader = [...COMBINED_HEADERS];
+    invalidHeader[19] = '自定义扩展列';
+    const invalid = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer({ headers: invalidHeader })));
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(errorDetailCode(invalid), 'template_mismatch');
+  } finally {
+    await app.close();
+  }
+});
+
+test('import batch deletion enforces ownership and removes private content before metadata', async () => {
+  const { app, importBatchRepository, storageBackend } = await makeApp();
+  try {
+    const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
+    const worker = await loginUi(app, 'worker', USER_PASSWORD);
+    const adminUpload = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer(), { fileName: 'admin.xlsx' }));
+    const workerUpload = await upload(app, worker, uploadPayload(await combinedWorkbookBuffer(), { fileName: 'worker.xlsx' }));
+    const adminRecord = await importBatchRepository.findById(adminUpload.json().id);
+    const workerRecord = await importBatchRepository.findById(workerUpload.json().id);
+    assert.ok(adminRecord);
+    assert.ok(workerRecord);
+
+    const forbidden = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/import-batches/${adminRecord.id}`,
+      headers: cookieWriteHeaders(worker),
+    });
+    assert.equal(forbidden.statusCode, 403);
+    assert.equal(await storageBackend.exists(adminRecord.objectKey), true);
+    assert.ok(await importBatchRepository.findById(adminRecord.id));
+
+    const ownDelete = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/import-batches/${workerRecord.id}`,
+      headers: cookieWriteHeaders(worker),
+    });
+    assert.equal(ownDelete.statusCode, 204);
+    assert.equal(await storageBackend.exists(workerRecord.objectKey), false);
+    assert.equal(await importBatchRepository.findById(workerRecord.id), null);
+
+    const adminDelete = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/import-batches/${adminRecord.id}`,
+      headers: cookieWriteHeaders(admin),
+    });
+    assert.equal(adminDelete.statusCode, 204);
+    assert.equal(await storageBackend.exists(adminRecord.objectKey), false);
+    assert.equal(await importBatchRepository.findById(adminRecord.id), null);
+  } finally {
+    await app.close();
+  }
+});
+
+test('import batch routes require admin_ui authentication and reject extension bearer access', async () => {
   const { app } = await makeApp();
 
   try {
@@ -320,7 +413,8 @@ test('import batch routes require authentication; extension bearer writes do not
       headers: { authorization: `Bearer ${extensionToken}`, ...payload.headers },
       payload: payload.payload,
     });
-      assert.equal(bearer.statusCode, 201);
+    assert.equal(bearer.statusCode, 403);
+    assert.equal(errorCode(bearer), 'FORBIDDEN');
 
     const fakeCookie = await app.inject({
       method: 'GET',
@@ -335,7 +429,8 @@ test('import batch routes require authentication; extension bearer writes do not
       url: '/api/v1/import-batches',
       headers: { authorization: `Bearer ${extensionToken}` },
     });
-      assert.equal(bearerList.statusCode, 200);
+    assert.equal(bearerList.statusCode, 403);
+    assert.equal(errorCode(bearerList), 'FORBIDDEN');
   } finally {
     await app.close();
   }
@@ -424,7 +519,7 @@ test('import batch upload rejects multipart, MIME, magic, template, and dimensio
     assert.equal(tooManyRows.statusCode, 400);
     assert.equal(errorDetailCode(tooManyRows), 'template_limit_exceeded');
 
-    const tooManyColumns = await upload(app, admin, uploadPayload(await workbookBuffer({ columnCount: 13 })));
+    const tooManyColumns = await upload(app, admin, uploadPayload(await workbookBuffer({ columnCount: 21 })));
     assert.equal(tooManyColumns.statusCode, 400);
     assert.equal(errorDetailCode(tooManyColumns), 'template_limit_exceeded');
 
