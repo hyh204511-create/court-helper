@@ -71,21 +71,25 @@ export function buildPlatformDiscoveryRecords({ account, platformAccountId = nul
     }
   }
 
-  return [...selected.values()].map(({ row, participants, applicationDate }) => ({
-    account: normalizedAccount,
-    platformAccountId: typeof platformAccountId === "string" && platformAccountId ? platformAccountId : null,
-    plaintiff: participants.plaintiff,
-    defendant: participants.defendant,
-    sourceCaseName: nonEmptyText(row.caseName),
-    sourceCause: nonEmptyText(findField(row.fields, "案由")),
-    sourceApplicationDate: applicationDate,
-    status: "UNKNOWN",
-    filedTime: null,
-    caseNumber: null,
-    rejectTime: null,
-    rejectReason: null,
-    queryTime: null,
-  }));
+  return [...selected.values()].map(({ row, participants, applicationDate }) => {
+    const sourceStatusText = nonEmptyText(row.sourceStatusText);
+    return {
+      account: normalizedAccount,
+      platformAccountId: typeof platformAccountId === "string" && platformAccountId ? platformAccountId : null,
+      plaintiff: participants.plaintiff,
+      defendant: participants.defendant,
+      sourceCaseName: nonEmptyText(row.caseName),
+      sourceCause: nonEmptyText(findField(row.fields, "案由")),
+      sourceApplicationDate: applicationDate,
+      ...(sourceStatusText ? { sourceStatusText } : {}),
+      status: "UNKNOWN",
+      filedTime: null,
+      caseNumber: null,
+      rejectTime: null,
+      rejectReason: null,
+      queryTime: null,
+    };
+  });
 }
 
 /**

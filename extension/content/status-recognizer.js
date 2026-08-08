@@ -48,3 +48,16 @@ export function recognizeStatus({ statusText = "", caseType = "", pageKind } = {
 
   return "UNKNOWN";
 }
+
+/**
+ * 合并页面可见状态与已通过身份签名匹配的 layy 接口状态。
+ * 页面状态缺失/不可识别时采用接口精确映射；两边均可识别但冲突时失败关闭。
+ */
+export function reconcileStatusText({ domStatusText = "", sourceStatusText = "", caseType = "", pageKind } = {}) {
+  const domStatus = recognizeStatus({ statusText: domStatusText, caseType, pageKind });
+  const sourceStatus = recognizeStatus({ statusText: sourceStatusText, caseType, pageKind });
+  if (sourceStatus === "UNKNOWN") return domStatusText;
+  if (domStatus === "UNKNOWN") return sourceStatusText;
+  if (domStatus !== sourceStatus) throw new Error("UNKNOWN_STATUS_CONFLICT");
+  return domStatusText;
+}

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { recognizeStatus } from "../extension/content/status-recognizer.js";
+import { recognizeStatus, reconcileStatusText } from "../extension/content/status-recognizer.js";
 
 // —— 网上立案页（pagesWsla/pc/list，状态字典 11800007）——
 test("网上立案页：待审核 → 审核中", () => {
@@ -61,4 +61,19 @@ test("兜底：pageKind 缺失时按文本规则处理", () => {
   assert.equal(recognizeStatus({ statusText: "已立案", caseType: "民事一审案件" }), "立案成功");
   assert.equal(recognizeStatus({ statusText: "已立案", caseType: "首次执行案件" }), "强执成功");
   assert.equal(recognizeStatus({ statusText: "未知状态" }), "UNKNOWN");
+});
+
+test("强执状态证据：DOM 空文字使用 layy 精确状态，已识别冲突则拒绝", () => {
+  assert.equal(reconcileStatusText({
+    domStatusText: "",
+    sourceStatusText: "审核不通过",
+    caseType: "首次执行案件",
+    pageKind: "wsla",
+  }), "审核不通过");
+  assert.throws(() => reconcileStatusText({
+    domStatusText: "审核通过",
+    sourceStatusText: "审核不通过",
+    caseType: "首次执行案件",
+    pageKind: "wsla",
+  }), (error) => error?.message === "UNKNOWN_STATUS_CONFLICT");
 });

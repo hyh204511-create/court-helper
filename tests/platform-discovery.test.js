@@ -97,6 +97,24 @@ test("平台发现状态采集：同标题历史记录按原被告、案由和�
   );
 });
 
+test("平台发现：保留已与 DOM 身份精确匹配的接口状态", () => {
+  const [record] = buildPlatformDiscoveryRecords({
+    account: "PLATFORM-ACCOUNT-001",
+    kind: "qz",
+    rows: [{
+      caseName: "执行案件标题",
+      sourceStatusText: "审核不通过",
+      fields: [
+        { label: "参与人", value: "申请执行人：平台申请人；被执行人：平台被执行人" },
+        { label: "案由", value: "暂无" },
+        { label: "申请日期", value: "2026-08-08" },
+      ],
+    }],
+  });
+
+  assert.equal(record.sourceStatusText, "审核不通过");
+});
+
 test("平台发现：超过单批上限或无法精确读取参与人时，拒绝写入任何记录", () => {
   const valid = {
     caseName: "案件标题",

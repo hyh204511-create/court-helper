@@ -710,6 +710,56 @@ test("强执平台发现：UNKNOWN 即使没有待补 F/G 也必须转人工", a
   }
 });
 
+test("强执平台发现：DOM 状态为空时使用身份匹配后的 layy 状态继续流程", async () => {
+  await db.resetDb();
+  const nativeSetTimeout = globalThis.setTimeout;
+  const nativeWarn = console.warn;
+  globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, delay >= 250 ? 0 : delay, ...args);
+  console.warn = (...args) => {
+    if (args[0] === "[court-helper] 行截图失败") return;
+    nativeWarn(...args);
+  };
+  const platformAccountId = "00000000-0000-4000-8000-000000000032";
+  const { dom, chrome } = await loadEnforcementList({
+    status: "",
+    runtimeSendMessage: async (message) => {
+      if (message?.type !== "QUERY_API_REQUEST") return undefined;
+      if (message.path.includes("/ajlist")) {
+        return { ok: true, status: 200, data: { data: { total: 0, data: [] } } };
+      }
+      return message.path.includes("/count")
+        ? { ok: true, status: 200, data: { data: 1 } }
+        : { ok: true, status: 200, data: { data: [{
+          id: "SYNTHETIC-QZ-REJECT-ID",
+          zt: "11800007-2",
+          ajmc: "SYNTHETIC ENFORCEMENT TITLE",
+          dsrMc: "申请执行人：SYNTHETIC APPLICANT；被执行人：SYNTHETIC RESPONDENT",
+          laay: "SYNTHETIC ENFORCEMENT CAUSE",
+          tjsj: "2026-08-01",
+        }] } };
+    },
+  });
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_QZ",
+      queryMode: "platform_discovery",
+      platformAccountId,
+    });
+
+    assert.equal(response.ok, false);
+    assert.equal(response.error, "SCREENSHOT_CAPTURE_FAILED");
+    const [record] = await db.query(db.STORE_ENFORCEMENT, { account: "PLATFORM-ACCOUNT", platformAccountId });
+    assert.equal(record.sourceStatusText, "审核通过");
+    assert.equal(record.status, "强执成功");
+  } finally {
+    globalThis.setTimeout = nativeSetTimeout;
+    console.warn = nativeWarn;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
 test("我的案件页强执查询统一要求返回网上立案页", async () => {
   await db.resetDb();
   const platformAccountId = "00000000-0000-4000-8000-000000000024";

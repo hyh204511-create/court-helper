@@ -26,7 +26,7 @@ import {
 import { doAutoLogin } from "./login-auto.js";
 import { captureElement } from "./screen-capturer.js";
 import { persistSyncRecord, runBatch, jitterMs } from "../data/batch-runner.js";
-import { recognizeStatus } from "./status-recognizer.js";
+import { recognizeStatus, reconcileStatusText } from "./status-recognizer.js";
 import { createCourtPanel } from "./court-panel.js";
 import { importXlsx } from "../data/import-xlsx.js";
 import { buildExportWorkbook } from "../data/xlsx-io.js";
@@ -544,8 +544,14 @@ async function queryCase({ uid, kind }) {
   const { data: target, element: targetElement } = selectedEntry;
 
   const biz = extractBusinessFields(target.fields);
+  const statusText = reconcileStatusText({
+    domStatusText: target.statusText,
+    sourceStatusText: rec.sourceStatusText,
+    caseType: target.caseType,
+    pageKind,
+  });
   const raw = {
-    statusText: target.statusText,
+    statusText,
     caseType: target.caseType,
     pageKind,
     // 网上立案列表只提供 A/B/C/E/I/J/K 事实；成功日期和案号必须由
@@ -755,6 +761,7 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
     : (typeof globalThis.fetch === "function" && globalThis.fetch.name !== "fetch" ? globalThis.fetch : null);
   if (kind === "li" && !structuredFetch) throw new Error("BRIDGE_UNAVAILABLE");
   let sourceApiRows = [];
+  let discoveryRows = rows;
   if (structuredFetch) {
     const apiResult = await fetchLayyPages({
       kind,
@@ -781,8 +788,12 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
     }
     const matched = matchApiDomRows(apiResult.rows, domIdentityRows);
     if (apiResult.total !== rows.length || !matched.ok) throw new Error("API_DOM_MISMATCH");
+    discoveryRows = rows.map((row, index) => ({
+      ...row,
+      sourceStatusText: apiResult.rows[index].statusText,
+    }));
   }
-  const records = buildPlatformDiscoveryRecords({ account, platformAccountId, kind, rows });
+  const records = buildPlatformDiscoveryRecords({ account, platformAccountId, kind, rows: discoveryRows });
   await db.replaceAccountRecords(store, account, records, { platformAccountId });
   const initial = await startBatch(kind, { account, platformAccountId });
   if (kind === "qz" && !structuredFetch) {
