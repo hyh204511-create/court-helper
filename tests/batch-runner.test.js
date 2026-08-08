@@ -64,6 +64,24 @@ test("批量执行：强执案件类型 → 强执成功", async () => {
   assert.equal(updated[0].kind, "qz");
 });
 
+test("批量执行：强执审核通过 → 强执成功且不再转人工", async () => {
+  const updated = [];
+  const ops = makePageOps({
+    queryResults: {
+      e2: { statusText: "审核通过", caseType: "首次执行案件", pageKind: "wsla", image: "img-jpeg" },
+    },
+  });
+  const stats = await runBatch({
+    cases: [{ uid: "e2", account: "B", kind: "qz" }],
+    pageOps: ops,
+    onUpdate: (record) => updated.push(record),
+    timing: { delay: sleep0 },
+  });
+  assert.equal(updated[0].status, "强执成功");
+  assert.equal(updated[0].needsHuman, false);
+  assert.deepEqual(stats, { total: 1, success: 1, unknown: 0, needsHuman: 0 });
+});
+
 test("未知状态 → UNKNOWN + needsHuman，不写状态词", async () => {
   const updated = [];
   const ops = makePageOps({ queryResults: { c2: { statusText: "撤回中", caseType: "民事一审案件" } } });

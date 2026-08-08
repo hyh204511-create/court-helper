@@ -12,11 +12,12 @@ test("网上立案页：已立案 + 民事 → 立案成功", () => {
   assert.equal(recognizeStatus({ statusText: "已立案", caseType: "民事一审案件", pageKind: "wsla" }), "立案成功");
 });
 
-test("网上立案页：审核通过仅在审判类精确映射为立案成功", () => {
+test("网上立案页：审核通过按审判/执行类型映射成功状态", () => {
   assert.equal(recognizeStatus({ statusText: "审核通过", caseType: "民事一审案件", pageKind: "wsla" }), "立案成功");
   assert.equal(recognizeStatus({ statusText: "审核通过 ", caseType: "民事一审案件", pageKind: "wsla" }), "立案成功");
   assert.equal(recognizeStatus({ statusText: "已审核通过", caseType: "民事一审案件", pageKind: "wsla" }), "UNKNOWN");
-  assert.equal(recognizeStatus({ statusText: "审核通过", caseType: "首次执行案件", pageKind: "wsla" }), "UNKNOWN");
+  assert.equal(recognizeStatus({ statusText: "审核通过", caseType: "首次执行案件", pageKind: "wsla" }), "强执成功");
+  assert.equal(recognizeStatus({ statusText: "审核通过", caseType: "执行类案件", pageKind: "wsla" }), "强执成功");
 });
 
 test("网上立案页：已立案 + 执行类 → 强执成功", () => {
