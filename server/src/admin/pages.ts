@@ -39,8 +39,9 @@ function layout(page: AdminPage, role: AdminRole, title: string, main: string, c
     <script type="module" src="/admin/assets/admin.js" defer></script>
   </head>
   <body data-page="${page}" data-role="${role}"${caseAttribute}>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
     <div class="shell">
-      <aside class="sidebar">
+      <aside id="admin-sidebar" class="sidebar" aria-label="后台主导航">
         <div class="brand">
           <div class="brand-mark">Court Helper / Registry</div>
           <h1>案件台账</h1>
@@ -49,8 +50,14 @@ function layout(page: AdminPage, role: AdminRole, title: string, main: string, c
         ${navFor(role, page)}
         <div class="sidebar-foot">内部工作台<br>数据按服务端保留策略管理</div>
       </aside>
-      <main class="content">
-        <div class="topbar"><button id="logout-button" class="logout" type="button">退出登录</button></div>
+      <div id="sidebar-scrim" class="sidebar-scrim" hidden></div>
+      <main id="main-content" class="content" tabindex="-1">
+        <div class="topbar">
+          <button id="sidebar-toggle" class="nav-toggle" type="button" aria-label="打开主菜单" aria-controls="admin-sidebar" aria-expanded="false">
+            <span class="nav-toggle-icon" aria-hidden="true"><span></span><span></span><span></span></span>
+          </button>
+          <button id="logout-button" class="logout" type="button">退出登录</button>
+        </div>
         ${main}
       </main>
     </div>
