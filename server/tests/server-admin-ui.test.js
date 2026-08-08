@@ -345,6 +345,7 @@ test('browser control renders full session and creator names, separates LOGIN, a
         progress: 100,
         createdAt: NOW.toISOString(),
       }];
+      let stallCasePagination = false;
       const jsonResponse = (body, status = 200) => ({
         ok: status >= 200 && status < 300,
         status,
@@ -378,12 +379,23 @@ test('browser control renders full session and creator names, separates LOGIN, a
         }
         if (requestUrl.pathname === '/api/v1/cases') {
           assert.equal(requestUrl.searchParams.get('platformAccountId'), ACCOUNT_ID);
+          assert.equal(requestUrl.searchParams.has('keyword'), false);
+          if (requestUrl.searchParams.get('cursor') === '1') {
+            if (stallCasePagination) return jsonResponse({ cases: [], nextCursor: 1 });
+            return jsonResponse({
+              cases: [
+                { id: 'case-page-2', platformAccountId: ACCOUNT_ID, kind: 'qz', plaintiff: 'synthetic plaintiff', status: '审核中', caseNumber: '（测）案号-002', queryTime: NOW.toISOString() },
+              ],
+              nextCursor: null,
+            });
+          }
           return jsonResponse({
-            cases: [
-              { id: 'case-li', platformAccountId: ACCOUNT_ID, kind: 'li', status: '立案成功', caseNumber: '（测）案号-001', queryTime: NOW.toISOString() },
-              { id: 'case-manual', platformAccountId: ACCOUNT_ID, kind: 'li', status: 'UNKNOWN', caseNumber: null, queryTime: NOW.toISOString() },
-            ],
-            nextCursor: null,
+              cases: [
+                { id: 'case-li', platformAccountId: ACCOUNT_ID, kind: 'li', plaintiff: 'synthetic plaintiff', status: '立案成功', caseNumber: '（测）案号-001', queryTime: NOW.toISOString() },
+                { id: 'case-manual', platformAccountId: ACCOUNT_ID, kind: 'li', plaintiff: 'synthetic plaintiff', status: 'UNKNOWN', caseNumber: null, queryTime: NOW.toISOString() },
+                { id: 'case-hidden', platformAccountId: ACCOUNT_ID, kind: 'li', plaintiff: 'other plaintiff', status: '已驳回', caseNumber: 'HIDDEN-001', queryTime: NOW.toISOString() },
+              ],
+            nextCursor: 1,
           });
         }
         if (requestUrl.pathname === '/api/v1/auth/extension-pairings') return jsonResponse({ pairings: [] });
@@ -430,10 +442,17 @@ test('browser control renders full session and creator names, separates LOGIN, a
         [ACCOUNT_ID],
       );
       accountSearch.value = 'synthetic-account';
+      dom.window.document.querySelector('#browser-account-keyword').value = 'synthetic plaintiff';
       dom.window.document.querySelector('#browser-account-search-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
       await waitFor(() => dom.window.document.querySelector('#browser-account-case-rows').textContent.includes('立案成功'));
       assert.match(dom.window.document.querySelector('#browser-account-case-rows').textContent, /待人工/);
+      assert.match(dom.window.document.querySelector('#browser-account-case-rows').textContent, /审核中/);
+      assert.doesNotMatch(dom.window.document.querySelector('#browser-account-case-rows').textContent, /已驳回/);
       assert.ok(requests.some((request) => request.path === `/api/v1/cases?platformAccountId=${ACCOUNT_ID}&limit=100`));
+      stallCasePagination = true;
+      dom.window.document.querySelector('#browser-account-search-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+      await waitFor(() => dom.window.document.querySelector('[data-browser-account-message]').textContent.includes('请求失败'));
+      assert.equal(dom.window.document.querySelector('#browser-account-case-rows').textContent, '');
 
       assert.equal(dom.window.document.querySelector('#browser-command-type'), null);
       assert.match(dom.window.document.querySelector('#browser-command-form').textContent, /一键查询并导出/);

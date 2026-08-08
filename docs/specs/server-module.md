@@ -50,7 +50,7 @@
 | `GET /import-batches` | admin,user（仅 `admin_ui` Cookie 会话） | 所有登录后台用户可分页列出批次元数据；不返回对象键、解析行、账号或密码 |
 | `GET /import-batches/:id/content` | admin,user（仅 `admin_ui` Cookie 会话） | 所有登录后台用户可下载完整上传文件；`Cache-Control: private, no-store`，不返回 object_key |
 | `GET /import-batches/:id/extension-data` | extension（暂不实现） | 后续仅已领取且仍有效的对应查询命令可读取该批次执行数据；不得按任意 batch UUID 读取，不提供后台 HTML/凭据查看能力 |
-| `GET /cases` / `GET /cases/:id` | admin,user | 按 `kind,status,platformAccountId,needsHuman,from,to` 过滤；游标分页，单页最多 200 条 |
+| `GET /cases` / `GET /cases/:id` | admin,user | 按 `kind,status,platformAccountId,keyword,needsHuman,from,to` 过滤；`keyword` 只匹配原告、被告或案号，游标分页，单页最多 200 条 |
 | `GET /cases/:id/screenshots` | admin,user | 只返回截图元数据和内容 API 地址，不返回对象键/桶名 |
 | `POST /cases/:id/screenshots` | admin,user | multipart 上传，需 `eventId,type,capturedAt,sha256,file`；单文件不超过 10 MiB，流式写私有桶 |
 | `GET /screenshots/:id/content?download=0|1` | admin,user | 鉴权后由服务端从私有桶流式返回，设置 `Cache-Control: private, no-store`；私有桶不得公开读 |

@@ -106,7 +106,7 @@ function caseItem(overrides = {}) {
     clientUid: 'client-1',
     platformAccountId: ACCOUNT_ID,
     kind: 'li',
-    plaintiff: 'synthetic plaintiff',
+    plaintiff: 'first synthetic plaintiff',
     defendant: 'synthetic defendant',
     status: '立案成功',
     filedTime: '2026-08-04',
@@ -298,6 +298,38 @@ test('cases list, detail, filters, cursor pagination, and change polling require
     assert.equal(filtered.statusCode, 200);
     assert.deepEqual(filtered.json().cases.map((item) => item.id), [secondId]);
 
+    const plaintiffKeyword = await app.inject({
+      method: 'GET',
+      url: `/cases?platformAccountId=${ACCOUNT_ID}&keyword=${encodeURIComponent('first synthetic plaintiff')}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(plaintiffKeyword.statusCode, 200);
+    assert.deepEqual(plaintiffKeyword.json().cases.map((item) => item.clientUid), ['client-1']);
+
+    const defendantKeyword = await app.inject({
+      method: 'GET',
+      url: `/cases?platformAccountId=${ACCOUNT_ID}&keyword=${encodeURIComponent('SECOND SYNTHETIC DEFENDANT')}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(defendantKeyword.statusCode, 200);
+    assert.deepEqual(defendantKeyword.json().cases.map((item) => item.clientUid), ['client-2']);
+
+    const caseNumberKeyword = await app.inject({
+      method: 'GET',
+      url: `/cases?platformAccountId=${ACCOUNT_ID}&keyword=${encodeURIComponent('SYNTHETIC-001')}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(caseNumberKeyword.statusCode, 200);
+    assert.deepEqual(caseNumberKeyword.json().cases.map((item) => item.clientUid), ['client-1']);
+
+    const blankKeyword = await app.inject({
+      method: 'GET',
+      url: '/cases?keyword=%20',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(blankKeyword.statusCode, 400);
+    assert.equal(blankKeyword.json().error.code, 'VALIDATION_ERROR');
+
     const tooLarge = await app.inject({
       method: 'GET',
       url: '/cases?limit=201',
@@ -381,6 +413,22 @@ test('postgres case repository persists revisions and supports change queries in
     assert.equal(updated.defendant, 'updated synthetic defendant');
     assert.equal((await repository.findByClientUid('client-1')).revision, 2);
     assert.deepEqual((await repository.listChanges(1, 200)).map((item) => item.revision), [2]);
+    assert.deepEqual(
+      (await repository.list({ platformAccountId: ACCOUNT_ID, keyword: 'UPDATED SYNTHETIC DEFENDANT' })).map((item) => item.clientUid),
+      ['client-1'],
+    );
+    assert.deepEqual(
+      await repository.list({ platformAccountId: ACCOUNT_ID, keyword: '%' }),
+      [],
+    );
+    assert.deepEqual(
+      await repository.list({ platformAccountId: ACCOUNT_ID, keyword: '_' }),
+      [],
+    );
+    assert.deepEqual(
+      await repository.list({ platformAccountId: ACCOUNT_ID, keyword: '\\' }),
+      [],
+    );
 
     await repository.create(caseItem({
       id: '00000000-0000-0000-0000-000000000101',
