@@ -489,13 +489,40 @@ test('browser control renders full session and creator names, separates LOGIN, a
 
       await waitFor(() => dom.window.document.querySelector('#browser-command-batch').options.length === 3);
       const taskAccount = dom.window.document.querySelector('#browser-command-account');
+      const taskAccountToggle = dom.window.document.querySelector('#browser-command-account-toggle');
+      const taskAccountMenu = dom.window.document.querySelector('#browser-command-account-menu');
       const taskBatch = dom.window.document.querySelector('#browser-command-batch');
+      assert.equal(taskAccount.tagName, 'INPUT');
+      assert.equal(taskAccount.type, 'search');
+      assert.equal(taskAccount.getAttribute('role'), 'combobox');
+      assert.equal(taskAccount.getAttribute('list'), null);
+      assert.deepEqual(
+        [...taskAccountMenu.querySelectorAll('[role="option"]')].map((option) => option.textContent),
+        ['synthetic-account', 'second-account'],
+      );
+      assert.equal(taskAccountMenu.hidden, true);
+      taskAccountToggle.click();
+      assert.equal(taskAccountMenu.hidden, false);
+      taskAccount.value = 'second';
+      taskAccount.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+      assert.equal(taskAccountMenu.querySelector('[data-platform-account-label="synthetic-account"]').hidden, true);
+      const secondTaskAccountOption = taskAccountMenu.querySelector('[data-platform-account-label="second-account"]');
+      assert.equal(secondTaskAccountOption.hidden, false);
+      secondTaskAccountOption.click();
+      assert.equal(taskAccount.value, 'second-account');
+      assert.equal(taskAccountMenu.hidden, true);
       assert.match(taskBatch.options[1].textContent, /平台发现/);
       assert.match(dom.window.document.querySelector('#import-batch-rows').textContent, /0（平台发现）/);
       assert.equal(dom.window.document.querySelectorAll('[data-action="delete-import-batch"]').length, 1);
       const browserCommandPosts = () => requests.filter((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands');
-      taskAccount.value = ACCOUNT_ID;
       taskBatch.value = emptyLiBatch.id;
+      taskAccount.value = 'account';
+      const ambiguousRequestsBefore = browserCommandPosts().length;
+      dom.window.document.querySelector('#browser-command-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(browserCommandPosts().length, ambiguousRequestsBefore);
+      assert.match(dom.window.document.querySelector('[data-browser-command-message]').textContent, /请从启用平台账号标签提示中选择/);
+      taskAccount.value = 'synthetic';
       const queryRequestsBefore = browserCommandPosts().length;
       dom.window.document.querySelector('#browser-command-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
       await new Promise((resolve) => setTimeout(resolve, 0));
