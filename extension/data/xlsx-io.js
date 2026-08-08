@@ -1,10 +1,9 @@
 // xlsx-io.js — Excel 导出核心（ExcelJS）
 // 依据 docs/specs/excel-module.md：
-// - 模板 12 列表头常量（唯一权威）；
-// - 双表块动态布局：立案表头第 1 行，强执表头 = 立案末行 + 5；
+// - 新版 20 列合并表头（新导出唯一权威）；
 // - 样式复刻：表头加粗 11 + FF92D050 填充 + 行高 27；数据行高 28；列宽表；日期 mm-dd-yy；
 // - UNKNOWN 状态：单元格留空 + 浅红填充 + 深红字体（待人工提示）；
-// - 图片 OneCellAnchor 锚定 H/K 列单元格。
+// - 图片 OneCellAnchor 锚定 H/K/P/S 列单元格。
 import ExcelJS from "exceljs";
 
 // 模板 12 列表头（唯一权威，勿改）
@@ -15,6 +14,11 @@ export const HEADER_LI = [
 export const HEADER_QZ = [
   "原告", "被告", "账号", "密码", "强执状态", "强执成功时间", "强执案号",
   "成功图片", "驳回时间", "驳回原因", "驳回图片", "查询时间",
+];
+export const HEADER_COMBINED = [
+  ...HEADER_LI.slice(0, 11), "立案查询时间",
+  "强执状态", "强执成功时间", "强执案号", "成功图片",
+  "驳回时间", "驳回原因", "驳回图片", "强执查询时间",
 ];
 
 export const STYLE = {
@@ -37,11 +41,11 @@ export const STYLE = {
     alignment: { vertical: "middle" },
     wrapAlignment: { vertical: "middle", wrapText: true },
     height: 28,
-    minRows: 3,
   },
   colWidths: {
-    A: 15, B: 14, C: 20.37, D: 15.5, E: 12, F: 13.25,
-    G: 24.13, H: 12.87, I: 12, J: 39.63, K: 18, L: 10.75,
+    A: 15, B: 14, C: 20.37, D: 15.5, F: 13.25,
+    G: 24.13, H: 12.87, I: 12.87, J: 39.63, K: 18, L: 10.75,
+    N: 12.13, T: 12.78,
   },
   dateFormat: "mm-dd-yy",
   unknown: {
@@ -49,8 +53,10 @@ export const STYLE = {
     font: { color: { argb: "FF9C0006" } },
   },
   image: {
-    success: { col: 7, width: 60 }, // H 列（0 基）
-    reject: { col: 10, width: 90 }, // K 列（0 基）
+    liSuccess: { col: 7, width: 60 },
+    liReject: { col: 10, width: 90 },
+    qzSuccess: { col: 15, width: 60 },
+    qzReject: { col: 18, width: 90 },
     height: 34,
   },
 };
@@ -68,12 +74,12 @@ function writeHeader(ws, row, headers) {
 }
 
 function formatDataRow(ws, row) {
-  for (let col = 1; col <= HEADER_LI.length; col += 1) {
+  for (let col = 1; col <= HEADER_COMBINED.length; col += 1) {
     const cell = ws.getCell(row, col);
     cell.font = STYLE.data.font;
     cell.border = STYLE.data.border;
-    cell.alignment = col === 10 ? STYLE.data.wrapAlignment : STYLE.data.alignment;
-    if ([6, 9, 12].includes(col)) cell.numFmt = STYLE.dateFormat;
+    cell.alignment = [10, 18].includes(col) ? STYLE.data.wrapAlignment : STYLE.data.alignment;
+    if ([6, 9, 12, 14, 17, 20].includes(col)) cell.numFmt = STYLE.dateFormat;
   }
   ws.getRow(row).height = STYLE.data.height;
 }
@@ -85,15 +91,9 @@ function dateToCell(v) {
   return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])) : null;
 }
 
-function writeDataRow(ws, row, rec, kind, imageJobs) {
-  const dateCols = kind === "li" ? { filed: 6, reject: 9 } : { filed: 6, reject: 9 };
-  formatDataRow(ws, row);
-  ws.getCell(row, 1).value = rec.plaintiff ?? "";
-  ws.getCell(row, 2).value = rec.defendant ?? "";
-  ws.getCell(row, 3).value = rec.account ?? "";
-  ws.getCell(row, 4).value = rec.password ?? "";
-
-  const statusCell = ws.getCell(row, 5);
+function writeResult(ws, row, rec, statusColumn, imageJobs, imageStyle) {
+  if (!rec) return;
+  const statusCell = ws.getCell(row, statusColumn);
   if (rec.status === "UNKNOWN") {
     statusCell.value = "";
     statusCell.fill = STYLE.unknown.fill;
@@ -102,31 +102,60 @@ function writeDataRow(ws, row, rec, kind, imageJobs) {
     statusCell.value = rec.status ?? "";
   }
 
-  const filed = dateToCell(rec.filedTime);
-  ws.getCell(row, dateCols.filed).value = filed;
-  ws.getCell(row, dateCols.filed).numFmt = STYLE.dateFormat;
-
-  ws.getCell(row, 7).value = rec.caseNumber ?? "";
-
-  const reject = dateToCell(rec.rejectTime);
-  ws.getCell(row, dateCols.reject).value = reject;
-  ws.getCell(row, dateCols.reject).numFmt = STYLE.dateFormat;
-  ws.getCell(row, 10).value = rec.rejectReason ?? "";
-
-  const query = dateToCell(rec.queryTime);
-  ws.getCell(row, 12).value = query;
-  ws.getCell(row, 12).numFmt = STYLE.dateFormat;
+  ws.getCell(row, statusColumn + 1).value = dateToCell(rec.filedTime);
+  ws.getCell(row, statusColumn + 2).value = rec.caseNumber ?? "";
+  ws.getCell(row, statusColumn + 4).value = dateToCell(rec.rejectTime);
+  ws.getCell(row, statusColumn + 5).value = rec.rejectReason ?? "";
+  ws.getCell(row, statusColumn + 7).value = dateToCell(rec.queryTime);
 
   if (rec.successImage) {
-    imageJobs.push({ blob: rec.successImage, ...STYLE.image.success, row: row - 1 });
+    imageJobs.push({ blob: rec.successImage, ...imageStyle.success, row: row - 1 });
   }
   if (rec.rejectImage) {
-    imageJobs.push({ blob: rec.rejectImage, ...STYLE.image.reject, row: row - 1 });
+    imageJobs.push({ blob: rec.rejectImage, ...imageStyle.reject, row: row - 1 });
   }
 }
 
+function recordKey(rec) {
+  return [rec?.account, rec?.plaintiff, rec?.defendant].map((value) => String(value ?? "").trim()).join("\u0000");
+}
+
+function combinedRows(cases, enforcementCases) {
+  const pendingQz = new Map();
+  for (const rec of enforcementCases) {
+    const key = recordKey(rec);
+    const values = pendingQz.get(key) ?? [];
+    values.push(rec);
+    pendingQz.set(key, values);
+  }
+  const rows = cases.map((li) => {
+    const matches = pendingQz.get(recordKey(li));
+    const qz = matches?.shift() ?? null;
+    return { li, qz };
+  });
+  for (const matches of pendingQz.values()) {
+    for (const qz of matches) rows.push({ li: null, qz });
+  }
+  return rows;
+}
+
+function writeCombinedRow(ws, row, pair, imageJobs) {
+  formatDataRow(ws, row);
+  const identity = pair.li ?? pair.qz ?? {};
+  ws.getCell(row, 1).value = identity.plaintiff ?? "";
+  ws.getCell(row, 2).value = identity.defendant ?? "";
+  ws.getCell(row, 3).value = identity.account ?? "";
+  ws.getCell(row, 4).value = identity.password ?? "";
+  writeResult(ws, row, pair.li, 5, imageJobs, {
+    success: STYLE.image.liSuccess, reject: STYLE.image.liReject,
+  });
+  writeResult(ws, row, pair.qz, 13, imageJobs, {
+    success: STYLE.image.qzSuccess, reject: STYLE.image.qzReject,
+  });
+}
+
 /**
- * 构建完整导出工作簿（双表块 + 样式复刻 + 图片嵌入）。
+ * 构建完整导出工作簿（20 列合并布局 + 样式复刻 + 图片嵌入）。
  * @param {{cases?: object[], enforcementCases?: object[]}} [data] db 记录（含 Blob 图片）
  * @returns {Promise<ExcelJS.Workbook>}
  */
@@ -137,28 +166,15 @@ export async function buildExportWorkbook({ cases = [], enforcementCases = [] } 
     ws.getColumn(letter).width = width;
   }
 
-  writeHeader(ws, 1, HEADER_LI);
+  writeHeader(ws, 1, HEADER_COMBINED);
   const imageJobs = [];
   let row = 2;
-  for (const c of cases) {
-    writeDataRow(ws, row, c, "li", imageJobs);
+  for (const pair of combinedRows(cases, enforcementCases)) {
+    writeCombinedRow(ws, row, pair, imageJobs);
     row += 1;
   }
-  const liDataEnd = row - 1;
-  const reservedLiEnd = Math.max(liDataEnd, 1 + STYLE.data.minRows);
-  for (let reservedRow = row; reservedRow <= reservedLiEnd; reservedRow += 1) {
-    formatDataRow(ws, reservedRow);
-  }
-  // 强执表头 = max(立案末数据行, 模板预留第 4 行) + 5，最低为第 9 行。
-  const qzHeader = reservedLiEnd + 5;
-  writeHeader(ws, qzHeader, HEADER_QZ);
-  let qzRow = qzHeader + 1;
-  for (const c of enforcementCases) {
-    writeDataRow(ws, qzRow, c, "qz", imageJobs);
-    qzRow += 1;
-  }
-  const reservedQzEnd = Math.max(qzRow - 1, qzHeader + STYLE.data.minRows);
-  for (let reservedRow = qzRow; reservedRow <= reservedQzEnd; reservedRow += 1) {
+  const reservedEnd = Math.max(row - 1, 11);
+  for (let reservedRow = row; reservedRow <= reservedEnd; reservedRow += 1) {
     formatDataRow(ws, reservedRow);
   }
 

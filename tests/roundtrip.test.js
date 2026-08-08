@@ -29,7 +29,7 @@ beforeEach(async () => {
   await resetDb();
 });
 
-test("往返：导入 → 模拟查询写库 → 导出 → openpyxl 双读对比", async () => {
+test("往返：旧模板导入 → 模拟查询写库 → 新 20 列报表导出 → openpyxl 双读对比", async () => {
   // 1) 导入脱敏 fixture（3 立案 + 3 强执，H3 为 DISPIMG）
   const parsed = await importXlsx(readFileSync(FIXTURE));
   assert.equal(parsed.liRows.length, 3);
@@ -58,7 +58,7 @@ test("往返：导入 → 模拟查询写库 → 导出 → openpyxl 双读对�
     // 4a) openpyxl 读回：结构 + 值 + 图片锚点
     const res = spawnSync("python", [
       "scripts/verify-export.py", file,
-      "--cells", "A1,E1,E2,E3,F3,G3,E4,I4,K4,E9,E10,E11,F11,G11,L3",
+      "--cells", "A1,E1,L1,M1,T1,E2,E3,F3,G3,E4,I4,K4,M5,M6,N6,O6,L3",
     ], { encoding: "utf8", cwd: ROOT });
     assert.equal(res.status, 0, `verify-export.py 失败: ${res.stderr}`);
     const info = JSON.parse(res.stdout);
@@ -71,18 +71,20 @@ test("往返：导入 → 模拟查询写库 → 导出 → openpyxl 双读对�
     assert.equal(info.cells.E4, "已驳回");            // 账号 003
     assert.equal(info.cells.I4, "2026-07-28");
     assert.equal(info.cells.K4, "");                 // 图片列本身无值
-    assert.equal(info.cells.E9, "强执状态");          // 强执表头 = 立案末行(4)+5 = 9
-    assert.equal(info.cells.E10, "审核中");
-    assert.equal(info.cells.E11, "强执成功");
-    assert.equal(info.cells.F11, "2026-06-03");
-    assert.equal(info.cells.G11, "（2026）京0000执00001号");
+    assert.equal(info.cells.L1, "立案查询时间");
+    assert.equal(info.cells.M1, "强执状态");
+    assert.equal(info.cells.T1, "强执查询时间");
+    assert.equal(info.cells.M5, "审核中");
+    assert.equal(info.cells.M6, "强执成功");
+    assert.equal(info.cells.N6, "2026-06-03");
+    assert.equal(info.cells.O6, "（2026）京0000执00001号");
     assert.equal(info.cells.L3, "2026-08-03");
-    // 3 张图：H3(立案成功) K4(驳回) H11(强执成功)
+    // 3 张图：H3(立案成功) K4(驳回) P6(强执成功)
     assert.equal(info.image_count, 3);
     assert.deepEqual(info.anchors, [
       { col: 7, row: 2 },
       { col: 10, row: 3 },
-      { col: 7, row: 10 },
+      { col: 15, row: 5 },
     ]);
 
     // 4b) ExcelJS 读回（双读之二）：日期值一致
@@ -95,8 +97,8 @@ test("往返：导入 → 模拟查询写库 → 导出 → openpyxl 双读对�
     assert.equal(fmt(ws2.getCell("F3").value), "2026-07-22");
     assert.equal(fmt(ws2.getCell("I4").value), "2026-07-28");
     assert.equal(fmt(ws2.getCell("L3").value), "2026-08-03");
-    assert.equal(ws2.getCell("E11").value, "强执成功");
-    assert.equal(ws2.getCell("G11").value, "（2026）京0000执00001号");
+    assert.equal(ws2.getCell("M6").value, "强执成功");
+    assert.equal(ws2.getCell("O6").value, "（2026）京0000执00001号");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

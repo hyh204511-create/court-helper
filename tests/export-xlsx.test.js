@@ -47,7 +47,7 @@ function verify(file, cells) {
   return JSON.parse(res.stdout);
 }
 
-test("导出双表块：布局/样式/日期格式/图片锚点", async () => {
+test("导出 20 列合并表：布局/样式/日期格式/图片锚点", async () => {
   const wb = await buildExportWorkbook({
     cases: [
       rec({ status: "立案成功", filedTime: "2026-07-22", caseNumber: "（2026）京0000民初00001号", successImage: IMG(1) }),
@@ -61,30 +61,32 @@ test("导出双表块：布局/样式/日期格式/图片锚点", async () => {
   try {
     const info = verify(file, [
       "A1", "E1", "G1", "E2", "F2", "G2", "I3", "J3",
-      "E9", "E10", "F10", "G10", "L2",
+      "L1", "M1", "T1", "M2", "N2", "O2", "L2",
     ]);
-    // 双表块布局：立案不足 3 条时仍保留预留行，强执表头最低为第 9 行。
+    // 单表头布局：同一账号与当事人的立案、强执结果合并到同一行。
     assert.deepEqual(info.sheets, ["Sheet1"]);
     assert.equal(info.cells.A1, "原告");
     assert.equal(info.cells.E1, "立案状态");
     assert.equal(info.cells.G1, "案号");
-    assert.equal(info.cells.E9, "强执状态");
+    assert.equal(info.cells.L1, "立案查询时间");
+    assert.equal(info.cells.M1, "强执状态");
+    assert.equal(info.cells.T1, "强执查询时间");
     // 数据值
     assert.equal(info.cells.E2, "立案成功");
     assert.equal(info.cells.F2, "2026-07-22");
     assert.equal(info.cells.G2, "（2026）京0000民初00001号");
     assert.equal(info.cells.I3, "2026-07-28");
     assert.equal(info.cells.J3, "请补充材料。");
-    assert.equal(info.cells.E10, "强执成功");
-    assert.equal(info.cells.F10, "2026-06-03");
-    assert.equal(info.cells.G10, "（2026）京0000执00001号");
+    assert.equal(info.cells.M2, "强执成功");
+    assert.equal(info.cells.N2, "2026-06-03");
+    assert.equal(info.cells.O2, "（2026）京0000执00001号");
     assert.equal(info.cells.L2, "2026-08-03");
-    // 图片锚点：立案成功 H2、驳回 K3、强执成功 H10（0 基）
+    // 图片锚点：立案成功 H2、驳回 K3、强执成功 P2（0 基）
     assert.equal(info.image_count, 3);
     assert.deepEqual(info.anchors, [
       { col: 7, row: 1 },
+      { col: 15, row: 1 },
       { col: 10, row: 2 },
-      { col: 7, row: 9 },
     ]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -124,7 +126,7 @@ test("样式复刻：表头加粗/填充/行高、数据行高（ExcelJS 读回�
   assert.equal(ws.getCell("F2").numFmt, "mm-dd-yy");
 });
 
-test("模板保真：保留三行空白表格、细边框、宋体、垂直居中和驳回原因换行", async () => {
+test("模板保真：保留十行空白表格、细边框、宋体、垂直居中和驳回原因换行", async () => {
   const wb = await buildExportWorkbook({ cases: [rec()] });
   const { dir, file } = await writeToTemp(wb);
   try {
@@ -132,16 +134,16 @@ test("模板保真：保留三行空白表格、细边框、宋体、垂直居�
     await reloaded.xlsx.readFile(file);
     const ws = reloaded.getWorksheet("Sheet1");
 
-    // 立案不足三行时仍保留第 2–4 行；强执表头最低固定在第 9 行，随后也保留三行。
-    assert.equal(ws.getCell("E9").value, "强执状态");
-    assert.equal(ws.getRow(4).height, 28);
-    assert.equal(ws.getRow(10).height, 28);
-    assert.equal(ws.getCell("F4").numFmt, "mm-dd-yy");
-    assert.equal(ws.getCell("I4").numFmt, "mm-dd-yy");
-    assert.equal(ws.getCell("L4").numFmt, "mm-dd-yy");
-    assert.equal(ws.getCell("F12").numFmt, "mm-dd-yy");
+    assert.equal(ws.getCell("M1").value, "强执状态");
+    assert.equal(ws.getRow(11).height, 28);
+    assert.equal(ws.getCell("F11").numFmt, "mm-dd-yy");
+    assert.equal(ws.getCell("I11").numFmt, "mm-dd-yy");
+    assert.equal(ws.getCell("L11").numFmt, "mm-dd-yy");
+    assert.equal(ws.getCell("N11").numFmt, "mm-dd-yy");
+    assert.equal(ws.getCell("Q11").numFmt, "mm-dd-yy");
+    assert.equal(ws.getCell("T11").numFmt, "mm-dd-yy");
 
-    for (const cell of ["A1", "A4", "J10"]) {
+    for (const cell of ["A1", "A11", "R10"]) {
       assert.equal(ws.getCell(cell).font.name, "宋体");
       assert.equal(ws.getCell(cell).alignment.vertical, "middle");
       assert.equal(ws.getCell(cell).border.left.style, "thin");
@@ -149,7 +151,7 @@ test("模板保真：保留三行空白表格、细边框、宋体、垂直居�
       assert.equal(ws.getCell(cell).border.top.style, "thin");
       assert.equal(ws.getCell(cell).border.bottom.style, "thin");
     }
-    assert.equal(ws.getCell("J10").alignment.wrapText, true);
+    assert.equal(ws.getCell("R10").alignment.wrapText, true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
