@@ -440,6 +440,7 @@ test('browser control renders full session and creator names, separates LOGIN, a
       dom.window.confirm = () => true;
       dom.window.document.querySelector('#browser-command-clear').click();
       await waitFor(() => requests.some((request) => request.method === 'DELETE' && request.path === '/api/v1/browser-commands'));
+      await waitFor(() => dom.window.document.querySelector('[data-browser-command-status]').textContent.includes('已清理 1 条'));
       assert.match(dom.window.document.querySelector('[data-browser-command-status]').textContent, /已清理 1 条/);
 
       taskType.value = 'QUERY_QZ';

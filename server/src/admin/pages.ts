@@ -249,9 +249,20 @@ function browserControlPage(role: AdminRole): string {
       <div class="panel-head"><div><h3 id="import-batch-title">导入查询批次</h3><p>上传 xlsx 后选择批次绑定查询任务。服务端仅返回批次摘要。</p></div></div>
       <div class="panel-body"><form id="import-batch-form" enctype="multipart/form-data"><div class="field"><label for="import-batch-file">Excel 模板</label><input id="import-batch-file" name="file" type="file" accept=".xlsx" required></div><div class="form-actions"><button class="primary" type="submit">上传批次</button></div></form><p class="message" data-import-batch-message aria-live="polite"></p><div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>立案行</th><th>强执行</th><th>跳过</th><th>创建时间</th></tr></thead><tbody id="import-batch-rows"></tbody></table></div></div>
     </section>
+    <section class="panel" aria-labelledby="browser-account-search-title">
+      <div class="panel-head"><div><h3 id="browser-account-search-title">账号查询与案件状态</h3><p>按平台账号标签搜索定位；案件状态来自台账精确结果，不从任务成功状态推断。</p></div></div>
+      <div class="panel-body">
+        <form id="browser-account-search-form" class="filters">
+          <div class="field"><label for="browser-account-search">账号标签</label><input id="browser-account-search" type="search" list="browser-account-labels" autocomplete="off" placeholder="输入账号标签" required><datalist id="browser-account-labels"></datalist></div>
+          <div class="filter-actions"><button class="primary" type="submit">查询账号</button></div>
+        </form>
+        <p class="message muted" data-browser-account-message aria-live="polite">请选择账号查询</p>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>平台账号</th><th>案件类型</th><th>案件状态</th><th>案号</th><th>查询时间</th></tr></thead><tbody id="browser-account-case-rows"></tbody></table></div>
+      </div>
+    </section>
     <section class="panel" aria-labelledby="browser-command-list-title">
-      <div class="panel-head"><div><h3 id="browser-command-list-title">任务列表</h3><p>状态、进度与错误码来自扩展回写；未知状态显示为待人工处理。</p></div></div>
-      <div class="panel-body"><div class="case-status"><span data-browser-command-status class="message muted" aria-live="polite">准备读取</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>类型</th><th>状态</th><th>进度</th><th>结果</th><th>创建者</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="browser-command-rows"></tbody></table></div></div>
+      <div class="panel-head"><div><h3 id="browser-command-list-title">任务列表</h3><p>状态、进度与错误码来自扩展回写；账号搜索同时过滤这里的任务。</p></div><button id="browser-command-clear" class="small-button danger" type="button">清空已结束任务</button></div>
+      <div class="panel-body"><div class="case-status"><span data-browser-command-status class="message muted" aria-live="polite">准备读取</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>平台账号</th><th>类型</th><th>状态</th><th>进度</th><th>结果</th><th>创建者</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="browser-command-rows"></tbody></table></div></div>
     </section>`);
 }
 

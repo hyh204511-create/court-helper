@@ -806,6 +806,7 @@ async function loadReportExports(append = false) {
 let browserCommandPollTimer = null;
 let browserControlVisible = true;
 let browserControlUserNames = null;
+let browserControlAccounts = [];
 
 function browserCommandStatusLabel(status) {
   const labels = { pending: '等待中', executing: '执行中', succeeded: '成功', failed: '失败', expired: '已过期', manual_required: '待人工', cancelled: '已取消' };
@@ -855,13 +856,64 @@ async function loadBrowserControlAccounts() {
   try {
     const result = await api('/platform-accounts');
     const accounts = (result.platformAccounts || []).filter((account) => account.enabled !== false);
+    browserControlAccounts = accounts;
     fillPlatformAccountSelect(taskSelect, accounts, true);
     fillPlatformAccountSelect(loginSelect, accounts, false);
+    const labels = $('#browser-account-labels');
+    if (labels) {
+      clear(labels);
+      accounts.forEach((account) => { const option = document.createElement('option'); option.value = account.label || '未命名'; labels.appendChild(option); });
+    }
     if (loginSelect && !loginSelect.value && accounts[0]) loginSelect.value = accounts[0].id;
     clearPlatformCredential();
   } catch (error) {
     setMessage($('[data-browser-command-message]'), errorMessage(error));
     setMessage($('[data-platform-login-message]'), errorMessage(error));
+  }
+}
+
+function browserAccountLabel(platformAccountId) {
+  return browserControlAccounts.find((account) => account.id === platformAccountId)?.label || '未指定';
+}
+
+function selectedBrowserAccount(query) {
+  const normalized = String(query || '').trim().toLocaleLowerCase('zh-CN');
+  if (!normalized) return null;
+  const exact = browserControlAccounts.find((account) => String(account.label || '').trim().toLocaleLowerCase('zh-CN') === normalized);
+  if (exact) return exact;
+  const matches = browserControlAccounts.filter((account) => String(account.label || '').toLocaleLowerCase('zh-CN').includes(normalized));
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function filterBrowserCommandRows() {
+  const query = String($('#browser-account-search')?.value || '').trim().toLocaleLowerCase('zh-CN');
+  document.querySelectorAll('#browser-command-rows tr[data-account-label]').forEach((row) => {
+    row.hidden = Boolean(query) && !String(row.dataset.accountLabel || '').toLocaleLowerCase('zh-CN').includes(query);
+  });
+}
+
+async function loadBrowserAccountCases(account) {
+  const target = $('#browser-account-case-rows');
+  const message = $('[data-browser-account-message]');
+  if (!target) return;
+  clear(target);
+  try {
+    const result = await api('/cases?platformAccountId=' + encodeURIComponent(account.id) + '&limit=100');
+    (result.cases || []).forEach((caseRecord) => {
+      const row = element('tr');
+      row.append(
+        element('td', account.label || '未命名'),
+        element('td', caseRecord.kind === 'qz' ? '强执' : '立案'),
+        element('td', caseRecord.status === 'UNKNOWN' ? '待人工' : caseRecord.status, 'status-pill'),
+        element('td', caseRecord.caseNumber || '—'),
+        element('td', dateLabel(caseRecord.queryTime)),
+      );
+      target.appendChild(row);
+    });
+    if (!target.firstChild) { const row = element('tr'); const cell = element('td', '该账号暂无案件记录'); cell.colSpan = 5; row.appendChild(cell); target.appendChild(row); }
+    setMessage(message, '已定位账号：' + (account.label || '未命名') + '，共 ' + (result.cases?.length || 0) + ' 条案件', 'success');
+  } catch (error) {
+    setMessage(message, errorMessage(error));
   }
 }
 
@@ -917,16 +969,19 @@ async function loadBrowserCommands() {
     ]);
     clear(target);
     (result.commands || []).forEach((command) => {
-      const row = element('tr'); row.dataset.id = command.id; row.dataset.type = command.type; row.dataset.account = command.platformAccountId || ''; row.dataset.batch = command.clientBatchId || '';
+      const accountLabel = browserAccountLabel(command.platformAccountId);
+      const row = element('tr'); row.dataset.id = command.id; row.dataset.type = command.type; row.dataset.account = command.platformAccountId || ''; row.dataset.accountLabel = accountLabel; row.dataset.batch = command.clientBatchId || '';
+      const accountCell = element('td', accountLabel); accountCell.dataset.commandAccount = 'true';
       const creator = element('td', userNames.get(command.requestedBy) || '未知用户');
       creator.dataset.commandCreator = 'true';
-      row.append(element('td', command.type), element('td', browserCommandStatusLabel(command.status), 'status-pill'), element('td', browserCommandProgressLabel(command.progress)), element('td', [command.resultCode, command.resultSummary].filter(Boolean).join(' / ') || '—'), creator, element('td', dateLabel(command.createdAt)));
+      row.append(accountCell, element('td', command.type), element('td', browserCommandStatusLabel(command.status), 'status-pill'), element('td', browserCommandProgressLabel(command.progress)), element('td', [command.resultCode, command.resultSummary].filter(Boolean).join(' / ') || '—'), creator, element('td', dateLabel(command.createdAt)));
       const actions = element('td', null, 'row-actions');
       if (['pending', 'executing'].includes(command.status) && command.requestedBy === currentSessionUser?.id) actions.append(actionButton('取消', 'cancel-browser-command', command.id, 'small-button danger'));
       if (['failed', 'manual_required', 'expired'].includes(command.status)) actions.append(actionButton('重试', 'retry-browser-command', command.id));
       row.appendChild(actions); target.appendChild(row);
     });
-    if (!target.firstChild) { const row = element('tr'); const cell = element('td', '暂无浏览器任务'); cell.colSpan = 7; row.appendChild(cell); target.appendChild(row); }
+    if (!target.firstChild) { const row = element('tr'); const cell = element('td', '暂无浏览器任务'); cell.colSpan = 8; row.appendChild(cell); target.appendChild(row); }
+    filterBrowserCommandRows();
     setMessage(message, '已更新 ' + (result.commands?.length || 0) + ' 条任务', 'success');
   } catch (error) { setMessage(message, errorMessage(error)); }
 }
@@ -1000,6 +1055,8 @@ function initBrowserControl() {
   const type = $('#browser-command-type');
   const account = $('#browser-command-account');
   const batch = $('#browser-command-batch');
+  const accountSearchForm = $('#browser-account-search-form');
+  const accountSearch = $('#browser-account-search');
   let credentialRequestGeneration = 0;
   const invalidatePlatformCredential = () => {
     credentialRequestGeneration += 1;
@@ -1061,6 +1118,27 @@ function initBrowserControl() {
     catch (error) { setMessage($('[data-import-batch-message]'), errorMessage(error)); } finally { setFormBusy(importForm, false); }
   });
   $('#browser-command-refresh')?.addEventListener('click', () => { void loadBrowserCommands(); void loadImportBatches(); });
+  accountSearch?.addEventListener('input', filterBrowserCommandRows);
+  accountSearchForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const selected = selectedBrowserAccount(accountSearch?.value);
+    if (!selected) { setMessage($('[data-browser-account-message]'), '未找到唯一账号，请从账号标签提示中选择'); return; }
+    accountSearch.value = selected.label || '';
+    filterBrowserCommandRows();
+    void loadBrowserAccountCases(selected);
+  });
+  $('#browser-command-clear')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    if (!window.confirm('确认清空有权查看的全部已结束任务记录？活动任务和案件台账不会删除。')) return;
+    try {
+      button.disabled = true;
+      const result = await api('/browser-commands', { method: 'DELETE' });
+      await loadBrowserCommands();
+      setMessage($('[data-browser-command-status]'), '已清理 ' + Number(result.deletedCount || 0) + ' 条已结束任务', 'success');
+    } catch (error) {
+      setMessage($('[data-browser-command-status]'), errorMessage(error));
+    } finally { button.disabled = false; }
+  });
   $('#extension-pairing-list')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-action="approve-extension-pairing"]');
     if (!button) return;
@@ -1103,7 +1181,7 @@ function initBrowserControl() {
     }
     catch (error) { setMessage($('[data-browser-command-status]'), errorMessage(error)); } finally { button.disabled = false; }
   });
-  void loadBrowserControlAccounts(); void loadImportBatches(); void loadExtensionAuthorizations(); startBrowserCommandPolling();
+  void loadBrowserControlAccounts().finally(startBrowserCommandPolling); void loadImportBatches(); void loadExtensionAuthorizations();
 }
 
 function initReportExports() {
