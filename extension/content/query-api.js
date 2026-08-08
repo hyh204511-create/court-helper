@@ -194,14 +194,21 @@ export async function fetchLayyDataset({ params = {}, limit = 50, fetchImpl } = 
 }
 
 const LAYY_STATUS = new Map([
+  ["11800007-1", "待审核"],
+  ["11800007-2", "审核通过"],
   ["11800007-4", "已立案"],
   ["11800007-3", "审核不通过"],
+  ["11800007-5", "不予立案"],
+  ["11800007-6", "待补充材料"],
+  ["11800007-31", "待补正"],
 ]);
 export const LAYY_REQUIRED_FIELDS = ["id", "zt", "ajmc", "dsrMc", "laay", "tjsj"];
 
-function parseLayyParticipants(value) {
+function parseLayyParticipants(value, kind = "li") {
   const text = String(value ?? "").trim();
-  const match = /^原告：([^；]+)；被告：([^；]+)$/.exec(text);
+  const match = kind === "qz"
+    ? /^申请执行人：([^；]+)；被执行人：([^；]+)$/.exec(text)
+    : /^原告：([^；]+)；被告：([^；]+)$/.exec(text);
   if (!match) return null;
   const applicant = match[1].trim();
   const respondent = match[2].trim();
@@ -215,8 +222,12 @@ function normalizeLayyDate(value) {
 }
 
 /** Public collector used by QUERY_LI/QUERY_QZ. */
-export async function fetchLayyPages({ filters = {}, pageSize = 50, expectedFields = LAYY_REQUIRED_FIELDS, fetchImpl } = {}) {
-  const result = await fetchLayyDataset({ params: filters, limit: pageSize, fetchImpl });
+export async function fetchLayyPages({ kind = "li", filters = {}, pageSize = 50, expectedFields = LAYY_REQUIRED_FIELDS, fetchImpl } = {}) {
+  const result = await fetchLayyDataset({
+    params: { ...filters, ajlb: filters.ajlb ?? (kind === "qz" ? "zx" : "sp") },
+    limit: pageSize,
+    fetchImpl,
+  });
   if (!result.ok) return result;
   const rows = [];
   for (const raw of result.rows) {
@@ -224,7 +235,7 @@ export async function fetchLayyPages({ filters = {}, pageSize = 50, expectedFiel
     if (!signature.ok) return signature;
     const statusText = LAYY_STATUS.get(String(raw.zt));
     if (!statusText) return MANUAL("UNKNOWN_STATUS");
-    const participants = parseLayyParticipants(raw.dsrMc);
+    const participants = parseLayyParticipants(raw.dsrMc, kind);
     const applicationDate = normalizeLayyDate(raw.tjsj);
     const cause = String(raw.laay ?? "").trim();
     if (!participants || !applicationDate || !cause) return MANUAL("FIELD_SIGNATURE_DRIFT");

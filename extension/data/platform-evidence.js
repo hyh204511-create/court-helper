@@ -123,10 +123,10 @@ export function selectSourceApiRow(record, rows = []) {
  * 直接校验 ajlist 结构化补证。两个接口没有案件级共享 ID，必须由全部
  * 已确认结构键共同形成唯一候选；标题只按分隔后的完整当事人 token 校验。
  */
-export function selectMyCaseApiEvidence({ record, sourceApiRow, rows = [] } = {}) {
+export function selectMyCaseApiEvidence({ record, sourceApiRow, rows = [], kind = "li" } = {}) {
   if (!record || typeof record !== "object") return { ok: false, error: "MYCASE_RECORD_MISSING" };
   if (!record.uid) return { ok: false, error: "MYCASE_RECORD_UID_MISSING" };
-  if (record.status !== "立案成功") return { ok: false, error: "MYCASE_STATUS_MISMATCH" };
+  if (record.status !== expectedStatus(kind)) return { ok: false, error: "MYCASE_STATUS_MISMATCH" };
   if (!sourceApiRow || typeof sourceApiRow !== "object") return { ok: false, error: "SOURCE_API_ROW_MISSING" };
   if (!Array.isArray(rows)) return { ok: false, error: "MYCASE_ROWS_INVALID" };
   const plaintiff = text(record.plaintiff);

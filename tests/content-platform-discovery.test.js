@@ -169,7 +169,7 @@ async function loadDuplicateCivilContent() {
   return { dom, chrome };
 }
 
-async function loadEnforcementList({ status = "已立案", myCase = false, keepSearchResult = false } = {}) {
+async function loadEnforcementList({ status = "已立案", myCase = false, keepSearchResult = false, runtimeSendMessage } = {}) {
   const title = "SYNTHETIC ENFORCEMENT TITLE";
   const executionRow = caseRow({
     status,
@@ -186,7 +186,7 @@ async function loadEnforcementList({ status = "已立案", myCase = false, keepS
   const dom = new JSDOM(`<!doctype html><html><body>${myCase ? myCasePage({ rows: executionRow }) : wslaPage(executionRow)}</body></html>`, {
     url: `https://zxfw.court.gov.cn/zxfw/#/${myCase ? "pages/pc/case-list/index" : "pagesWsla/pc/list/index"}`,
   });
-  const chrome = makeChrome();
+  const chrome = makeChrome(runtimeSendMessage);
   globalThis.window = dom.window;
   globalThis.document = dom.window.document;
   globalThis.location = dom.window.location;
@@ -451,7 +451,7 @@ test("QUERY_LI 不以 DOM 同标题重传结果代替结构化接口", async () 
   }
 });
 
-test("my-case evidence phase rejects the discovery route without changing its baseline", async () => {
+test("legacy my-case evidence phase no longer bypasses the normal structured query path", async () => {
   await db.resetDb();
   const platformAccountId = "00000000-0000-4000-8000-000000000027";
   const { dom, chrome } = await loadEnforcementList();
@@ -465,7 +465,7 @@ test("my-case evidence phase rejects the discovery route without changing its ba
     });
 
     assert.equal(response.ok, false);
-    assert.equal(response.error, "MYCASE_PAGE_REQUIRED");
+    assert.equal(response.error, "BRIDGE_UNAVAILABLE");
     assert.equal((await db.query(db.STORE_CASES, { account: "PLATFORM-ACCOUNT", platformAccountId })).length, 0);
   } finally {
     cleanup(dom);
@@ -473,7 +473,7 @@ test("my-case evidence phase rejects the discovery route without changing its ba
   }
 });
 
-test("my-case evidence preserves an existing UNKNOWN baseline as manual required", async () => {
+test("我的案件页不得继续处理既有 UNKNOWN 强执基线", async () => {
   await db.resetDb();
   const platformAccountId = "00000000-0000-4000-8000-000000000026";
   await db.upsertByUid(db.STORE_ENFORCEMENT, "qz-existing-unknown", {
@@ -498,7 +498,7 @@ test("my-case evidence preserves an existing UNKNOWN baseline as manual required
     });
 
     assert.equal(response.ok, false);
-    assert.equal(response.error, "UNKNOWN");
+    assert.equal(response.error, "ONLINE_FILING_PAGE_REQUIRED");
     assert.equal((await db.getByUid(db.STORE_ENFORCEMENT, "qz-existing-unknown"))?.needsHuman, true);
   } finally {
     cleanup(dom);
@@ -506,7 +506,7 @@ test("my-case evidence preserves an existing UNKNOWN baseline as manual required
   }
 });
 
-test("my-case evidence retains a prior screenshot failure after successful F/G completion", async () => {
+test("我的案件页不得补写既有截图失败强执记录的 F/G", async () => {
   await db.resetDb();
   const platformAccountId = "00000000-0000-4000-8000-000000000028";
   const uid = "qz-existing-screenshot-failure";
@@ -535,9 +535,9 @@ test("my-case evidence retains a prior screenshot failure after successful F/G c
 
     const record = await db.getByUid(db.STORE_ENFORCEMENT, uid);
     assert.equal(response.ok, false);
-    assert.equal(response.error, "SCREENSHOT_CAPTURE_FAILED");
-    assert.equal(record.caseNumber, "SYNTHETIC-QZ-001");
-    assert.equal(record.filedTime, "2026-08-07");
+    assert.equal(response.error, "ONLINE_FILING_PAGE_REQUIRED");
+    assert.equal(record.caseNumber, undefined);
+    assert.equal(record.filedTime, undefined);
     assert.equal(record.needsHuman, true);
     assert.equal(record.errorCode, "SCREENSHOT_CAPTURE_FAILED");
   } finally {
@@ -547,7 +547,7 @@ test("my-case evidence retains a prior screenshot failure after successful F/G c
   }
 });
 
-test("my-case evidence failure retains a prior screenshot failure instead of replacing its code", async () => {
+test("我的案件页拒绝旧补证请求时保留原截图失败错误", async () => {
   await db.resetDb();
   const platformAccountId = "00000000-0000-4000-8000-000000000029";
   const uid = "qz-existing-screenshot-failure-no-match";
@@ -576,7 +576,7 @@ test("my-case evidence failure retains a prior screenshot failure instead of rep
 
     const record = await db.getByUid(db.STORE_ENFORCEMENT, uid);
     assert.equal(response.ok, false);
-    assert.equal(response.error, "SCREENSHOT_CAPTURE_FAILED");
+    assert.equal(response.error, "ONLINE_FILING_PAGE_REQUIRED");
     assert.equal(record.caseNumber, undefined);
     assert.equal(record.filedTime, undefined);
     assert.equal(record.needsHuman, true);
@@ -588,7 +588,7 @@ test("my-case evidence failure retains a prior screenshot failure instead of rep
   }
 });
 
-test("强执平台发现：执行列表首轮有待补 F/G 的成功记录时，提示进入我的案件而不是误报执行 tab", async () => {
+test("强执 DOM fixture 的截图失败保留具体错误而不是误报执行 tab", async () => {
   await db.resetDb();
   const nativeSetTimeout = globalThis.setTimeout;
   const nativeWarn = console.warn;
@@ -609,6 +609,77 @@ test("强执平台发现：执行列表首轮有待补 F/G 的成功记录时，
     assert.equal(response.ok, false);
     assert.equal(response.error, "SCREENSHOT_CAPTURE_FAILED");
     assert.notEqual(response.error, "EXECUTION_TAB_REQUIRED");
+  } finally {
+    globalThis.setTimeout = nativeSetTimeout;
+    console.warn = nativeWarn;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("强执平台发现通过 layy 与 ajlist 在网上立案页直接补全 F/G", async () => {
+  await db.resetDb();
+  const calls = [];
+  const nativeSetTimeout = globalThis.setTimeout;
+  const nativeWarn = console.warn;
+  globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, delay >= 250 ? 0 : delay, ...args);
+  console.warn = (...args) => {
+    if (args[0] === "[court-helper] 行截图失败") return;
+    nativeWarn(...args);
+  };
+  const platformAccountId = "00000000-0000-4000-8000-000000000031";
+  const { dom, chrome } = await loadEnforcementList({
+    status: "审核通过",
+    runtimeSendMessage: async (message) => {
+      if (message?.type !== "QUERY_API_REQUEST") return undefined;
+      calls.push(message);
+      if (message.path.includes("/ajlist")) {
+        return {
+          ok: true,
+          status: 200,
+          data: { data: { total: 1, data: [{
+            csfid: "SYNTHETIC-QZ-ACCOUNT",
+            cfydmTranslateText: "SYNTHETIC QZ COURT",
+            cywlx: "SYNTHETIC-QZ-TYPE",
+            claay: "SYNTHETIC ENFORCEMENT CAUSE",
+            clarq: "2026-08-07",
+            cajmc: "SYNTHETIC APPLICANT与SYNTHETIC RESPONDENTSYNTHETIC ENFORCEMENT CAUSE一案",
+            cah: "SYNTHETIC-QZ-API-001",
+          }] } },
+        };
+      }
+      return message.path.includes("/count")
+        ? { ok: true, status: 200, data: { data: 1 } }
+        : { ok: true, status: 200, data: { data: [{
+          id: "SYNTHETIC-QZ-SOURCE-ID",
+          zt: "11800007-2",
+          ajmc: "SYNTHETIC ENFORCEMENT TITLE",
+          dsrMc: "申请执行人：SYNTHETIC APPLICANT；被执行人：SYNTHETIC RESPONDENT",
+          laay: "SYNTHETIC ENFORCEMENT CAUSE",
+          tjsj: "2026-08-01",
+          sfBh: "SYNTHETIC-QZ-ACCOUNT",
+          fymc: "SYNTHETIC QZ COURT",
+          ajlx: "SYNTHETIC-QZ-TYPE",
+          updateTime: "2026-08-07T08:00:00Z",
+        }] } };
+    },
+  });
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_QZ",
+      queryMode: "platform_discovery",
+      platformAccountId,
+    });
+
+    assert.equal(calls.some((message) => message.path.includes("/layy/count") && message.path.includes("ajlb=zx")), true);
+    assert.equal(calls.some((message) => message.path.includes("/ajlist") && message.body?.ajlb === "1501_000001-1000"), true);
+    assert.notEqual(response.error, "MYCASE_PAGE_REQUIRED");
+    const [record] = await db.query(db.STORE_ENFORCEMENT, { account: "PLATFORM-ACCOUNT", platformAccountId });
+    assert.equal(record.status, "强执成功");
+    assert.equal(record.caseNumber, "SYNTHETIC-QZ-API-001");
+    assert.equal(record.filedTime, "2026-08-07");
+    assert.equal(dom.window.location.hash, "#/pagesWsla/pc/list/index");
   } finally {
     globalThis.setTimeout = nativeSetTimeout;
     console.warn = nativeWarn;
@@ -639,7 +710,7 @@ test("强执平台发现：UNKNOWN 即使没有待补 F/G 也必须转人工", a
   }
 });
 
-test("我的案件页没有本地发现基线时不得把零补证回写成功", async () => {
+test("我的案件页强执查询统一要求返回网上立案页", async () => {
   await db.resetDb();
   const platformAccountId = "00000000-0000-4000-8000-000000000024";
   const { dom, chrome } = await loadEnforcementList({ myCase: true, keepSearchResult: true });
@@ -651,7 +722,7 @@ test("我的案件页没有本地发现基线时不得把零补证回写成功",
       platformAccountId,
     });
     assert.equal(response.ok, false);
-    assert.equal(response.error, "DISCOVERY_BASELINE_MISSING");
+    assert.equal(response.error, "ONLINE_FILING_PAGE_REQUIRED");
   } finally {
     cleanup(dom);
     await db.resetDb();
@@ -696,7 +767,7 @@ test("网上立案页零可见行时不清空旧记录且不得回写成功", as
   }
 });
 
-test("我的案件执行 tab：第二次强执任务只补 F/G，搜索结果前后相同也不重建发现记录", async () => {
+test("我的案件执行 tab 不再通过第二次强执任务补 F/G", async () => {
   await db.resetDb();
   const platformAccountId = "00000000-0000-4000-8000-000000000022";
   const targetUid = "qz-existing-target";
@@ -734,13 +805,13 @@ test("我的案件执行 tab：第二次强执任务只补 F/G，搜索结果前
       platformAccountId,
     });
 
-    assert.equal(response.ok, true);
-    assert.equal(response.evidence.completed, 1);
+    assert.equal(response.ok, false);
+    assert.equal(response.error, "ONLINE_FILING_PAGE_REQUIRED");
     const records = await db.query(db.STORE_ENFORCEMENT, { account: "PLATFORM-ACCOUNT", platformAccountId });
     assert.equal(records.length, 2);
     assert.match(records.find((record) => record.uid === targetUid)?.successImage ?? "", /^data:image\/png/);
-    assert.equal(records.find((record) => record.uid === targetUid)?.caseNumber, "SYNTHETIC-QZ-001");
-    assert.equal(records.find((record) => record.uid === targetUid)?.filedTime, "2026-08-07");
+    assert.equal(records.find((record) => record.uid === targetUid)?.caseNumber, undefined);
+    assert.equal(records.find((record) => record.uid === targetUid)?.filedTime, undefined);
     assert.equal(records.find((record) => record.uid === targetUid)?.needsHuman, false);
     assert.equal(records.find((record) => record.uid === unrelatedUid)?.plaintiff, "UNCHANGED APPLICANT");
   } finally {
@@ -750,7 +821,7 @@ test("我的案件执行 tab：第二次强执任务只补 F/G，搜索结果前
   }
 });
 
-test("我的案件执行 tab：异步搜索变为多条结果时，不得使用搜索前的旧行补 F/G", async () => {
+test("我的案件执行 tab 的旧搜索结果不再参与强执补证", async () => {
   await db.resetDb();
   const platformAccountId = "00000000-0000-4000-8000-000000000023";
   const targetUid = "qz-stale-search-target";
@@ -781,11 +852,11 @@ test("我的案件执行 tab：异步搜索变为多条结果时，不得使用�
     });
 
     assert.equal(response.ok, false);
-    assert.equal(response.error, "MYCASE_EVIDENCE_AMBIGUOUS");
+    assert.equal(response.error, "ONLINE_FILING_PAGE_REQUIRED");
     const record = await db.getByUid(db.STORE_ENFORCEMENT, targetUid);
     assert.equal(record.caseNumber, undefined);
     assert.equal(record.filedTime, undefined);
-    assert.equal(record.errorCode, "MYCASE_EVIDENCE_AMBIGUOUS");
+    assert.equal(record.errorCode, undefined);
   } finally {
     globalThis.setTimeout = nativeSetTimeout;
     cleanup(dom);

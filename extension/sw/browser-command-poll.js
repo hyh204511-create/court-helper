@@ -116,7 +116,9 @@ function courtTab(tabs, commandType) {
     tabs,
     (url) => {
       if (commandType === "LOGIN") return isLoginRoute(url.hash);
-      if (commandType === "QUERY_LI") return url.hash.split("?", 1)[0] === WSLA_LIST_ROUTE;
+      if (commandType === "QUERY_LI" || commandType === "QUERY_QZ") {
+        return url.hash.split("?", 1)[0] === WSLA_LIST_ROUTE;
+      }
       return isCourtListRoute(url.hash);
     },
   );
@@ -302,7 +304,7 @@ export function createBrowserCommandPoller({
           return false;
         }
       });
-      if (command.type === "QUERY_LI" && hasCourtTab) {
+      if ((command.type === "QUERY_LI" || command.type === "QUERY_QZ") && hasCourtTab) {
         return { ok: false, error: "ONLINE_FILING_PAGE_REQUIRED" };
       }
       return { ok: false, error: "NO_COURT_TAB" };

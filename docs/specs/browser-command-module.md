@@ -65,14 +65,14 @@
 - 当前查询类型存在任何业务数据行时，服务端创建或重试必须以稳定码 `TEMPLATE_NOT_EMPTY` 拒绝；不得退回旧的导入行驱动查询。已领取的历史非空任务在扩展端也必须转人工，禁止按原告、账号或标题作模糊匹配。
 - 后台的创建与历史查询任务重试可展示批次行数作为摘要，但零行必须显示“平台发现（空模板）”并允许发送请求。
 - 批次绑定在命令创建时由服务器校验；后续 extension 读取批次执行数据时必须同时校验：命令处于 `executing`、`claimed_by` 与 claim token 匹配、命令的 `clientBatchId` 与请求批次一致且批次未过期。
-- `QUERY_LI` 允许网上立案列表与我的案件列表。
-- `QUERY_QZ` 当前页面可见行不存在执行类 `caseType` 时，必须回写 `EXECUTION_TAB_REQUIRED`，不得继续执行、不得自动切 tab。
+- `QUERY_LI` 与 `QUERY_QZ` 只允许网上立案列表。
+- `QUERY_QZ` 与 `QUERY_LI` 都只选择精确“网上立案”列表路由；只有“我的案件”标签时回写 `ONLINE_FILING_PAGE_REQUIRED`。网上立案页当前可见行不存在执行类 `caseType` 时，`QUERY_QZ` 必须回写 `EXECUTION_TAB_REQUIRED`，不得继续执行、不得自动切 tab。
 - 扩展继续复用既有 `START_BATCH`、`runBatch`、状态识别、截图、节流（3–8 秒/案、单批 50、重试 1）。空模板发现先从当前真实列表建立当前账号隔离的记录集，再调用同一采集链路；预取验证失败不得清空旧数据。
 - 查询结果经既有 sync/outbox 上传；未知状态保持 `UNKNOWN + needsHuman=true`。
 
-**跨路由内容脚本交接**：平台发现从“网上立案”切换到“我的案件”时，原 `tabs.sendMessage` 响应端口可能随页面重建关闭。仅 `QUERY_LI` 的首次派发已在精确“网上立案”列表路由、且错误明确属于消息端口随导航关闭时，才可固定复用同一 `tabId`、同一 claim，在有界等待后重新查询到精确“我的案件”列表路由并通过有界 `PING` 确认新 content script 就绪；随后仅重发**一次**带 `queryPhase: "mycase_evidence"` 的第二阶段消息。`PING` 和第二阶段消息都必须有独立的有限响应时限：路由/PING 超时回写 `MYCASE_PAGE_TIMEOUT`，第二阶段超时或断连回写 `MYCASE_EVIDENCE_UNAVAILABLE`，两者均为待人工；不得宽泛或无限重试。第二阶段只能补充既有同账号、同 `platformAccountId` 基线，禁止重建发现记录；其终态必须聚合整份基线，`UNKNOWN`、既有 `needsHuman`、证据不完整或截图失败绝不因其他记录补证成功或失败而转为成功或覆盖首个稳定错误码。
+**单路由结构化执行**：`QUERY_LI` 与 `QUERY_QZ` 均在精确“网上立案”列表路由内完成发现、截图及 `ajlist` F/G 补证；不得导航到“我的案件”，不得发送 `queryPhase: "mycase_evidence"` 第二阶段消息。内容端口关闭只按有界的 `CONTENT_UNAVAILABLE` 失败处理，不复用 claim 做跨路由重发。
 
-**查询执行租约**：`QUERY_LI` / `QUERY_QZ` 的单次 claim 固定 20 分钟，无心跳续租。该期限覆盖单批最多 50 条、每案 3–8 秒的首轮采集和一次最长 10 分钟的跨路由补证，并保留回写余量；第二阶段响应上限必须短于该租约。租约到期前未回写的命令由服务端标记为 `expired`，不得用新 claim 或无限重试掩盖。
+**查询执行租约**：`QUERY_LI` / `QUERY_QZ` 的单次 claim 固定 20 分钟，无心跳续租。该期限覆盖单批最多 50 条、每案 3–8 秒的采集、结构化分页补证及回写余量。租约到期前未回写的命令由服务端标记为 `expired`，不得用新 claim 或无限重试掩盖。
 
 ### `EXPORT_REPORT`
 

@@ -191,6 +191,55 @@ test("QUERY_LI 只有我的案件标签时转人工且不下发 content 命令",
   assert.equal(harness.resultBody().resultCode, "ONLINE_FILING_PAGE_REQUIRED");
 });
 
+test("QUERY_QZ 也只选择网上立案标签，不再派发到我的案件执行页", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000126",
+    type: "QUERY_QZ",
+    platformAccountId: "00000000-0000-4000-8000-000000000226",
+    clientBatchId: "00000000-0000-4000-8000-000000000326",
+  };
+  const dispatched = [];
+  const chromeApi = chromeMock(async (tabId) => {
+    dispatched.push(tabId);
+    return { ok: true };
+  });
+  chromeApi.tabs.query = async () => [
+    { id: 7, active: true, lastAccessed: 500, url: "https://zxfw.court.gov.cn/#/pages/pc/case-list/index" },
+    { id: 8, active: false, lastAccessed: 100, url: "https://zxfw.court.gov.cn/#/pagesWsla/pc/list/index" },
+  ];
+  chromeApi.tabs.update = async (tabId) => ({ id: tabId, active: true });
+  const harness = platformDiscoveryHarness(command);
+
+  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl: harness.fetchImpl }).pollOnce();
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(dispatched, [8]);
+});
+
+test("QUERY_QZ 只有我的案件标签时回写 ONLINE_FILING_PAGE_REQUIRED", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000127",
+    type: "QUERY_QZ",
+    platformAccountId: "00000000-0000-4000-8000-000000000227",
+    clientBatchId: "00000000-0000-4000-8000-000000000327",
+  };
+  let dispatched = 0;
+  const chromeApi = chromeMock(async () => {
+    dispatched += 1;
+    return { ok: true };
+  });
+  chromeApi.tabs.query = async () => [
+    { id: 7, active: true, url: "https://zxfw.court.gov.cn/#/pages/pc/case-list/index" },
+  ];
+  const harness = platformDiscoveryHarness(command);
+
+  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl: harness.fetchImpl }).pollOnce();
+
+  assert.equal(result.ok, false);
+  assert.equal(dispatched, 0);
+  assert.equal(harness.resultBody().resultCode, "ONLINE_FILING_PAGE_REQUIRED");
+});
+
 test("活动法院标签优先于 lastAccessed 更新的非活动标签", async () => {
   const command = {
     id: "00000000-0000-4000-8000-000000000122",

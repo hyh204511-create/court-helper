@@ -132,6 +132,19 @@ test("ajlist 成功补证使用跨接口严格结构，不要求两个页面标�
   });
 });
 
+test("ajlist 强执补证接受强执成功记录并沿用严格结构", () => {
+  const record = { ...apiRecord, uid: "qz-api-record", status: "强执成功" };
+  assert.deepEqual(selectMyCaseApiEvidence({
+    kind: "qz",
+    record,
+    sourceApiRow,
+    rows: [apiEvidence({ cah: "SYNTHETIC-QZ-API-001" })],
+  }), {
+    ok: true,
+    value: { uid: record.uid, caseNumber: "SYNTHETIC-QZ-API-001", filedTime: "2026-08-07" },
+  });
+});
+
 test("ajlist 补证前置字段缺失返回具体且安全的诊断码", () => {
   const cases = [
     [{ record: null, sourceApiRow, rows: [] }, "MYCASE_RECORD_MISSING"],

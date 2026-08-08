@@ -73,18 +73,15 @@
 ### 3.6 成功案件跨页面取证（空模板后的补全）
 
 - 网上立案页是 A/B、E、I/J/K 的事实源；成功案件 F/G 的事实源只能是「我的案件」列表（强执为其中的「执行」tab）。空模板不得把导入行或案件标题拆词当作这些字段的来源。
-- `QUERY_LI` 的 F/G 结构化补证必须直接调用 `POST /yzw/yzw-zxfw-ajfw/api/v1/ajlist`，不得修改 `location.hash`、不得跳转“我的案件”页、不得操作搜索框。执行器只可选择网上立案列表标签；只有“我的案件”标签或 content 在错误路由收到命令时，必须以 `ONLINE_FILING_PAGE_REQUIRED` 失败关闭。接口按来源原告精确文本查询；每页响应必须显式提供可解析的非负整数 `data.total`，缺失、`null`、数组或对象均按 `API_SCHEMA_DRIFT` 转人工，且分页 total/累计条数必须守恒并不超过 50。
+- `QUERY_LI` 与 `QUERY_QZ` 的 F/G 结构化补证都必须直接调用 `POST /yzw/yzw-zxfw-ajfw/api/v1/ajlist`，不得修改 `location.hash`、不得跳转“我的案件”页、不得操作搜索框。执行器只可选择网上立案列表标签；只有“我的案件”标签或 content 在错误路由收到命令时，必须以 `ONLINE_FILING_PAGE_REQUIRED` 失败关闭。立案按来源原告、强执按来源申请执行人精确文本查询；`ajlist.ajlb` 分别固定为审判类别集合和执行类别 `1501_000001-1000`。每页响应必须显式提供可解析的非负整数 `data.total`，缺失、`null`、数组或对象均按 `API_SCHEMA_DRIFT` 转人工，且分页 total/累计条数必须守恒并不超过 50。
 - `layy` 与 `ajlist` 没有案件级共享 ID；`sfBh/csfid` 是账号级字段，单独使用会命中多条，禁止作为案件唯一键。`fyid` 与 `nfydm` 属于不同编码空间，禁止直接比较；法院必须以稳定翻译文本 `fymc=cfydmTranslateText` 精确匹配。候选必须同时满足：`sfBh=csfid`、`fymc=cfydmTranslateText`、`ajlx=cywlx`、`laay=claay`、`updateTime` 与 `clarq` 规范到同一 `YYYY-MM-DD`，并把 `cajmc` 去掉精确后缀“来源案由+一案”后，按 `与`、中英文逗号、顿号分隔为当事人 token；来源原告和被告必须分别作为完整 token 存在。允许标题含额外当事人，但禁止 `includes` 单独决定匹配、禁止改写“诉/与”后做标题全等。
 - 上述严格结构必须得到唯一候选，且 `cah/clarq` 完整；零候选、重复候选、字段缺失、日期不可比较或分页不守恒统一 `MYCASE_EVIDENCE_UNAVAILABLE` / `MYCASE_EVIDENCE_AMBIGUOUS` 待人工。F=`clarq`，G=`cah`；不根据 `najzt` 猜状态。
 - 结构化补证失败时，任务回执必须优先保留已确认的具体安全错误码（如 `API_SCHEMA_DRIFT`、`PAGINATION_TOTAL_MISMATCH`、`MYCASE_EVIDENCE_AMBIGUOUS`），并附带已完成数/总数；只有无法确定具体原因时才使用 `MYCASE_EVIDENCE_UNAVAILABLE`，禁止把所有子错误折叠成同一个通用码。
 - `layy` 来源行回绑本地发现记录时必须逐字段失败关闭，并以不含业务值的 `SOURCE_CASE_NAME_MISMATCH`、`SOURCE_APPLICANT_MISMATCH`、`SOURCE_RESPONDENT_MISMATCH`、`SOURCE_CAUSE_MISMATCH`、`SOURCE_APPLICATION_DATE_MISMATCH` 或 `SOURCE_API_ROW_AMBIGUOUS` 标明首个失败阶段；批次聚合时任何具体码优先于 `MYCASE_EVIDENCE_UNAVAILABLE`，不得由记录顺序掩盖。
 - `ajlist` 严格匹配也必须逐阶段失败关闭；记录/来源前置字段缺失、账号/法院/类型/案由/日期/标题不匹配以及案号缺失，只返回对应的稳定大写诊断码，不得包含字段值。所有这些诊断码均按待人工回写。
-- 旧的“跳转我的案件页→搜索完整 `sourceCaseName`→DOM 标题全等”链路只作为未接入结构化执行接口前的 `QUERY_QZ` 兼容边界；`QUERY_LI` 禁止进入该链路。成功截图仍取网上立案页已确认的成功列表行。
-- 点击平台搜索后，必须确认本次搜索触发了结果列表的 DOM 刷新，才可读取搜索结果；列表文字相同但 DOM 已刷新时仍按该次结果做严格校验。未观察到刷新时不得使用搜索前的旧行，必须标记 `MYCASE_EVIDENCE_UNAVAILABLE` 待人工。
-- “我的案件”搜索框可能先渲染为不可输入的占位层；采集器必须先激活该搜索层并等待真实输入控件出现，再写入完整案件标题。激活或等待超时返回 `SELECTOR_CHANGED` / `MYCASE_EVIDENCE_UNAVAILABLE`，不得把占位文本当作输入框，也不得猜测替代选择器。
-- 搜索结果为零、没有身份一致结果、最新日期并列、标题不全等、类型不符、状态不是该类型的精确成功状态，或最新结果的案号/日期字段缺失时，必须保留已有事实并标记 `MYCASE_EVIDENCE_UNAVAILABLE` / `MYCASE_EVIDENCE_AMBIGUOUS` 待人工；不得根据标题的包含关系、正则、分词或已有模板字段补全。搜索返回多条本身不是错误，只有无法唯一选出最新立案日期时才算歧义。
-- `QUERY_QZ` 仍保留执行 tab 人工门禁，插件不得自动切换 tab。用户已在「我的案件」执行 tab 后再次下发空模板 `QUERY_QZ` 时，只对同账号既有强执记录执行上述平台搜索与 F/G 补全，不重新发现记录、不清空已有数据。
-- 「我的案件」页只承担既有成功记录的 F/G 补证，不是 A/B/E/I/J/K 的发现源。当前账号和类型没有任何本地基线记录时返回 `DISCOVERY_BASELINE_MISSING` 并转人工，禁止以 `{total:0, needsHuman:0}` 回写成功。
+- 旧的“跳转我的案件页→搜索完整 `sourceCaseName`→DOM 标题全等”链路不再用于 `QUERY_LI` 或 `QUERY_QZ`。成功截图仍取网上立案页已确认的成功列表行。
+- `QUERY_QZ` 在网上立案页只处理执行类可见行；当前可见行没有执行类 `caseType` 时返回 `EXECUTION_TAB_REQUIRED`，但不得要求用户跳转到“我的案件”页。`layy/count` 与 `layy` 使用执行类别 `ajlb=zx`，参与人必须为“申请执行人：…；被执行人：…”精确结构。
+- 「我的案件」页不再承担 `QUERY_LI` 或 `QUERY_QZ` 的 F/G 补证，也不是 A/B/E/I/J/K 的发现源；查询命令在该路由失败关闭，不得以 `{total:0, needsHuman:0}` 回写成功。
 - 任何记录从“无案号”补全为“有案号”时，`clientUid` 必须保持稳定；本地更新和同步不得生成一条旧 UID 与一条新 UID 的重复记录。
 
 ## 4. 选择器与改版检测（`extension/content/selectors.js`）

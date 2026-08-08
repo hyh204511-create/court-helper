@@ -25,7 +25,7 @@ import {
 } from "./login-detector.js";
 import { doAutoLogin } from "./login-auto.js";
 import { captureElement } from "./screen-capturer.js";
-import { persistSyncRecord, runBatch, RETRY_COUNT, jitterMs } from "../data/batch-runner.js";
+import { persistSyncRecord, runBatch, jitterMs } from "../data/batch-runner.js";
 import { recognizeStatus } from "./status-recognizer.js";
 import { createCourtPanel } from "./court-panel.js";
 import { importXlsx } from "../data/import-xlsx.js";
@@ -36,16 +36,15 @@ import {
   evidenceFailureCode,
   preferEvidenceError,
   selectMyCaseApiEvidence,
-  selectMyCaseEvidence,
   selectSourceApiRow,
 } from "../data/platform-evidence.js";
 import { createMainWorldFetch, fetchLayyPages, fetchMyCases, matchApiDomRows } from "./query-api.js";
 import * as db from "../data/db.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const MY_CASE_ROUTE = "#/pages/pc/case-list/index";
 const ONLINE_FILING_ROUTE = "#/pagesWsla/pc/list/index";
 const CIVIL_CASE_CATEGORIES = "1501_000001-0100;1501_000001-0200;1501_000001-0300;1501_000001-0400;1501_000001-0500";
+const EXECUTION_CASE_CATEGORIES = "1501_000001-1000";
 const isDetailPage = () => location.hash.includes("wsla/detail");
 const isListPage = () => isCourtListRoute(location.hash);
 
@@ -683,93 +682,6 @@ function recordManualError(record) {
   return null;
 }
 
-function baselineManualError(records) {
-  for (const record of Array.isArray(records) ? records : []) {
-    if (record?.status !== "UNKNOWN" && record?.needsHuman !== true) continue;
-    return recordManualError(record)
-      ?? (record?.status === "UNKNOWN" ? "UNKNOWN" : "NEEDS_HUMAN");
-  }
-  return null;
-}
-
-function setControlledSearchValue(input, value) {
-  const view = input?.ownerDocument?.defaultView;
-  const descriptor = Object.getOwnPropertyDescriptor(view?.HTMLInputElement?.prototype, "value");
-  if (typeof descriptor?.set !== "function") throw new Error("SELECTOR_CHANGED");
-  descriptor.set.call(input, value);
-  input.dispatchEvent(new view.Event("input", { bubbles: true, composed: true }));
-  input.dispatchEvent(new view.Event("change", { bubbles: true, composed: true }));
-}
-
-function waitForSearchRefresh(container, timeoutMs = 10000) {
-  const MutationObserverCtor = container?.ownerDocument?.defaultView?.MutationObserver;
-  if (typeof MutationObserverCtor !== "function") return Promise.resolve(false);
-  const beforeRows = [...container.querySelectorAll(SELECTORS.list.row)];
-  return new Promise((resolve) => {
-    let settled = false;
-    let timer = null;
-    const finish = (refreshed) => {
-      if (settled) return;
-      settled = true;
-      observer.disconnect();
-      if (timer !== null) clearTimeout(timer);
-      resolve(refreshed);
-    };
-    const observer = new MutationObserverCtor(() => {
-      const currentRows = [...container.querySelectorAll(SELECTORS.list.row)];
-      const rowsRefreshed = currentRows.length !== beforeRows.length
-        || currentRows.some((row, index) => row !== beforeRows[index]);
-      if (rowsRefreshed) finish(true);
-    });
-    // 只把案件行替换/增减视为搜索结果刷新。loading class 等容器属性变化
-    // 不能证明平台已返回本次搜索结果，不能据此读取 F/G。
-    observer.observe(container, { childList: true, subtree: true });
-    timer = setTimeout(() => finish(false), timeoutMs);
-  });
-}
-
-async function activateSearchInput(timeoutMs = 3000) {
-  const existing = document.querySelector(SELECTORS.list.searchInput);
-  if (existing) return existing;
-  const searchBox = document.querySelector(SELECTORS.list.searchBox);
-  if (!searchBox) return null;
-  try {
-    searchBox.click();
-  } catch {
-    return null;
-  }
-  const ready = await waitFor(
-    () => !!document.querySelector(SELECTORS.list.searchInput),
-    timeoutMs,
-    100,
-  );
-  return ready ? document.querySelector(SELECTORS.list.searchInput) : null;
-}
-
-async function navigateToMyCaseList() {
-  if (location.hash.split("?", 1)[0] !== MY_CASE_ROUTE) location.hash = MY_CASE_ROUTE;
-  const ready = await waitFor(() =>
-    location.hash.split("?", 1)[0] === MY_CASE_ROUTE
-      && !!document.querySelector(SELECTORS.list.container)
-      && !!document.querySelector(SELECTORS.list.searchBtn),
-  10000, 250);
-  if (!ready) throw new Error("MYCASE_PAGE_TIMEOUT");
-}
-
-async function searchMyCaseBySourceName(sourceCaseName) {
-  const input = await activateSearchInput();
-  const button = document.querySelector(SELECTORS.list.searchBtn);
-  const container = document.querySelector(SELECTORS.list.container);
-  if (!input || !button || !container) return { ok: false, error: "SELECTOR_CHANGED" };
-  setControlledSearchValue(input, sourceCaseName);
-  for (let attempt = 0; attempt <= RETRY_COUNT; attempt += 1) {
-    const refreshed = waitForSearchRefresh(container);
-    button.click();
-    if (await refreshed) return { ok: true, rows: collectListRows(document) };
-  }
-  return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
-}
-
 async function persistMyCaseEvidence(record, selection) {
   const existingManualError = recordManualError(record);
   const update = selection.ok
@@ -779,42 +691,10 @@ async function persistMyCaseEvidence(record, selection) {
   return update;
 }
 
-async function completeMyCaseEvidence(kind, { account, platformAccountId, navigate = false } = {}) {
-  if (location.hash.split("?", 1)[0] !== MY_CASE_ROUTE) {
-    if (!navigate) throw new Error(kind === "qz" ? "EXECUTION_TAB_REQUIRED" : "MYCASE_PAGE_REQUIRED");
-    await navigateToMyCaseList();
-  }
-  if (!ensureListReady()) throw new Error("NOT_READY");
-  if (getCurrentAccount(document) !== account) throw new Error("ACCOUNT_MISMATCH");
-  const visibleRows = collectListRows(document);
-  if (kind === "qz" && !visibleRows.some((row) => isEnforcementCaseType(row.caseType))) {
-    throw new Error("EXECUTION_TAB_REQUIRED");
-  }
-
+async function completeMyCaseEvidenceFromApi({ kind = "li", account, platformAccountId, sourceApiRows, fetchImpl }) {
   const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
   const candidates = (await db.query(store, { account, platformAccountId }))
     .filter((record) => record.status === expectedSuccessStatus(kind))
-    .filter((record) => !record.caseNumber || !record.filedTime);
-  let completed = 0;
-  let needsHuman = 0;
-  for (const record of candidates) {
-    const search = record.sourceCaseName
-      ? await searchMyCaseBySourceName(record.sourceCaseName)
-      : { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
-    const selection = search.ok
-      ? selectMyCaseEvidence({ record, kind, rows: search.rows })
-      : search;
-    const updated = await persistMyCaseEvidence(record, selection);
-    if (selection.ok && !updated.needsHuman) completed += 1;
-    else needsHuman += 1;
-    await delayWithPause();
-  }
-  return { total: candidates.length, completed, needsHuman };
-}
-
-async function completeMyCaseEvidenceFromApi({ account, platformAccountId, sourceApiRows, fetchImpl }) {
-  const candidates = (await db.query(db.STORE_CASES, { account, platformAccountId }))
-    .filter((record) => record.status === expectedSuccessStatus("li"))
     .filter((record) => !record.caseNumber || !record.filedTime);
   let completed = 0;
   let needsHuman = 0;
@@ -830,7 +710,7 @@ async function completeMyCaseEvidenceFromApi({ account, platformAccountId, sourc
         fetchImpl,
         pageSize: 50,
         body: {
-          ajlb: CIVIL_CASE_CATEGORIES,
+          ajlb: kind === "qz" ? EXECUTION_CASE_CATEGORIES : CIVIL_CASE_CATEGORIES,
           searchtext: record.plaintiff,
           ajzt: "",
           sfid: "",
@@ -838,7 +718,7 @@ async function completeMyCaseEvidenceFromApi({ account, platformAccountId, sourc
         },
       });
       selection = result.ok
-        ? selectMyCaseApiEvidence({ record, sourceApiRow, rows: result.rows })
+        ? selectMyCaseApiEvidence({ kind, record, sourceApiRow, rows: result.rows })
         : { ok: false, error: result.code ?? "MYCASE_EVIDENCE_UNAVAILABLE" };
     }
     const updated = await persistMyCaseEvidence(record, selection);
@@ -854,7 +734,7 @@ async function completeMyCaseEvidenceFromApi({ account, platformAccountId, sourc
 
 async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
   const currentRoute = location.hash.split("?", 1)[0];
-  if (kind === "li" && currentRoute !== ONLINE_FILING_ROUTE) {
+  if (currentRoute !== ONLINE_FILING_ROUTE) {
     throw new Error("ONLINE_FILING_PAGE_REQUIRED");
   }
   if (!ensureListReady()) throw new Error("NOT_READY");
@@ -862,35 +742,23 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
   const account = getCurrentAccount(document);
   if (!account) throw new Error("ACCOUNT_UNDETECTED");
   const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
-  if (location.hash.split("?", 1)[0] === MY_CASE_ROUTE) {
-    const baseline = await db.query(store, { account, platformAccountId });
-    if (!baseline.length) throw new Error("DISCOVERY_BASELINE_MISSING");
-    _batchRunning = true;
-    try {
-      const evidence = await completeMyCaseEvidence(kind, { account, platformAccountId });
-      const preservedManualError = baselineManualError(await db.query(store, { account, platformAccountId }));
-      return preservedManualError
-        ? { ok: false, error: preservedManualError, evidence }
-        : evidence.needsHuman
-        ? { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE", evidence }
-        : { ok: true, evidence };
-    } finally {
-      _batchRunning = false;
-    }
-  }
   const rows = collectListRows(document);
   if (!rows.length) throw new Error("NO_VISIBLE_CASES");
+  if (kind === "qz" && !rows.some((row) => isEnforcementCaseType(row.caseType))) {
+    throw new Error("EXECUTION_TAB_REQUIRED");
+  }
   // In the real page, the API count is the authoritative page-size guard.
   // JSDOM fixtures intentionally do not expose window.fetch and keep their
   // deterministic DOM-only path.
-  const structuredFetch = kind === "li" && typeof chrome?.runtime?.id === "string"
+  const structuredFetch = typeof chrome?.runtime?.id === "string"
     ? createMainWorldFetch(chrome.runtime.sendMessage.bind(chrome.runtime))
     : (typeof globalThis.fetch === "function" && globalThis.fetch.name !== "fetch" ? globalThis.fetch : null);
   if (kind === "li" && !structuredFetch) throw new Error("BRIDGE_UNAVAILABLE");
   let sourceApiRows = [];
   if (structuredFetch) {
     const apiResult = await fetchLayyPages({
-      filters: { cxtj: "", kssj: "", jssj: "", zt: "", ajlb: "sp", sfid: "", sqrsf: "" },
+      kind,
+      filters: { cxtj: "", kssj: "", jssj: "", zt: "", ajlb: kind === "qz" ? "zx" : "sp", sfid: "", sqrsf: "" },
       pageSize: 50,
       fetchImpl: structuredFetch,
     });
@@ -914,13 +782,10 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
     const matched = matchApiDomRows(apiResult.rows, domIdentityRows);
     if (apiResult.total !== rows.length || !matched.ok) throw new Error("API_DOM_MISMATCH");
   }
-  if (kind === "qz" && !rows.some((row) => isEnforcementCaseType(row.caseType))) {
-    throw new Error("EXECUTION_TAB_REQUIRED");
-  }
   const records = buildPlatformDiscoveryRecords({ account, platformAccountId, kind, rows });
   await db.replaceAccountRecords(store, account, records, { platformAccountId });
   const initial = await startBatch(kind, { account, platformAccountId });
-  if (kind === "qz") {
+  if (kind === "qz" && !structuredFetch) {
     if (!initial.ok) return initial;
     const pendingEvidence = (await db.query(store, { account, platformAccountId }))
       .some((record) => record.status === expectedSuccessStatus(kind)
@@ -931,7 +796,7 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
   }
   _batchRunning = true;
   try {
-    const evidence = await completeMyCaseEvidenceFromApi({ account, platformAccountId, sourceApiRows, fetchImpl: structuredFetch });
+    const evidence = await completeMyCaseEvidenceFromApi({ kind, account, platformAccountId, sourceApiRows, fetchImpl: structuredFetch });
     return !initial.ok
       ? { ...initial, evidence }
       : evidence.needsHuman
@@ -965,9 +830,6 @@ async function executeBrowserCommand(message) {
   if (message.commandType === "QUERY_LI" || message.commandType === "QUERY_QZ") {
     const kind = message.commandType === "QUERY_QZ" ? "qz" : "li";
     if (message.queryMode === "platform_discovery") {
-      if (message.queryPhase === "mycase_evidence" && location.hash.split("?", 1)[0] !== MY_CASE_ROUTE) {
-        return { ok: false, error: "MYCASE_PAGE_REQUIRED" };
-      }
       return startPlatformDiscovery(kind, { platformAccountId: message.platformAccountId });
     }
     return { ok: false, error: "TEMPLATE_NOT_EMPTY" };

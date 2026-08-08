@@ -167,6 +167,30 @@ test("fetchLayyPages 先取 count，再携完整筛选参数逐页采集并映�
   assert.deepEqual(calls.slice(1).map(({ parsed }) => parsed.searchParams.get("limit")), ["2", "2"]);
 });
 
+test("fetchLayyPages 强执模式使用执行类别并解析申请执行人和审核通过", async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    const parsed = new URL(url, "https://court.invalid");
+    calls.push(parsed);
+    return parsed.pathname.endsWith("/count")
+      ? jsonResponse({ data: 1 })
+      : jsonResponse({ data: [{
+        id: "SYNTHETIC-QZ-ID",
+        zt: "11800007-2",
+        ajmc: "SYNTHETIC ENFORCEMENT CASE",
+        dsrMc: "申请执行人：A；被执行人：B",
+        laay: "SYNTHETIC ENFORCEMENT CAUSE",
+        tjsj: "2026-08-08T08:00:00Z",
+      }] });
+  };
+  const result = await fetchLayyPages({ kind: "qz", fetchImpl });
+  assert.equal(result.ok, true);
+  assert.equal(result.rows[0].statusText, "审核通过");
+  assert.equal(result.rows[0].applicant, "A");
+  assert.equal(result.rows[0].respondent, "B");
+  assert.equal(calls.every((url) => url.searchParams.get("ajlb") === "zx"), true);
+});
+
 test("fetchLayyPages 对 total 不守恒和字段签名漂移统一转人工", async () => {
   const run = async (listBody) => fetchLayyPages({
     pageSize: 2,
