@@ -42,7 +42,7 @@ async function defaultWaitForList(root, kind, tracker, { timeoutMs = 10_000, int
     const isConfirmedEmpty = changedAndSettled
       && tracker.container
       && String(tracker.container.textContent ?? "").includes("暂无数据");
-    if (isExpected || isConfirmedEmpty) return true;
+    if ((changedAndSettled && isExpected) || isConfirmedEmpty) return true;
     await sleep(intervalMs);
   }
   return false;
