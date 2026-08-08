@@ -245,6 +245,7 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
     assert.match(browserControlScript.body, /visibilitychange/);
     assert.match(browserControlScript.body, /window\.location\.assign\('\/admin\/browser-control'\)/);
     assert.match(browserControlStyles.body, /\.detail-grid\[hidden\]\s*\{\s*display:\s*none/);
+    assert.match(browserControlStyles.body, /\.account-picker-option\[hidden\]\s*\{\s*display:\s*none/);
 
     const workerCases = await app.inject({
       method: 'GET',

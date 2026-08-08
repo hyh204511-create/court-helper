@@ -121,6 +121,7 @@ button:disabled { cursor: not-allowed; opacity: .48; transform: none; }
 .account-picker-toggle:hover { background: var(--amber-soft); transform: none; }
 .account-picker-menu { position: absolute; z-index: 20; top: calc(100% + 4px); right: 0; left: 0; max-height: 240px; overflow-y: auto; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-bright); box-shadow: var(--shadow); }
 .account-picker-option { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: 7px; color: var(--ink); background: transparent; text-align: left; }
+.account-picker-option[hidden] { display: none; }
 .account-picker-option:hover { background: var(--amber-soft); transform: none; }
 .form-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .primary { padding: 11px 18px; color: #fff; background: var(--navy); box-shadow: 0 8px 18px rgba(16,42,67,.18); }
