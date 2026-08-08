@@ -163,7 +163,7 @@ export async function buildExportWorkbook({ cases = [], enforcementCases = [] } 
   }
 
   for (const job of imageJobs) {
-    const buffer = Buffer.from(await job.blob.arrayBuffer());
+    const buffer = new Uint8Array(await job.blob.arrayBuffer());
     const extension = (job.blob.type || "").includes("png") ? "png" : "jpeg";
     const imageId = wb.addImage({ buffer, extension });
     ws.addImage(imageId, {

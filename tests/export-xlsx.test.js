@@ -91,6 +91,19 @@ test("导出双表块：布局/样式/日期格式/图片锚点", async () => {
   }
 });
 
+test("浏览器无 Node Buffer 全局时仍可构建带图工作簿", async () => {
+  const originalBuffer = globalThis.Buffer;
+  try {
+    globalThis.Buffer = undefined;
+    const wb = await buildExportWorkbook({
+      cases: [rec({ status: "立案成功", successImage: IMG(7) })],
+    });
+    assert.equal(wb.getWorksheet("Sheet1").getImages().length, 1);
+  } finally {
+    globalThis.Buffer = originalBuffer;
+  }
+});
+
 test("UNKNOWN 状态：单元格留空 + 浅红填充 + 深红字体（ExcelJS 读回）", async () => {
   const wb = await buildExportWorkbook({ cases: [rec({ status: "UNKNOWN" })] });
   const ws = wb.getWorksheet("Sheet1");

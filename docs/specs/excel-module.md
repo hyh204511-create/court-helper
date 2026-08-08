@@ -90,6 +90,7 @@
    - 日期列：JS Date 写入 + numberFormat `mm-dd-yy`；
    - 密码列：原样透传（只读字段，不脱敏导出——用户表格业务需要；但导出日志不打印）。
 4. 图片嵌入：有 successImage → `ws.addImage(data, { tl: {col: H-1, row}, ext: {width, height} })`，OneCellAnchor 锚定 H/K 列对应单元格；尺寸：高度 = 行高 28 像素内（约 34px），宽度按 H 12.87 / K 18 列宽比例（约 60 / 90 px），实现时以模板图片观感为准微调。
+   - content script 运行在真实 Chromium 页面，图片 Blob 转换必须使用浏览器原生 `ArrayBuffer` / `Uint8Array`；禁止依赖 Node 全局 `Buffer`。自动测试必须覆盖 `globalThis.Buffer` 不存在时仍可构建带图工作簿。
 5. 文件命名：`立案与强执查询表-<导出日期YYYY-MM-DD>.xlsx`；`EXPORT_REPORT` 命令由扩展生成并本地下载，随后上传服务器形成后台报表记录。
 
 ## 5. 往返一致性（测试闸门）
