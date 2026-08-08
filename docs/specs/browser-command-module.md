@@ -167,6 +167,12 @@
 3. 后台创建强执查询，非执行 tab 返回 `EXECUTION_TAB_REQUIRED`，执行 tab 才执行。
 4. 后台发起导出，后台记录出现且下载 SHA256 与扩展生成文件一致。
 5. popup 已移除；已授权 action 打开控制台，未授权 action 打开 Options/Setup；后台、法院页面链路正常。
+
+## 11. 历史物理删除（v0.8）
+
+- `DELETE /browser-commands/:id` 仅允许删除已结束任务；活动任务返回 `TASK_ACTIVE`。admin 可删除可见记录，user 仅可删除本人记录，成功返回 `{deletedCount:1}`。
+- `DELETE /browser-commands?type=QUERY_ALL_EXPORT` 仅物理删除已结束的一键查询并导出历史；任务列表同时提供逐条删除和二次确认的一键批量删除，重新读取后不得继续占用列表位置。
+- `DELETE /auth/extension-devices/:id` 与 `DELETE /auth/extension-devices` 仅限 admin_ui admin；删除前撤销设备 session、取消 pending/approved 配对，随后物理删除设备记录并返回 `{deletedCount}`。重新读取授权列表不得再出现已删除设备。
 6. 服务器严格使用 `courthelper` 库，`assistant` 库无任何 court-helper 表/序列/迁移对象。
 
 ## 9. 范围外

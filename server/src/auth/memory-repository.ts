@@ -308,6 +308,32 @@ export class MemoryAuthRepository implements AuthRepository {
     return copyDevice(device);
   }
 
+  async deleteExtensionDevice(id: string): Promise<ExtensionDeviceRecord | null> {
+    const device = this.extensionDevices.get(id);
+    if (!device) return null;
+    for (const session of this.sessions.values()) {
+      if (session.extensionDeviceId === id) session.revokedAt = session.revokedAt ?? new Date();
+    }
+    for (const [pairingId, pairing] of this.extensionPairings) {
+      if (pairing.deviceId === device.deviceId && (pairing.status === 'pending' || pairing.status === 'approved')) {
+        pairing.status = 'cancelled';
+        pairing.updatedAt = new Date();
+        this.extensionPairings.set(pairingId, pairing);
+      }
+    }
+    this.extensionDevices.delete(id);
+    return copyDevice(device);
+  }
+
+  async deleteExtensionDevices(): Promise<number> {
+    const ids = [...this.extensionDevices.keys()];
+    let deleted = 0;
+    for (const id of ids) {
+      if (await this.deleteExtensionDevice(id)) deleted += 1;
+    }
+    return deleted;
+  }
+
   async touchExtensionDevice(id: string, now: Date): Promise<void> {
     const device = this.extensionDevices.get(id);
     if (!device) return;

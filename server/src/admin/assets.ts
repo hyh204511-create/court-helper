@@ -982,6 +982,7 @@ async function loadBrowserCommands() {
       const actions = element('td', null, 'row-actions');
       if (['pending', 'executing'].includes(command.status) && command.requestedBy === currentSessionUser?.id) actions.append(actionButton('取消', 'cancel-browser-command', command.id, 'small-button danger'));
       if (['failed', 'manual_required', 'expired'].includes(command.status)) actions.append(actionButton('重试', 'retry-browser-command', command.id));
+      if (command.type === 'QUERY_ALL_EXPORT' && ['succeeded', 'failed', 'expired', 'manual_required', 'cancelled'].includes(command.status)) actions.append(actionButton('删除', 'delete-browser-command', command.id, 'small-button danger'));
       row.appendChild(actions); target.appendChild(row);
     });
     if (!target.firstChild) { const row = element('tr'); const cell = element('td', '暂无浏览器任务'); cell.colSpan = 8; row.appendChild(cell); target.appendChild(row); }
@@ -1033,6 +1034,7 @@ async function loadExtensionAuthorizations() {
       );
       const actions = element('td', null, 'row-actions');
       if (device.enabled && !device.revokedAt) actions.append(actionButton('撤销', 'revoke-extension-device', device.id, 'small-button danger'));
+      actions.append(actionButton('删除', 'delete-extension-device', device.id, 'small-button danger'));
       row.append(actions);
       deviceTarget.append(row);
     });
@@ -1142,6 +1144,18 @@ function initBrowserControl() {
       setMessage($('[data-browser-command-status]'), errorMessage(error));
     } finally { button.disabled = false; }
   });
+  $('#browser-command-delete-all')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    if (!window.confirm('确认删除所有已结束的一键查询并导出任务记录？活动任务不会删除。')) return;
+    try {
+      button.disabled = true;
+      const result = await api('/browser-commands?type=QUERY_ALL_EXPORT', { method: 'DELETE' });
+      await loadBrowserCommands();
+      setMessage($('[data-browser-command-status]'), '已删除 ' + Number(result.deletedCount || 0) + ' 条一键任务', 'success');
+    } catch (error) {
+      setMessage($('[data-browser-command-status]'), errorMessage(error));
+    } finally { button.disabled = false; }
+  });
   $('#extension-pairing-list')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-action="approve-extension-pairing"]');
     if (!button) return;
@@ -1159,13 +1173,32 @@ function initBrowserControl() {
     } finally { button.disabled = false; }
   });
   $('#extension-device-list')?.addEventListener('click', async (event) => {
-    const button = event.target.closest('[data-action="revoke-extension-device"]');
-    if (!button || !window.confirm('确认撤销此扩展设备？')) return;
+    const button = event.target.closest('[data-action]');
+    if (!button) return;
+    const isDelete = button.dataset.action === 'delete-extension-device';
+    if (!['revoke-extension-device', 'delete-extension-device'].includes(button.dataset.action)) return;
+    if (!window.confirm(isDelete ? '确认物理删除此扩展设备？其会话会立即失效。' : '确认撤销此扩展设备？')) return;
     try {
       button.disabled = true;
-      await api('/auth/extension-devices/' + encodeURIComponent(button.dataset.id) + '/revoke', { method: 'POST', body: '{}' });
-      setMessage($('[data-extension-authorization-message]'), '扩展设备已撤销', 'success');
+      if (isDelete) {
+        await api('/auth/extension-devices/' + encodeURIComponent(button.dataset.id), { method: 'DELETE' });
+      } else {
+        await api('/auth/extension-devices/' + encodeURIComponent(button.dataset.id) + '/revoke', { method: 'POST', body: '{}' });
+      }
+      setMessage($('[data-extension-authorization-message]'), isDelete ? '扩展设备已删除' : '扩展设备已撤销', 'success');
       await loadExtensionAuthorizations();
+    } catch (error) {
+      setMessage($('[data-extension-authorization-message]'), errorMessage(error));
+    } finally { button.disabled = false; }
+  });
+  $('#extension-device-delete-all')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    if (!window.confirm('确认物理删除所有已授权设备？所有设备会话会立即失效。')) return;
+    try {
+      button.disabled = true;
+      const result = await api('/auth/extension-devices', { method: 'DELETE' });
+      await loadExtensionAuthorizations();
+      setMessage($('[data-extension-authorization-message]'), '已删除 ' + Number(result.deletedCount || 0) + ' 台设备', 'success');
     } catch (error) {
       setMessage($('[data-extension-authorization-message]'), errorMessage(error));
     } finally { button.disabled = false; }
@@ -1179,6 +1212,9 @@ function initBrowserControl() {
       } else if (button.dataset.action === 'retry-browser-command') {
         const row = button.closest('tr');
         await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: row.dataset.type, platformAccountId: row.dataset.account || null, importBatchId: row.dataset.batch || null }) });
+      } else if (button.dataset.action === 'delete-browser-command') {
+        if (!window.confirm('确认物理删除此一键查询并导出任务记录？')) return;
+        await api('/browser-commands/' + encodeURIComponent(id), { method: 'DELETE' });
       }
       await loadBrowserCommands();
     }

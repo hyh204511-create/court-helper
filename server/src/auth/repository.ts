@@ -403,6 +403,54 @@ export class PgAuthRepository implements AuthRepository {
     return extensionDeviceFromRow(result.rows[0]);
   }
 
+  async deleteExtensionDevice(id: string): Promise<ExtensionDeviceRecord | null> {
+    const client = await this.connectionPool.connect();
+    try {
+      await client.query('BEGIN');
+      const existing = await client.query('SELECT * FROM extension_devices WHERE id = $1 FOR UPDATE', [id]);
+      if (!existing.rows[0]) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const deviceId = String(existing.rows[0].device_id);
+      await client.query('UPDATE sessions SET revoked_at = COALESCE(revoked_at, NOW()) WHERE extension_device_id = $1', [id]);
+      await client.query(`
+        UPDATE extension_pairings
+        SET status = 'cancelled', updated_at = NOW()
+        WHERE device_id = $1 AND status IN ('pending', 'approved')
+      `, [deviceId]);
+      const result = await client.query('DELETE FROM extension_devices WHERE id = $1 RETURNING *', [id]);
+      await client.query('COMMIT');
+      return result.rows[0] ? extensionDeviceFromRow(result.rows[0]) : null;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deleteExtensionDevices(): Promise<number> {
+    const client = await this.connectionPool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('UPDATE sessions SET revoked_at = COALESCE(revoked_at, NOW()) WHERE extension_device_id IS NOT NULL');
+      await client.query(`
+        UPDATE extension_pairings
+        SET status = 'cancelled', updated_at = NOW()
+        WHERE status IN ('pending', 'approved')
+      `);
+      const result = await client.query('DELETE FROM extension_devices RETURNING id');
+      await client.query('COMMIT');
+      return result.rows.length;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async touchExtensionDevice(id: string, now: Date): Promise<void> {
     await this.database.query('UPDATE extension_devices SET last_seen_at = $2, updated_at = $2 WHERE id = $1', [id, now]);
   }

@@ -211,6 +211,61 @@ test('administrator explicitly pairs an extension device, user-management stays 
   }
 });
 
+test('administrator can physically delete an extension device and bulk deletion removes every listed row', async () => {
+  const app = await makeApp();
+  try {
+    const pairing = await createPairing(app);
+    const admin = await loginAdmin(app);
+    const approved = await app.inject({
+      method: 'POST',
+      url: `/auth/extension-pairings/${pairing.id}/approve`,
+      headers: { cookie: admin.cookie, origin: ADMIN_ORIGIN, 'x-csrf-token': admin.csrfToken },
+      payload: { verificationCode: pairing.verificationCode },
+    });
+    assert.equal(approved.statusCode, 200);
+    const exchanged = await app.inject({
+      method: 'POST',
+      url: `/auth/extension-pairings/${pairing.id}/exchange`,
+      headers: { origin: EXTENSION_ORIGIN },
+      payload: { exchangeSecret: EXCHANGE_SECRET },
+    });
+    assert.equal(exchanged.statusCode, 200);
+    const token = exchanged.json().token;
+    const devices = await app.inject({ method: 'GET', url: '/auth/extension-devices', headers: { cookie: admin.cookie } });
+    const deviceId = devices.json().devices[0].id;
+
+    const missingCsrf = await app.inject({
+      method: 'DELETE',
+      url: `/auth/extension-devices/${deviceId}`,
+      headers: { cookie: admin.cookie, origin: ADMIN_ORIGIN },
+    });
+    assert.equal(missingCsrf.statusCode, 403);
+
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: `/auth/extension-devices/${deviceId}`,
+      headers: { cookie: admin.cookie, origin: ADMIN_ORIGIN, 'x-csrf-token': admin.csrfToken },
+    });
+    assert.equal(deleted.statusCode, 200);
+    assert.deepEqual(deleted.json(), { deletedCount: 1 });
+
+    const afterDelete = await app.inject({ method: 'GET', url: '/auth/extension-devices', headers: { cookie: admin.cookie } });
+    assert.deepEqual(afterDelete.json(), { devices: [] });
+    const invalidated = await app.inject({ method: 'GET', url: '/auth/me', headers: { authorization: `Bearer ${token}` } });
+    assert.equal(invalidated.statusCode, 401);
+
+    const bulkDelete = await app.inject({
+      method: 'DELETE',
+      url: '/auth/extension-devices',
+      headers: { cookie: admin.cookie, origin: ADMIN_ORIGIN, 'x-csrf-token': admin.csrfToken },
+    });
+    assert.equal(bulkDelete.statusCode, 200);
+    assert.deepEqual(bulkDelete.json(), { deletedCount: 0 });
+  } finally {
+    await app.close();
+  }
+});
+
 test('pairing creation keeps one active code per device and rate-limits unauthenticated creation', async () => {
   const app = await makeApp();
   try {
@@ -368,6 +423,8 @@ test('PostgreSQL repository persists hashed pairing state, device binding, and d
     });
     await repository.revokeExtensionDevice(device.id);
     assert.equal((await repository.findSessionByTokenHash('c'.repeat(64)))?.revokedAt !== null, true);
+    assert.ok(await repository.deleteExtensionDevice(device.id));
+    assert.equal(await repository.getExtensionDevice(device.id), null);
 
     const concurrentPairingId = '00000000-0000-4000-8000-000000000005';
     await repository.createExtensionPairing({

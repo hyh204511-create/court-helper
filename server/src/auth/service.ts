@@ -434,4 +434,14 @@ export class AuthService {
     if (!device) throw new NotFoundError('Extension device not found');
     return device;
   }
+
+  async deleteExtensionDevice(id: string): Promise<number> {
+    const device = await this.repository.deleteExtensionDevice(id);
+    if (!device) throw new NotFoundError('Extension device not found');
+    return 1;
+  }
+
+  async deleteExtensionDevices(): Promise<number> {
+    return this.repository.deleteExtensionDevices();
+  }
 }

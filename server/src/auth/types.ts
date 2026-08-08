@@ -137,5 +137,7 @@ export interface AuthRepository {
   createExtensionDevice(input: NewExtensionDevice): Promise<ExtensionDeviceRecord>;
   listExtensionDevices(): Promise<ExtensionDeviceRecord[]>;
   revokeExtensionDevice(id: string): Promise<ExtensionDeviceRecord | null>;
+  deleteExtensionDevice(id: string): Promise<ExtensionDeviceRecord | null>;
+  deleteExtensionDevices(): Promise<number>;
   touchExtensionDevice(id: string, now: Date): Promise<void>;
 }

@@ -288,6 +288,18 @@ export function registerAuthRoutes(app: FastifyInstance, options: RegisterAuthOp
     return { device: publicExtensionDevice(device) };
   });
 
+  app.delete(route(prefix, '/auth/extension-devices/:id'), async (request) => {
+    await requireAdminUiAdmin(request, service);
+    assertCookieWrite(request, service, config);
+    return { deletedCount: await service.deleteExtensionDevice(pairingId(request)) };
+  });
+
+  app.delete(route(prefix, '/auth/extension-devices'), async (request) => {
+    await requireAdminUiAdmin(request, service);
+    assertCookieWrite(request, service, config);
+    return { deletedCount: await service.deleteExtensionDevices() };
+  });
+
   app.get(route(prefix, '/users'), { preHandler: adminPreHandler }, async () => {
     const users = await service.listUsers();
     return { users: users.map(adminUser) };

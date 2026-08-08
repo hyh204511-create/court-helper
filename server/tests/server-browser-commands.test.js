@@ -636,6 +636,28 @@ test('browser command cleanup deletes only terminal commands in the requested ow
   assert.deepEqual((await service.list({ limit: 100 })).items.map((item) => item.id), [active.id]);
 });
 
+test('browser command deletion removes one terminal command and bulk filtering only removes one-click history', async () => {
+  const { service } = await makeService();
+  const oneClick = await service.create(commandInput('QUERY_ALL_EXPORT'));
+  const anotherOneClick = await service.create(commandInput('QUERY_ALL_EXPORT', { platformAccountId: randomUUID() }));
+  const otherTerminal = await service.create(commandInput('EXPORT_REPORT', { platformAccountId: randomUUID() }));
+  const active = await service.create(commandInput('QUERY_ALL_EXPORT', { platformAccountId: randomUUID() }));
+  await service.cancel(oneClick.id, ADMIN_ID);
+  await service.cancel(anotherOneClick.id, ADMIN_ID);
+  await service.cancel(otherTerminal.id, ADMIN_ID);
+
+  await assert.rejects(
+    service.deleteTerminalCommand(active.id),
+    (error) => error?.code === 'TASK_ACTIVE' && error?.statusCode === 409,
+  );
+  assert.equal(await service.deleteTerminalCommand(oneClick.id), 1);
+  await assert.rejects(service.get(oneClick.id), (error) => error?.code === 'NOT_FOUND');
+  assert.equal(await service.deleteTerminal(undefined, 'QUERY_ALL_EXPORT'), 1);
+  await assert.rejects(service.get(anotherOneClick.id), (error) => error?.code === 'NOT_FOUND');
+  assert.equal((await service.get(otherTerminal.id)).status, 'cancelled');
+  assert.equal((await service.get(active.id)).status, 'pending');
+});
+
 test('browser command service validates UUIDs, result states, progress, and safe summaries', async () => {
   const { service } = await makeService();
   await assert.rejects(
@@ -927,6 +949,51 @@ test('browser command cleanup route is CSRF protected, role scoped, and preserve
       headers: { cookie: admin.cookie },
     });
     assert.deepEqual(remaining.json().commands.map((item) => item.id), [active.json().command.id]);
+  } finally {
+    await app.close();
+  }
+});
+
+test('browser command delete route physically removes terminal rows and rejects active or cross-owner rows', async () => {
+  const { app } = await makeApp();
+  try {
+    const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
+    const user = await loginUi(app, 'worker', USER_PASSWORD);
+    const userCommand = await createCommand(app, user, '/api/v1', {
+      type: 'QUERY_ALL_EXPORT',
+      platformAccountId: randomUUID(),
+      importBatchId: IMPORT_BATCH_ID,
+    });
+    const activeId = userCommand.json().command.id;
+    const forbidden = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/browser-commands/${activeId}`,
+      headers: cookieHeaders(admin),
+    });
+    assert.equal(forbidden.statusCode, 409);
+    assert.equal(forbidden.json().error.code, 'TASK_ACTIVE');
+    const active = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/browser-commands/${activeId}`,
+      headers: cookieHeaders(user),
+    });
+    assert.equal(active.statusCode, 409);
+    assert.equal(active.json().error.code, 'TASK_ACTIVE');
+    const cancelled = await app.inject({
+      method: 'POST',
+      url: `/api/v1/browser-commands/${activeId}/cancel`,
+      headers: cookieHeaders(user),
+      payload: {},
+    });
+    assert.equal(cancelled.statusCode, 200);
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/browser-commands/${activeId}`,
+      headers: cookieHeaders(user),
+    });
+    assert.deepEqual(deleted.json(), { deletedCount: 1 });
+    const after = await app.inject({ method: 'GET', url: '/api/v1/browser-commands?limit=100', headers: cookieHeaders(admin) });
+    assert.equal(after.json().commands.some((item) => item.id === activeId), false);
   } finally {
     await app.close();
   }

@@ -222,7 +222,14 @@ export function registerBrowserCommandRoutes(
   app.delete(route(prefix, '/browser-commands'), async (request) => {
     const context = await requireBackOfficeWrite(request, authService, config);
     const requestedBy = context.user.role === 'admin' ? undefined : context.user.id;
-    return { deletedCount: await service.deleteTerminal(requestedBy) };
+    const type = enumQuery(queryOf(request).type, 'type', BROWSER_COMMAND_TYPES);
+    return { deletedCount: await service.deleteTerminal(requestedBy, type) };
+  });
+
+  app.delete(route(prefix, '/browser-commands/:id'), async (request) => {
+    const context = await requireBackOfficeWrite(request, authService, config);
+    const requestedBy = context.user.role === 'admin' ? undefined : context.user.id;
+    return { deletedCount: await service.deleteTerminalCommand(commandId(request), requestedBy) };
   });
 
   app.get(route(prefix, '/browser-commands/next'), { preHandler: extensionPreHandler }, async () => {

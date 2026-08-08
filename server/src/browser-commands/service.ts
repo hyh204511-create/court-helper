@@ -515,9 +515,26 @@ export class BrowserCommandService {
     return afterRace;
   }
 
-  async deleteTerminal(requestedBy?: string): Promise<number> {
+  async deleteTerminal(requestedBy?: string, type?: BrowserCommandType): Promise<number> {
     if (requestedBy !== undefined) assertUuid(requestedBy, 'requestedBy');
     await this.repository.expireStale(this.now());
-    return this.repository.deleteTerminal(requestedBy);
+    return this.repository.deleteTerminal(requestedBy, type);
+  }
+
+  async deleteTerminalCommand(id: string, requestedBy?: string): Promise<number> {
+    assertUuid(id, 'id');
+    if (requestedBy !== undefined) assertUuid(requestedBy, 'requestedBy');
+    const now = this.now();
+    await this.repository.expireStale(now);
+    const current = await this.repository.get(id);
+    if (!current || (requestedBy !== undefined && current.requestedBy !== requestedBy)) {
+      throw new NotFoundError('Browser command not found');
+    }
+    if (!isTerminalStatus(current.status)) {
+      throw new ConflictError('Active browser command cannot be deleted', 'TASK_ACTIVE');
+    }
+    const deleted = await this.repository.deleteTerminalById(id, requestedBy);
+    if (!deleted) throw new NotFoundError('Browser command not found');
+    return 1;
   }
 }

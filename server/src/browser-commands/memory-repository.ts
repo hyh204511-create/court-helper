@@ -7,6 +7,7 @@ import type {
   BrowserCommandRecord,
   BrowserCommandRepository,
   BrowserCommandResultInput,
+  BrowserCommandType,
   NewBrowserCommand,
 } from './types.ts';
 
@@ -177,15 +178,24 @@ export class MemoryBrowserCommandRepository implements BrowserCommandRepository 
     return copyCommand(command);
   }
 
-  async deleteTerminal(requestedBy?: string): Promise<number> {
+  async deleteTerminal(requestedBy?: string, type?: BrowserCommandType): Promise<number> {
     let count = 0;
     for (const [id, command] of this.commands) {
-      if (terminal(command) && (requestedBy === undefined || command.requestedBy === requestedBy)) {
+      if (terminal(command)
+        && (requestedBy === undefined || command.requestedBy === requestedBy)
+        && (type === undefined || command.type === type)) {
         this.commands.delete(id);
         count += 1;
       }
     }
     return count;
+  }
+
+  async deleteTerminalById(id: string, requestedBy?: string): Promise<BrowserCommandRecord | null> {
+    const command = this.commands.get(id);
+    if (!command || (requestedBy !== undefined && command.requestedBy !== requestedBy) || !terminal(command)) return null;
+    this.commands.delete(id);
+    return copyCommand(command);
   }
 
   async expireStale(now: Date): Promise<number> {

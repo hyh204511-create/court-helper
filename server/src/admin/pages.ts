@@ -215,7 +215,7 @@ function browserControlPage(role: AdminRole): string {
         <h4>待批准请求</h4>
         <div class="table-wrap"><table class="data-table"><thead><tr><th>设备</th><th>标签</th><th>过期时间</th><th>核对码</th><th>操作</th></tr></thead><tbody id="extension-pairing-list"></tbody></table></div>
         <h4>已授权设备</h4>
-        <div class="table-wrap"><table class="data-table"><thead><tr><th>设备</th><th>标签</th><th>最近在线</th><th>状态</th><th>操作</th></tr></thead><tbody id="extension-device-list"></tbody></table></div>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>设备</th><th>标签</th><th>最近在线</th><th>状态</th><th>操作</th></tr></thead><tbody id="extension-device-list"></tbody></table></div><div class="form-actions"><button id="extension-device-delete-all" class="small-button danger" type="button">一键删除所有设备</button></div>
       </div>
     </section>` : '';
   return layout('browser-control', role, '浏览器控制', `
@@ -260,7 +260,7 @@ function browserControlPage(role: AdminRole): string {
       </div>
     </section>
     <section class="panel" aria-labelledby="browser-command-list-title">
-      <div class="panel-head"><div><h3 id="browser-command-list-title">任务列表</h3><p>状态、进度与错误码来自扩展回写；账号搜索同时过滤这里的任务。</p></div><button id="browser-command-clear" class="small-button danger" type="button">清空已结束任务</button></div>
+      <div class="panel-head"><div><h3 id="browser-command-list-title">任务列表</h3><p>状态、进度与错误码来自扩展回写；账号搜索同时过滤这里的任务。</p></div><div class="row-actions"><button id="browser-command-delete-all" class="small-button danger" type="button">一键删除所有一键任务</button><button id="browser-command-clear" class="small-button danger" type="button">清空已结束任务</button></div></div>
       <div class="panel-body"><div class="case-status"><span data-browser-command-status class="message muted" aria-live="polite">准备读取</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>平台账号</th><th>类型</th><th>状态</th><th>进度</th><th>结果</th><th>创建者</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="browser-command-rows"></tbody></table></div></div>
     </section>`);
 }

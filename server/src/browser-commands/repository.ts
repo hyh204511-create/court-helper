@@ -9,6 +9,7 @@ import type {
   BrowserCommandRecord,
   BrowserCommandRepository,
   BrowserCommandResultInput,
+  BrowserCommandType,
   NewBrowserCommand,
 } from './types.ts';
 
@@ -225,14 +226,37 @@ export class PgBrowserCommandRepository implements BrowserCommandRepository {
     return existing.rows[0] ? commandFromRow(existing.rows[0]) : null;
   }
 
-  async deleteTerminal(requestedBy?: string): Promise<number> {
-    const ownerCondition = requestedBy === undefined ? '' : 'AND requested_by = $1';
+  async deleteTerminal(requestedBy?: string, type?: BrowserCommandType): Promise<number> {
+    const values: unknown[] = [];
+    const conditions = ["status IN ('succeeded', 'failed', 'expired', 'manual_required', 'cancelled')"];
+    if (requestedBy !== undefined) {
+      values.push(requestedBy);
+      conditions.push(`requested_by = $${values.length}`);
+    }
+    if (type !== undefined) {
+      values.push(type);
+      conditions.push(`type = $${values.length}`);
+    }
     const result = await this.database.query(`
       DELETE FROM browser_commands
-      WHERE status IN ('succeeded', 'failed', 'expired', 'manual_required', 'cancelled')
-      ${ownerCondition}
-    `, requestedBy === undefined ? [] : [requestedBy]);
+      WHERE ${conditions.join(' AND ')}
+    `, values);
     return Number(result.rowCount ?? 0);
+  }
+
+  async deleteTerminalById(id: string, requestedBy?: string): Promise<BrowserCommandRecord | null> {
+    const values: unknown[] = [id];
+    const conditions = ["id = $1", "status IN ('succeeded', 'failed', 'expired', 'manual_required', 'cancelled')"];
+    if (requestedBy !== undefined) {
+      values.push(requestedBy);
+      conditions.push(`requested_by = $${values.length}`);
+    }
+    const result = await this.database.query(`
+      DELETE FROM browser_commands
+      WHERE ${conditions.join(' AND ')}
+      RETURNING *
+    `, values);
+    return result.rows[0] ? commandFromRow(result.rows[0]) : null;
   }
 
   async expireStale(now: Date): Promise<number> {
