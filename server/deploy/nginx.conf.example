@@ -8,6 +8,8 @@ server {
     listen 80;
     listen [::]:80;
     server_name example.com;
+    # Request URLs may contain sensitive case-search keywords; do not log them.
+    access_log off;
 
     return 301 https://$host$request_uri;
 }
@@ -16,6 +18,8 @@ server {
     listen 443 ssl;
     listen [::]:443 ssl;
     server_name example.com;
+    # Request URLs may contain sensitive case-search keywords; do not log them.
+    access_log off;
 
     # Self-signed certificates are suitable only for controlled testing.
     # For production, mount a CA-issued or Let's Encrypt certificate here.

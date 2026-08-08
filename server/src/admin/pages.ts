@@ -249,10 +249,11 @@ function browserControlPage(role: AdminRole): string {
       <div class="panel-body"><form id="import-batch-form" enctype="multipart/form-data"><div class="field"><label for="import-batch-file">Excel 模板</label><input id="import-batch-file" name="file" type="file" accept=".xlsx" required></div><div class="form-actions"><button class="primary" type="submit">上传批次</button></div></form><p class="message" data-import-batch-message aria-live="polite"></p><div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>立案行</th><th>强执行</th><th>跳过</th><th>创建时间</th></tr></thead><tbody id="import-batch-rows"></tbody></table></div></div>
     </section>
     <section class="panel" aria-labelledby="browser-account-search-title">
-      <div class="panel-head"><div><h3 id="browser-account-search-title">账号查询与案件状态</h3><p>按平台账号标签搜索定位；案件状态来自台账精确结果，不从任务成功状态推断。</p></div></div>
+      <div class="panel-head"><div><h3 id="browser-account-search-title">账号查询与案件状态</h3><p>按平台账号标签搜索定位，可再按原告、被告或案号关键词筛选；关键词只在本次页面内存中使用，案件状态来自台账精确结果。</p></div></div>
       <div class="panel-body">
         <form id="browser-account-search-form" class="filters">
           <div class="field"><label for="browser-account-search">账号标签</label><input id="browser-account-search" type="search" list="browser-account-labels" autocomplete="off" placeholder="输入账号标签" required><datalist id="browser-account-labels"></datalist></div>
+          <div class="field"><label for="browser-account-keyword">案件关键词（可选）</label><input id="browser-account-keyword" type="search" autocomplete="off" placeholder="原告、被告或案号"></div>
           <div class="filter-actions"><button class="primary" type="submit">查询账号</button></div>
         </form>
         <p class="message muted" data-browser-account-message aria-live="polite">请选择账号查询</p>

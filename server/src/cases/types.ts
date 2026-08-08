@@ -81,6 +81,7 @@ export interface CaseListOptions {
   kind?: CaseKind;
   status?: CaseStatus;
   platformAccountId?: string;
+  keyword?: string;
   needsHuman?: boolean;
   from?: string;
   to?: string;

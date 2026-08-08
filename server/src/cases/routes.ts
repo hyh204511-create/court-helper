@@ -17,6 +17,7 @@ interface QueryParams {
   kind?: unknown;
   status?: unknown;
   platformAccountId?: unknown;
+  keyword?: unknown;
   needsHuman?: unknown;
   from?: unknown;
   to?: unknown;
@@ -184,6 +185,16 @@ function queryString(value: unknown, field: string): string | undefined {
   return value;
 }
 
+function queryKeyword(value: unknown): string | undefined {
+  const keyword = queryString(value, 'keyword');
+  if (keyword === undefined) return undefined;
+  const normalized = keyword.trim();
+  if (normalized.length > 200) {
+    throw new ValidationError([{ field: 'keyword', code: 'maximum_exceeded' }]);
+  }
+  return normalized;
+}
+
 function queryInteger(value: unknown, field: string, fallback: number, maximum?: number): number {
   if (value === undefined) return fallback;
   if (typeof value !== 'string' || !/^\d+$/.test(value)) {
@@ -219,6 +230,7 @@ function listOptions(query: QueryParams, limit: number) {
     kind: query.kind === undefined ? undefined : enumValue(query.kind, 'kind', CASE_KINDS),
     status: query.status === undefined ? undefined : enumValue(query.status, 'status', CASE_STATUSES),
     platformAccountId: queryString(query.platformAccountId, 'platformAccountId'),
+    keyword: queryKeyword(query.keyword),
     needsHuman: queryBoolean(query.needsHuman, 'needsHuman'),
     from: from ?? undefined,
     to: to ?? undefined,

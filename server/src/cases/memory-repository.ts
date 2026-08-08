@@ -56,6 +56,15 @@ function matchesDate(value: string | null, from: string | undefined, to: string 
   return true;
 }
 
+function matchesKeyword(value: CaseRecord, keyword: string | undefined): boolean {
+  if (keyword === undefined) return true;
+  const normalized = keyword.toLocaleLowerCase('zh-CN');
+  return [value.plaintiff, value.defendant, value.caseNumber].some((candidate) => (
+    candidate !== null
+    && candidate.toLocaleLowerCase('zh-CN').includes(normalized)
+  ));
+}
+
 export class MemoryCaseRepository implements CaseRepository {
   private readonly cases = new Map<string, CaseRecord>();
   private nextRevision: number;
@@ -92,6 +101,7 @@ export class MemoryCaseRepository implements CaseRepository {
       .filter((value) => options.kind === undefined || value.kind === options.kind)
       .filter((value) => options.status === undefined || value.status === options.status)
       .filter((value) => options.platformAccountId === undefined || value.platformAccountId === options.platformAccountId)
+      .filter((value) => matchesKeyword(value, options.keyword))
       .filter((value) => options.needsHuman === undefined || value.needsHuman === options.needsHuman)
       .filter((value) => options.afterRevision === undefined || value.revision > options.afterRevision)
       .filter((value) => matchesDate(value.filedTime, options.from, options.to))

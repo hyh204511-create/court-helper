@@ -204,6 +204,8 @@ button:disabled { cursor: not-allowed; opacity: .48; transform: none; }
 
 export const ADMIN_SCRIPT = String.raw`
 const API_BASE = '/api/v1';
+const ACCOUNT_CASE_PAGE_SIZE = 100;
+const ACCOUNT_CASE_MAX_PAGES = 100;
 let csrfToken = null;
 let currentSessionUser = null;
 let casePollTimer = null;
@@ -808,6 +810,7 @@ let browserCommandPollTimer = null;
 let browserControlVisible = true;
 let browserControlUserNames = null;
 let browserControlAccounts = [];
+let browserAccountQueryGeneration = 0;
 
 function browserCommandStatusLabel(status) {
   const labels = { pending: '等待中', executing: '执行中', succeeded: '成功', failed: '失败', expired: '已过期', manual_required: '待人工', cancelled: '已取消' };
@@ -894,14 +897,51 @@ function filterBrowserCommandRows() {
   });
 }
 
-async function loadBrowserAccountCases(account) {
+function matchesBrowserAccountKeyword(caseRecord, keyword) {
+  if (!keyword) return true;
+  const normalized = keyword.toLocaleLowerCase('zh-CN');
+  return [caseRecord.plaintiff, caseRecord.defendant, caseRecord.caseNumber].some((candidate) => (
+    typeof candidate === 'string'
+    && candidate.toLocaleLowerCase('zh-CN').includes(normalized)
+  ));
+}
+
+async function loadBrowserAccountCases(account, generation) {
   const target = $('#browser-account-case-rows');
   const message = $('[data-browser-account-message]');
   if (!target) return;
+  if (generation !== browserAccountQueryGeneration) return;
   clear(target);
   try {
-    const result = await api('/cases?platformAccountId=' + encodeURIComponent(account.id) + '&limit=100');
-    (result.cases || []).forEach((caseRecord) => {
+    const keyword = String($('#browser-account-keyword')?.value || '').trim();
+    const cases = [];
+    const seenCursors = new Set();
+    let cursor = null;
+    let pageCount = 0;
+    while (true) {
+      if (pageCount >= ACCOUNT_CASE_MAX_PAGES) throw new ApiError(0, 'CASE_QUERY_PAGINATION_INVALID');
+      if (cursor !== null) {
+        const cursorKey = String(cursor);
+        if (seenCursors.has(cursorKey)) throw new ApiError(0, 'CASE_QUERY_PAGINATION_INVALID');
+        seenCursors.add(cursorKey);
+      }
+      pageCount += 1;
+      const params = new URLSearchParams();
+      params.set('platformAccountId', account.id);
+      params.set('limit', String(ACCOUNT_CASE_PAGE_SIZE));
+      if (cursor !== null) params.set('cursor', String(cursor));
+      const result = await api('/cases?' + params.toString());
+      if (generation !== browserAccountQueryGeneration) return;
+      cases.push(...(result.cases || []));
+      const nextCursor = result.nextCursor ?? null;
+      if (nextCursor !== null && cursor !== null && String(nextCursor) === String(cursor)) {
+        throw new ApiError(0, 'CASE_QUERY_PAGINATION_INVALID');
+      }
+      cursor = nextCursor;
+      if (cursor === null) break;
+    }
+    const filteredCases = cases.filter((caseRecord) => matchesBrowserAccountKeyword(caseRecord, keyword));
+    filteredCases.forEach((caseRecord) => {
       const row = element('tr');
       row.append(
         element('td', account.label || '未命名'),
@@ -913,8 +953,9 @@ async function loadBrowserAccountCases(account) {
       target.appendChild(row);
     });
     if (!target.firstChild) { const row = element('tr'); const cell = element('td', '该账号暂无案件记录'); cell.colSpan = 5; row.appendChild(cell); target.appendChild(row); }
-    setMessage(message, '已定位账号：' + (account.label || '未命名') + '，共 ' + (result.cases?.length || 0) + ' 条案件', 'success');
+    setMessage(message, '已定位账号：' + (account.label || '未命名') + '，共 ' + filteredCases.length + ' 条案件', 'success');
   } catch (error) {
+    if (generation !== browserAccountQueryGeneration) return;
     setMessage(message, errorMessage(error));
   }
 }
@@ -1130,7 +1171,8 @@ function initBrowserControl() {
     if (!selected) { setMessage($('[data-browser-account-message]'), '未找到唯一账号，请从账号标签提示中选择'); return; }
     accountSearch.value = selected.label || '';
     filterBrowserCommandRows();
-    void loadBrowserAccountCases(selected);
+    const generation = ++browserAccountQueryGeneration;
+    void loadBrowserAccountCases(selected, generation);
   });
   $('#browser-command-clear')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;

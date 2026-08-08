@@ -79,6 +79,10 @@ function writeValues(input: CaseWriteInput): unknown[] {
   ];
 }
 
+function likeContainsPattern(value: string): string {
+  return `%${value.replace(/[\\%_]/g, '\\$&')}%`;
+}
+
 export class PgCaseRepository implements CaseRepository {
   private readonly database: Queryable;
 
@@ -124,6 +128,11 @@ export class PgCaseRepository implements CaseRepository {
     if (options.kind !== undefined) add('kind = ?', options.kind);
     if (options.status !== undefined) add('status = ?', options.status);
     if (options.platformAccountId !== undefined) add('platform_account_id = ?', options.platformAccountId);
+    if (options.keyword !== undefined) {
+      values.push(likeContainsPattern(options.keyword));
+      const placeholder = `$${values.length}`;
+      conditions.push(`(LOWER(COALESCE(plaintiff, '')) LIKE LOWER(${placeholder}) OR LOWER(COALESCE(defendant, '')) LIKE LOWER(${placeholder}) OR LOWER(COALESCE(case_number, '')) LIKE LOWER(${placeholder}))`);
+    }
     if (options.needsHuman !== undefined) add('needs_human = ?', options.needsHuman);
     if (options.from !== undefined) add('filed_time >= ?::date', options.from);
     if (options.to !== undefined) add('filed_time <= ?::date', options.to);
