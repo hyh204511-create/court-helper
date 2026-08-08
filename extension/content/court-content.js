@@ -3,7 +3,7 @@
 // 依据 docs/specs/query-module.md 与 app-module.md：
 // - 登录由后台统一命令驱动；批量执行前校验已登录 + 当前账号与案件账号一致（不一致 → 待人工切换）；
 // - 驳回案件：列表行直读审核意见（驳回原因），审核时间/截图由「案件空间」新标签的
-//   详情页实例自动采集（storage.session 传递待办，详情页回写 db）；
+//   详情页实例自动采集（Service Worker 桥接 session storage 传递待办，详情页回写 db）；
 // - 截图只渲染已确认的案件行/审核区域，避免依赖 activeTab 临时授权或调试器。
 import { SELECTORS } from "./selectors.js";
 import {
@@ -435,13 +435,15 @@ function findAuditSection() {
 
 // —— 详情页角色：读取待办并采集驳回凭证（审核时间/原因/截图） ——
 export async function runDetailCapture({ capture = captureElement } = {}) {
-  const { pendingDetail } = await chrome.storage.session.get("pendingDetail");
+  const pendingResponse = await chrome.runtime.sendMessage({ type: "CASE_DETAIL_PENDING_GET" });
+  if (pendingResponse?.ok !== true) return false;
+  const { pendingDetail } = pendingResponse;
   if (!pendingDetail?.uid) return false;
   const { uid, kind } = pendingDetail;
   try {
-    chrome.runtime.sendMessage({ type: "CASE_SPACE_ADOPTED", uid, kind });
+    await chrome.runtime.sendMessage({ type: "CASE_SPACE_ADOPTED", uid, kind });
   } catch {
-    // Storage/IndexedDB remains the authoritative handoff.
+    // pendingDetail remains the authoritative handoff; adoption is diagnostic only.
   }
   const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
   const ok = await waitFor(
@@ -462,7 +464,7 @@ export async function runDetailCapture({ capture = captureElement } = {}) {
       needsHuman: true,
       errorCode: "AUDIT_EVIDENCE_INCOMPLETE",
     });
-    await chrome.storage.session.set({ pendingDetail: null });
+    await chrome.runtime.sendMessage({ type: "CASE_DETAIL_PENDING_CLEAR" });
     return true;
   }
   let image = null;
@@ -487,19 +489,20 @@ export async function runDetailCapture({ capture = captureElement } = {}) {
     needsHuman: image ? (recoveredCapture ? false : rec.needsHuman === true) : true,
     errorCode: image ? (recoveredCapture ? null : rec.errorCode ?? null) : "SCREENSHOT_CAPTURE_FAILED",
   });
-  await chrome.storage.session.set({ pendingDetail: null });
+  await chrome.runtime.sendMessage({ type: "CASE_DETAIL_PENDING_CLEAR" });
   showToast(`已采集驳回凭证（${uid.slice(0, 8)}…）：${latest.time || "时间未知"}`);
   return true;
 }
 
 /** 触发详情采集：登记待办 → 点击「案件空间」打开新标签 */
 async function triggerDetailCapture({ uid, kind, target }) {
-  await chrome.storage.session.set({ pendingDetail: { uid, kind, at: Date.now() } });
+  let handoff;
   try {
-    chrome.runtime.sendMessage({ type: "CASE_SPACE_OPEN", uid, kind });
+    handoff = await chrome.runtime.sendMessage({ type: "CASE_SPACE_OPEN", uid, kind });
   } catch {
-    // Fire-and-forget notification; failure does not cancel evidence capture.
+    throw new Error("CASE_SPACE_HANDOFF_FAILED");
   }
+  if (handoff?.ok !== true) throw new Error(handoff?.code ?? "CASE_SPACE_HANDOFF_FAILED");
   const btn = target.querySelector(SELECTORS.list.spaceBtn);
   if (btn) {
     btn.click();

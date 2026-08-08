@@ -22,6 +22,7 @@ async function waitFor(predicate, { attempts = 50 } = {}) {
 
 async function loadWorker({
   storageData = {},
+  sessionData = {},
   fetchImpl = async () => makeResponse({}),
   tabs = [],
   captureVisibleTab = async () => "data:image/jpeg;base64,",
@@ -68,6 +69,13 @@ async function loadWorker({
           for (const key of (Array.isArray(keys) ? keys : [keys])) delete storageData[key];
         },
       },
+      session: {
+        get: async (key) => (typeof key === "string" ? { [key]: sessionData[key] } : { ...sessionData }),
+        set: async (values) => Object.assign(sessionData, values),
+        remove: async (keys) => {
+          for (const key of (Array.isArray(keys) ? keys : [keys])) delete sessionData[key];
+        },
+      },
       onChanged: { addListener(listener) { storageListeners.push(listener); } },
     },
     alarms: {
@@ -84,7 +92,7 @@ async function loadWorker({
 
   try {
     const worker = await import(`../extension/service-worker.js?export-upload-test=${importSequence++}`);
-    return { worker, runtimeListener: runtimeListeners.at(-1), fetches, alarmCreates, intervals, storageData, notifyStorageChange(changes) {
+    return { worker, runtimeListener: runtimeListeners.at(-1), fetches, alarmCreates, intervals, storageData, sessionData, notifyStorageChange(changes) {
       for (const [key, change] of Object.entries(changes)) {
         if (!Object.hasOwn(change ?? {}, "newValue")) continue;
         if (change.newValue === undefined) delete storageData[key];
@@ -118,6 +126,35 @@ async function loadWorker({
     throw error;
   }
 }
+
+test("案件空间待办由 Worker 桥接 session storage，且只接受法院标签页", async () => {
+  const loaded = await loadWorker();
+  const courtSender = { tab: { id: 17, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/pc/list/index" } };
+  try {
+    const opened = invoke(loaded.runtimeListener, { type: "CASE_SPACE_OPEN", uid: "synthetic-uid", kind: "qz" }, courtSender);
+    assert.equal(opened.returned, true);
+    assert.deepEqual(await opened.readResponse(), { ok: true, phase: "opening", tabId: 17 });
+    assert.deepEqual(loaded.sessionData.pendingDetail, { uid: "synthetic-uid", kind: "qz" });
+
+    const read = invoke(loaded.runtimeListener, { type: "CASE_DETAIL_PENDING_GET" }, courtSender);
+    assert.equal(read.returned, true);
+    assert.deepEqual(await read.readResponse(), { ok: true, pendingDetail: { uid: "synthetic-uid", kind: "qz" } });
+
+    const cleared = invoke(loaded.runtimeListener, { type: "CASE_DETAIL_PENDING_CLEAR" }, courtSender);
+    assert.equal(cleared.returned, true);
+    assert.deepEqual(await cleared.readResponse(), { ok: true });
+    assert.equal(loaded.sessionData.pendingDetail, undefined);
+
+    const rejected = invoke(
+      loaded.runtimeListener,
+      { type: "CASE_DETAIL_PENDING_GET" },
+      { tab: { id: 18, url: "https://example.invalid/" } },
+    );
+    assert.deepEqual(await rejected.readResponse(), { ok: false, code: "UNTRUSTED_SENDER" });
+  } finally {
+    loaded.cleanup();
+  }
+});
 
 function invoke(listener, message, sender = {}) {
   let response;

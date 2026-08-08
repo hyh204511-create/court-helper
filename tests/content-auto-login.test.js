@@ -10,20 +10,34 @@ let importSequence = 0;
 
 function makeChrome() {
   const listeners = [];
+  let pendingDetail = null;
   return {
     listeners,
+    setPendingDetail(value) { pendingDetail = value; },
     runtime: {
       onMessage: {
         addListener(listener) {
           listeners.push(listener);
         },
       },
-      sendMessage: async () => undefined,
+      sendMessage: async (message) => {
+        if (message?.type === "CASE_DETAIL_PENDING_GET") return { ok: true, pendingDetail };
+        if (message?.type === "CASE_DETAIL_PENDING_CLEAR") {
+          pendingDetail = null;
+          return { ok: true };
+        }
+        if (message?.type === "CASE_SPACE_OPEN") {
+          pendingDetail = { uid: message.uid, kind: message.kind };
+          return { ok: true, phase: "opening", tabId: 17 };
+        }
+        if (message?.type === "CASE_SPACE_ADOPTED") return { ok: true, phase: "adopted", tabId: 18 };
+        return undefined;
+      },
     },
     storage: {
       session: {
-        get: async () => ({}),
-        set: async () => undefined,
+        get: async () => { throw new Error("Access to storage is not allowed from this context."); },
+        set: async () => { throw new Error("Access to storage is not allowed from this context."); },
       },
     },
   };
@@ -486,7 +500,7 @@ test("详情页最新审核记录不完整时不回退历史记录或截图", as
       <div class="uni-forms-item"><span>审核意见</span><span>synthetic complete opinion</span></div>`,
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  chrome.storage.session.get = async () => ({ pendingDetail: { uid, kind: "li" } });
+  chrome.setPendingDetail({ uid, kind: "li" });
   try {
     let captures = 0;
     const ok = await module.runDetailCapture({
@@ -518,7 +532,7 @@ test("详情页最新审核记录不完整时不回退历史记录或截图", as
       <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
       <div class="uni-forms-item"><span>审核结果</span><span>审核不通过</span></div>
       <div class="uni-forms-item"><span>审核时间</span><span>2026-08-07 09:30:00</span></div>`;
-    chrome.storage.session.get = async () => ({ pendingDetail: { uid: incompleteUid, kind: "li" } });
+    chrome.setPendingDetail({ uid: incompleteUid, kind: "li" });
     let incompleteCaptures = 0;
     assert.equal(await module.runDetailCapture({ capture: async () => { incompleteCaptures += 1; } }), true);
     const incomplete = await db.getByUid(db.STORE_CASES, incompleteUid);

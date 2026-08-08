@@ -326,6 +326,70 @@ function handleExtensionPairingMessage(message, sendResponse) {
   return false;
 }
 
+const CASE_DETAIL_MESSAGE_TYPES = new Set([
+  "CASE_SPACE_OPEN",
+  "CASE_SPACE_ADOPTED",
+  "CASE_DETAIL_PENDING_GET",
+  "CASE_DETAIL_PENDING_CLEAR",
+]);
+
+function isCourtContentSender(sender) {
+  try {
+    return new URL(sender?.tab?.url ?? sender?.url ?? "").hostname === "zxfw.court.gov.cn";
+  } catch {
+    return false;
+  }
+}
+
+function handleCaseDetailMessage(message, sender, sendResponse) {
+  if (!CASE_DETAIL_MESSAGE_TYPES.has(message?.type)) return false;
+  if (!isCourtContentSender(sender)) {
+    sendResponse({ ok: false, code: "UNTRUSTED_SENDER" });
+    return true;
+  }
+  const session = chrome.storage?.session;
+  if (!session?.get || !session?.set || !session?.remove) {
+    sendResponse({ ok: false, code: "CASE_SPACE_HANDOFF_FAILED" });
+    return true;
+  }
+  (async () => {
+    if (message.type === "CASE_DETAIL_PENDING_GET") {
+      const { pendingDetail } = await session.get("pendingDetail");
+      const value = pendingDetail?.uid
+        ? { uid: pendingDetail.uid, kind: pendingDetail.kind === "qz" ? "qz" : "li" }
+        : null;
+      sendResponse({ ok: true, pendingDetail: value });
+      return;
+    }
+    if (message.type === "CASE_DETAIL_PENDING_CLEAR") {
+      await session.remove("pendingDetail");
+      sendResponse({ ok: true });
+      return;
+    }
+    const uid = typeof message.uid === "string" && message.uid ? message.uid : null;
+    if (!uid) {
+      sendResponse({ ok: false, code: "CASE_SPACE_HANDOFF_FAILED" });
+      return;
+    }
+    const kind = message.kind === "qz" ? "qz" : "li";
+    const tabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : null;
+    const phase = message.type === "CASE_SPACE_ADOPTED" ? "adopted" : "opening";
+    await session.set({
+      ...(phase === "opening" ? { pendingDetail: { uid, kind } } : {}),
+      caseSpaceHandoff: {
+        uid,
+        kind,
+        sourceTabId: phase === "opening" ? tabId : undefined,
+        detailTabId: phase === "adopted" ? tabId : undefined,
+        phase,
+        at: Date.now(),
+      },
+    });
+    sendResponse({ ok: true, phase, tabId });
+  })().catch(() => sendResponse({ ok: false, code: "CASE_SPACE_HANDOFF_FAILED" }));
+  return true;
+}
+
 if (globalThis.chrome?.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === QUERY_API_REQUEST) {
@@ -338,22 +402,7 @@ if (globalThis.chrome?.runtime?.onMessage?.addListener) {
       return debuggerDriver.handleMessage(message, sender, sendResponse);
     }
     wakeBrowserCommandPoller({ immediate: true });
-    if (message?.type === "CASE_SPACE_OPEN" || message?.type === "CASE_SPACE_ADOPTED") {
-      const tabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : null;
-      const phase = message.type === "CASE_SPACE_ADOPTED" ? "adopted" : "opening";
-      chrome.storage?.session?.set?.({
-        caseSpaceHandoff: {
-          uid: typeof message.uid === "string" ? message.uid : null,
-          kind: message.kind === "qz" ? "qz" : "li",
-          sourceTabId: phase === "opening" ? tabId : undefined,
-          detailTabId: phase === "adopted" ? tabId : undefined,
-          phase,
-          at: Date.now(),
-        },
-      });
-      sendResponse({ ok: true, phase, tabId });
-      return false;
-    }
+    if (handleCaseDetailMessage(message, sender, sendResponse)) return true;
     // AUTO_LOGIN 只在 content script 处理，service worker 不接收、不转发、不持久化。
     if (message?.type === "AUTO_LOGIN") return false;
     if (handleExtensionPairingMessage(message, sendResponse)) return true;
