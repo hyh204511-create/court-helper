@@ -64,3 +64,27 @@ test("分类精确文本重复时返回 SELECTOR_CHANGED 且不点击查询", as
   assert.deepEqual(result, { ok: false, error: "SELECTOR_CHANGED" });
   assert.equal(clicks, 0);
 });
+
+test("默认等待器不会把旧分类残留空态当作目标分类已稳定", async () => {
+  const dom = new JSDOM(`<!doctype html><body>
+    <div class="fd-com-tab"><button>审判</button><button>执行</button></div>
+    <button class="fd-com-search-btn">查询</button>
+    <div class="fd-com-list-container">暂无数据</div>
+  </body>`);
+  dom.window.document.querySelector(".fd-com-search-btn").addEventListener("click", () => {
+    dom.window.setTimeout(() => {
+      dom.window.document.querySelector(".fd-com-list-container").innerHTML = `
+        <div class="fd-case-item"><div class="fd-header-ajlx">首次执行案件</div></div>`;
+    }, 20);
+  });
+
+  const result = await switchQueryCategory(dom.window.document, "qz", {
+    afterTabClick: async () => undefined,
+    timeoutMs: 300,
+    intervalMs: 5,
+    settleMs: 10,
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.match(dom.window.document.querySelector(".fd-com-list-container").textContent, /首次执行案件/);
+});

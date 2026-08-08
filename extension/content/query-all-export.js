@@ -17,16 +17,32 @@ function isUsable(element) {
   return style?.display !== "none" && style?.visibility !== "hidden";
 }
 
-async function defaultWaitForList(root, kind, { timeoutMs = 10_000, intervalMs = 100 } = {}) {
+function trackListMutations(root) {
+  const container = root.querySelector(SELECTORS.list.container);
+  const MutationObserverImpl = root.defaultView?.MutationObserver ?? root.ownerDocument?.defaultView?.MutationObserver;
+  let lastMutationAt = null;
+  if (!container || typeof MutationObserverImpl !== "function") {
+    return { container, lastMutationAt: () => lastMutationAt, disconnect() {} };
+  }
+  const observer = new MutationObserverImpl(() => { lastMutationAt = Date.now(); });
+  observer.observe(container, { childList: true, subtree: true, characterData: true });
+  return { container, lastMutationAt: () => lastMutationAt, disconnect: () => observer.disconnect() };
+}
+
+async function defaultWaitForList(root, kind, tracker, { timeoutMs = 10_000, intervalMs = 100, settleMs = 200 } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
-    const container = root.querySelector(SELECTORS.list.container);
     const rows = [...root.querySelectorAll(SELECTORS.list.row)];
     const isExpected = rows.length > 0 && rows.every((row) => {
       const type = String(row.querySelector(SELECTORS.list.caseType)?.textContent ?? "").trim();
       return kind === "qz" ? type.includes("执行") : !type.includes("执行");
     });
-    if (isExpected || (container && String(container.textContent ?? "").includes("暂无数据"))) return true;
+    const changedAt = tracker.lastMutationAt();
+    const changedAndSettled = changedAt !== null && Date.now() - changedAt >= settleMs;
+    const isConfirmedEmpty = changedAndSettled
+      && tracker.container
+      && String(tracker.container.textContent ?? "").includes("暂无数据");
+    if (isExpected || isConfirmedEmpty) return true;
     await sleep(intervalMs);
   }
   return false;
@@ -42,13 +58,20 @@ export async function switchQueryCategory(root, kind, options = {}) {
   }
   const matches = exactLeafMatches(containers[0], label).filter(isUsable);
   if (matches.length !== 1) return { ok: false, error: "SELECTOR_CHANGED" };
-  const waitForList = options.waitForList ?? ((selectedKind) => defaultWaitForList(root, selectedKind, options));
   const afterTabClick = options.afterTabClick ?? (() => sleep(50));
   for (let attempt = 0; attempt < 2; attempt += 1) {
     matches[0].click();
     await afterTabClick(kind);
-    buttons[0].click();
-    if (await waitForList(kind)) return { ok: true };
+    const tracker = trackListMutations(root);
+    try {
+      buttons[0].click();
+      const ready = options.waitForList
+        ? await options.waitForList(kind)
+        : await defaultWaitForList(root, kind, tracker, options);
+      if (ready) return { ok: true };
+    } finally {
+      tracker.disconnect();
+    }
   }
   return { ok: false, error: "QUERY_TAB_TIMEOUT" };
 }

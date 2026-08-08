@@ -137,6 +137,23 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
   }]);
 });
 
+test("QUERY_ALL_EXPORT 分类切换超时按待人工回写", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000112",
+    type: "QUERY_ALL_EXPORT",
+    platformAccountId: "00000000-0000-4000-8000-000000000312",
+    clientBatchId: "00000000-0000-4000-8000-000000000212",
+  };
+  const harness = platformDiscoveryHarness(command);
+  const chromeApi = chromeMock(async () => ({ ok: false, error: "QUERY_TAB_TIMEOUT" }));
+
+  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl: harness.fetchImpl }).pollOnce();
+
+  assert.equal(result.error, "QUERY_TAB_TIMEOUT");
+  assert.equal(harness.resultBody().status, "manual_required");
+  assert.equal(harness.resultBody().resultCode, "QUERY_TAB_TIMEOUT");
+});
+
 test("多个非活动法院列表标签时选择最近使用标签并在执行前显式激活", async () => {
   const command = {
     id: "00000000-0000-4000-8000-000000000121",
