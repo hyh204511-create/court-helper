@@ -96,6 +96,7 @@
 | `POST` | `/browser-commands/:id/claim` | extension | `{deviceId}` 领取；返回一次性 claim token（只在响应出现，不落库） |
 | `POST` | `/browser-commands/:id/result` | extension | `{deviceId,claimToken,status,resultCode,resultSummary,progress}`；必须 claimant；敏感字段拒绝 |
 | `POST` | `/browser-commands/:id/cancel` | admin,user | 创建者可取消 pending/executing；已终态幂等返回 |
+| `DELETE` | `/browser-commands` | admin,user | 二次确认后的批量清理；admin 删除全部已结束任务，user 仅删除本人已结束任务；返回 `{deletedCount}`，不得删除 pending/executing 或其他资源 |
 
 - 路径 UUID 与 cursor UUID 在路由边界校验；非法输入返回稳定 400/404，不触发数据库 cast 错误。
 - 后台命令 payload 仍不得包含密码、验证码、完整案号、当事人明文或截图；平台凭据与上传模板作为独立受控资源，不复写入 command payload。
@@ -111,6 +112,7 @@
 | 查看上传模板完整内容、平台账号与平台密码 | ✓ | ✓ | — |
 | 领取/回写任务 | — | — | 有效 extension 会话 + claimant |
 | 取消本人任务 | ✓ | ✓ | — |
+| 清空有权查看的已结束任务 | ✓（全部） | ✓（仅本人） | — |
 | 取平台凭据用于自动化执行 | 按既有 credential 契约 | 按既有 credential 契约 | 仅有效 extension 会话 |
 
 ## 6. 后台页面
@@ -121,6 +123,8 @@
 - **平台账号与自动登录**：只列出启用平台账号；选择账号后，“一键登录”只创建统一 `LOGIN` 命令。平台账号管理页不得再提供“远程登录”按钮或登录指令列表。
 - **通用任务区**：只保留 `开始立案查询`、`开始强执查询`、`导出报表`，不得混入 `LOGIN` 选项。
 - 当前任务与历史任务：状态、进度、失败码、待人工原因、取消/重试，并显示完整任务创建者用户名；页面同时显示当前后台会话的完整用户名，不做掩码。
+- 任务列表显示平台账号标签，并可用账号标签搜索过滤和定位；另设“账号查询”结果区，以所选账号的不透明 ID 调用既有案件列表 API，显示精确案件状态。任务 `succeeded` 只表示命令执行完成，不得替代案件状态或推断“立案成功”。
+- 提供“清空已结束任务”操作：浏览器原生二次确认后发送 `DELETE /browser-commands`；提交期间禁用按钮，成功后显示实际删除条数并重新读取列表。服务端按角色限制删除范围且始终保留 `pending/executing`；案件、截图、导入批次、报表和账号均不受影响。
 - **平台凭据按需查看**：admin、user 的同源 `admin_ui` Cookie 会话均可查看选中平台账号的完整账号和密码；明文只用 `textContent` 渲染，关闭/切换账号/离开页面立即清空。
 - **模板上传与明文查看**：后台上传真实 xlsx，服务器私有保存并解析为受控批次；所有已登录后台用户均可查看完整文件内容，且可查看平台账号和平台密码。批次列表/创建响应仅返回 `{id,fileName,byteSize,sha256,createdAt,updatedAt,expiresAt,liRows,qzRows,skipped}`，不得返回解析行、账号或密码；明文仅在同源后台 Cookie 会话的专用查看/下载 API 中返回，响应 `Cache-Control: private, no-store`。每个文件最多 20 MiB，解析仅接受无宏 xlsx 的 ZIP 容器；强执表头/必填行/状态规则以 excel-module 为准。不得写入 `browser_commands.payload`、任务结果、客户端日志、服务日志或页面持久化状态；extension Bearer 会话无权访问明文查看 API。
 - 报表导出记录继续使用既有 `/admin/report-exports`；业务入口从后台控制台发起。
@@ -144,7 +148,7 @@
 - server：迁移可重复、角色隔离、重复创建、领取/claimant、回写幂等、过期/取消、UUID/cursor 校验、payload 敏感字段拒绝。
 - extension：无法院标签、未登录、账号不匹配、LOGIN、QUERY_LI、QUERY_QZ 执行 tab 门禁、EXPORT_REPORT、claimant 回写、SW 配置重建；多法院列表标签必须选择活动标签或最近使用标签；LOGIN 必须覆盖登录路由跳转期间的有界等待、content script 首次未就绪后的有界重连，以及两种超时的脱敏待人工回写。
 - extension：模拟已授权配置下的 Service Worker 冷启动（不触发 `onStartup` 或 `onInstalled`）时，必须立即请求 `/browser-commands/next` 并领取可执行命令；缺少/过期令牌时不得发起该请求。
-- admin：`/`、`/admin`、登录成功入口跳转；控制台独立一键登录；通用任务区无 LOGIN；完整当前用户名/创建者名称；两种角色凭据按需查看；跨域、未登录和 extension Bearer 拒绝；无缓存响应；任务轮询、隐藏页退避、错误/取消/重试、安全显示。
+- admin：`/`、`/admin`、登录成功入口跳转；控制台独立一键登录；通用任务区无 LOGIN；完整当前用户名/创建者名称与平台账号标签；账号搜索定位和精确案件状态；两种角色凭据按需查看；跨域、未登录和 extension Bearer 拒绝；无缓存响应；任务轮询、隐藏页退避、错误/取消/重试/清空已结束任务、安全显示。
 - manifest：无 `default_popup`；不存在 popup 源码、构建入口、产物和测试；已授权 action 打开控制台，未授权 action 打开 Options/Setup；扩展仍能注入法院页面和运行 SW。
 
 ### 真实验收
