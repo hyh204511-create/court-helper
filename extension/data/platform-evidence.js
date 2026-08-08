@@ -76,40 +76,93 @@ function titleHasExactParties(title, cause, plaintiff, defendant) {
   return partyTokens.includes(plaintiff) && partyTokens.includes(defendant);
 }
 
+function stableEvidenceError(value) {
+  return typeof value === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(value) ? value : null;
+}
+
+export function evidenceFailureCode({ selection, updated } = {}) {
+  if (selection?.ok === true && updated?.needsHuman !== true) return null;
+  if (selection?.ok !== true) {
+    return stableEvidenceError(selection?.error)
+      ?? stableEvidenceError(updated?.errorCode)
+      ?? stableEvidenceError(updated?.error)
+      ?? "MYCASE_EVIDENCE_UNAVAILABLE";
+  }
+  return stableEvidenceError(updated?.errorCode)
+    ?? stableEvidenceError(updated?.error)
+    ?? "MYCASE_EVIDENCE_UNAVAILABLE";
+}
+
+export function preferEvidenceError(current, candidate) {
+  const currentCode = stableEvidenceError(current);
+  const candidateCode = stableEvidenceError(candidate);
+  if (!currentCode) return candidateCode ?? "MYCASE_EVIDENCE_UNAVAILABLE";
+  if (currentCode === "MYCASE_EVIDENCE_UNAVAILABLE"
+    && candidateCode && candidateCode !== "MYCASE_EVIDENCE_UNAVAILABLE") return candidateCode;
+  return currentCode;
+}
+
+export function selectSourceApiRow(record, rows = []) {
+  let candidates = Array.isArray(rows) ? rows : [];
+  const stages = [
+    ["caseName", text(record?.sourceCaseName), "SOURCE_CASE_NAME_MISMATCH"],
+    ["applicant", text(record?.plaintiff), "SOURCE_APPLICANT_MISMATCH"],
+    ["respondent", text(record?.defendant), "SOURCE_RESPONDENT_MISMATCH"],
+    ["cause", text(record?.sourceCause), "SOURCE_CAUSE_MISMATCH"],
+    ["applicationDate", text(record?.sourceApplicationDate), "SOURCE_APPLICATION_DATE_MISMATCH"],
+  ];
+  for (const [field, expected, error] of stages) {
+    candidates = candidates.filter((row) => text(row?.[field]) === expected);
+    if (!candidates.length) return { ok: false, error };
+  }
+  if (candidates.length !== 1) return { ok: false, error: "SOURCE_API_ROW_AMBIGUOUS" };
+  return { ok: true, row: candidates[0] };
+}
+
 /**
  * 直接校验 ajlist 结构化补证。两个接口没有案件级共享 ID，必须由全部
  * 已确认结构键共同形成唯一候选；标题只按分隔后的完整当事人 token 校验。
  */
 export function selectMyCaseApiEvidence({ record, sourceApiRow, rows = [] } = {}) {
-  if (!record?.uid || record.status !== "立案成功" || !sourceApiRow || !Array.isArray(rows)) {
-    return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
-  }
+  if (!record || typeof record !== "object") return { ok: false, error: "MYCASE_RECORD_MISSING" };
+  if (!record.uid) return { ok: false, error: "MYCASE_RECORD_UID_MISSING" };
+  if (record.status !== "立案成功") return { ok: false, error: "MYCASE_STATUS_MISMATCH" };
+  if (!sourceApiRow || typeof sourceApiRow !== "object") return { ok: false, error: "SOURCE_API_ROW_MISSING" };
+  if (!Array.isArray(rows)) return { ok: false, error: "MYCASE_ROWS_INVALID" };
   const plaintiff = text(record.plaintiff);
   const defendant = text(record.defendant);
   const cause = text(record.sourceCause);
   const sourceAccount = text(sourceApiRow.sfBh);
-  const sourceCourt = text(sourceApiRow.fyid);
+  const sourceCourt = text(sourceApiRow.fymc);
   const sourceType = text(sourceApiRow.ajlx);
   const sourceCause = text(sourceApiRow.laay);
   const sourceDate = apiDay(sourceApiRow.updateTime);
-  if (!plaintiff || !defendant || !cause || cause !== sourceCause
-    || !sourceAccount || !sourceCourt || !sourceType || !sourceDate) {
-    return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
+  if (!plaintiff) return { ok: false, error: "SOURCE_PLAINTIFF_MISSING" };
+  if (!defendant) return { ok: false, error: "SOURCE_DEFENDANT_MISSING" };
+  if (!cause) return { ok: false, error: "SOURCE_CAUSE_MISSING" };
+  if (cause !== sourceCause) return { ok: false, error: "SOURCE_CAUSE_MISMATCH" };
+  if (!sourceAccount) return { ok: false, error: "SOURCE_ACCOUNT_MISSING" };
+  if (!sourceCourt) return { ok: false, error: "SOURCE_COURT_MISSING" };
+  if (!sourceType) return { ok: false, error: "SOURCE_TYPE_MISSING" };
+  if (!sourceDate) return { ok: false, error: "SOURCE_DATE_INVALID" };
+
+  const stages = [
+    [(row) => text(row?.csfid) === sourceAccount, "MYCASE_ACCOUNT_MISMATCH"],
+    [(row) => text(row?.cfydmTranslateText) === sourceCourt, "MYCASE_COURT_MISMATCH"],
+    [(row) => text(row?.cywlx) === sourceType, "MYCASE_TYPE_MISMATCH"],
+    [(row) => text(row?.claay) === sourceCause, "MYCASE_CAUSE_MISMATCH"],
+    [(row) => apiDay(row?.clarq) === sourceDate, "MYCASE_DATE_MISMATCH"],
+    [(row) => titleHasExactParties(text(row?.cajmc), sourceCause, plaintiff, defendant), "MYCASE_PARTIES_TITLE_MISMATCH"],
+  ];
+  let candidates = rows;
+  for (const [matches, error] of stages) {
+    candidates = candidates.filter(matches);
+    if (!candidates.length) return { ok: false, error };
   }
-  const candidates = rows.filter((row) => {
-    const title = text(row?.cajmc);
-    const filedTime = apiDay(row?.clarq);
-    return text(row?.csfid) === sourceAccount
-      && text(row?.nfydm) === sourceCourt
-      && text(row?.cywlx) === sourceType
-      && text(row?.claay) === sourceCause
-      && filedTime === sourceDate
-      && titleHasExactParties(title, sourceCause, plaintiff, defendant);
-  });
-  if (!candidates.length) return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
   if (candidates.length !== 1) return { ok: false, error: "MYCASE_EVIDENCE_AMBIGUOUS" };
   const caseNumber = text(candidates[0].cah);
   const filedTime = apiDay(candidates[0].clarq);
-  if (!caseNumber || !filedTime) return { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
+  if (!caseNumber) return { ok: false, error: "MYCASE_CASE_NUMBER_MISSING" };
+  if (!filedTime) return { ok: false, error: "MYCASE_FILED_DATE_INVALID" };
   return { ok: true, value: { uid: record.uid, caseNumber, filedTime } };
 }

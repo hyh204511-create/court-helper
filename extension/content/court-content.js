@@ -32,7 +32,13 @@ import { importXlsx } from "../data/import-xlsx.js";
 import { buildExportWorkbook } from "../data/xlsx-io.js";
 import { exportUploadMessage, exportWorkbookToServer } from "../data/export-uploader.js";
 import { buildPlatformDiscoveryRecords, parseParticipantField, selectDiscoveredListRow } from "../data/platform-discovery.js";
-import { selectMyCaseApiEvidence, selectMyCaseEvidence } from "../data/platform-evidence.js";
+import {
+  evidenceFailureCode,
+  preferEvidenceError,
+  selectMyCaseApiEvidence,
+  selectMyCaseEvidence,
+  selectSourceApiRow,
+} from "../data/platform-evidence.js";
 import { createMainWorldFetch, fetchLayyPages, fetchMyCases, matchApiDomRows } from "./query-api.js";
 import * as db from "../data/db.js";
 
@@ -804,24 +810,19 @@ async function completeMyCaseEvidence(kind, { account, platformAccountId, naviga
   return { total: candidates.length, completed, needsHuman };
 }
 
-function sourceApiRowForRecord(record, rows = []) {
-  const matches = rows.filter((row) => row.caseName === record.sourceCaseName
-    && row.applicant === record.plaintiff
-    && row.respondent === record.defendant
-    && row.cause === record.sourceCause
-    && row.applicationDate === record.sourceApplicationDate);
-  return matches.length === 1 ? matches[0] : null;
-}
-
 async function completeMyCaseEvidenceFromApi({ account, platformAccountId, sourceApiRows, fetchImpl }) {
   const candidates = (await db.query(db.STORE_CASES, { account, platformAccountId }))
     .filter((record) => record.status === expectedSuccessStatus("li"))
     .filter((record) => !record.caseNumber || !record.filedTime);
   let completed = 0;
   let needsHuman = 0;
+  let firstError = null;
   for (const record of candidates) {
-    const sourceApiRow = sourceApiRowForRecord(record, sourceApiRows);
-    let selection = { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" };
+    const sourceSelection = selectSourceApiRow(record, sourceApiRows);
+    const sourceApiRow = sourceSelection.ok ? sourceSelection.row : null;
+    let selection = sourceSelection.ok
+      ? { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" }
+      : sourceSelection;
     if (sourceApiRow && record.plaintiff) {
       const result = await fetchMyCases({
         fetchImpl,
@@ -840,10 +841,13 @@ async function completeMyCaseEvidenceFromApi({ account, platformAccountId, sourc
     }
     const updated = await persistMyCaseEvidence(record, selection);
     if (selection.ok && !updated.needsHuman) completed += 1;
-    else needsHuman += 1;
+    else {
+      needsHuman += 1;
+      firstError = preferEvidenceError(firstError, evidenceFailureCode({ selection, updated }));
+    }
     await delayWithPause();
   }
-  return { total: candidates.length, completed, needsHuman };
+  return { total: candidates.length, completed, needsHuman, error: firstError };
 }
 
 async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
@@ -929,7 +933,13 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
     return !initial.ok
       ? { ...initial, evidence }
       : evidence.needsHuman
-      ? { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE", stats: initial.stats, evidence }
+      ? {
+        ok: false,
+        error: evidence.error ?? "MYCASE_EVIDENCE_UNAVAILABLE",
+        progress: { done: evidence.completed, total: evidence.total },
+        stats: initial.stats,
+        evidence,
+      }
       : { ok: true, stats: initial.stats, evidence };
   } finally {
     _batchRunning = false;

@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { selectMyCaseApiEvidence, selectMyCaseEvidence } from "../extension/data/platform-evidence.js";
+import {
+  evidenceFailureCode,
+  preferEvidenceError,
+  selectMyCaseApiEvidence,
+  selectMyCaseEvidence,
+  selectSourceApiRow,
+} from "../extension/data/platform-evidence.js";
 
 const successfulLiRecord = {
   uid: "li-platform-record",
@@ -95,7 +101,8 @@ const apiRecord = {
 };
 const sourceApiRow = {
   sfBh: "SYNTHETIC-ACCOUNT-ID",
-  fyid: "SYNTHETIC-COURT-ID",
+  fyid: "SYNTHETIC-SOURCE-COURT-ID",
+  fymc: "SYNTHETIC COURT",
   ajlx: "SYNTHETIC-TYPE-ID",
   laay: apiRecord.sourceCause,
   updateTime: "2026-08-07T08:30:00Z",
@@ -103,7 +110,8 @@ const sourceApiRow = {
 function apiEvidence(overrides = {}) {
   return {
     csfid: sourceApiRow.sfBh,
-    nfydm: sourceApiRow.fyid,
+    nfydm: "SYNTHETIC-TARGET-COURT-CODE",
+    cfydmTranslateText: sourceApiRow.fymc,
     cywlx: sourceApiRow.ajlx,
     claay: sourceApiRow.laay,
     clarq: "2026-08-07",
@@ -124,24 +132,96 @@ test("ajlist 成功补证使用跨接口严格结构，不要求两个页面标�
   });
 });
 
-test("ajlist 补证缺少任一结构键或出现重复候选时转人工", () => {
-  for (const row of [
-    apiEvidence({ csfid: "OTHER" }),
-    apiEvidence({ nfydm: "OTHER" }),
-    apiEvidence({ cywlx: "OTHER" }),
-    apiEvidence({ claay: "OTHER" }),
-    apiEvidence({ clarq: "2026-08-08" }),
-    apiEvidence({ cajmc: "SYNTHETIC PLAINTIFF与OTHER SYNTHETIC CAUSE一案" }),
-    apiEvidence({ cah: "" }),
+test("ajlist 补证前置字段缺失返回具体且安全的诊断码", () => {
+  const cases = [
+    [{ record: null, sourceApiRow, rows: [] }, "MYCASE_RECORD_MISSING"],
+    [{ record: { ...apiRecord, uid: "" }, sourceApiRow, rows: [] }, "MYCASE_RECORD_UID_MISSING"],
+    [{ record: { ...apiRecord, status: "审核中" }, sourceApiRow, rows: [] }, "MYCASE_STATUS_MISMATCH"],
+    [{ record: apiRecord, sourceApiRow: null, rows: [] }, "SOURCE_API_ROW_MISSING"],
+    [{ record: apiRecord, sourceApiRow, rows: null }, "MYCASE_ROWS_INVALID"],
+    [{ record: { ...apiRecord, plaintiff: "" }, sourceApiRow, rows: [] }, "SOURCE_PLAINTIFF_MISSING"],
+    [{ record: { ...apiRecord, defendant: "" }, sourceApiRow, rows: [] }, "SOURCE_DEFENDANT_MISSING"],
+    [{ record: { ...apiRecord, sourceCause: "" }, sourceApiRow, rows: [] }, "SOURCE_CAUSE_MISSING"],
+    [{ record: apiRecord, sourceApiRow: { ...sourceApiRow, laay: "OTHER" }, rows: [] }, "SOURCE_CAUSE_MISMATCH"],
+    [{ record: apiRecord, sourceApiRow: { ...sourceApiRow, sfBh: "" }, rows: [] }, "SOURCE_ACCOUNT_MISSING"],
+    [{ record: apiRecord, sourceApiRow: { ...sourceApiRow, fymc: "" }, rows: [] }, "SOURCE_COURT_MISSING"],
+    [{ record: apiRecord, sourceApiRow: { ...sourceApiRow, ajlx: "" }, rows: [] }, "SOURCE_TYPE_MISSING"],
+    [{ record: apiRecord, sourceApiRow: { ...sourceApiRow, updateTime: "not-a-date" }, rows: [] }, "SOURCE_DATE_INVALID"],
+  ];
+  for (const [input, error] of cases) {
+    assert.deepEqual(selectMyCaseApiEvidence(input), { ok: false, error }, error);
+    assert.match(error, /^[A-Z][A-Z0-9_]{0,63}$/);
+  }
+});
+
+test("ajlist 无候选时按账号、法院、类型、案由、日期、当事人标题逐阶段诊断", () => {
+  for (const [row, error] of [
+    [apiEvidence({ csfid: "OTHER" }), "MYCASE_ACCOUNT_MISMATCH"],
+    [apiEvidence({ cfydmTranslateText: "OTHER" }), "MYCASE_COURT_MISMATCH"],
+    [apiEvidence({ cywlx: "OTHER" }), "MYCASE_TYPE_MISMATCH"],
+    [apiEvidence({ claay: "OTHER" }), "MYCASE_CAUSE_MISMATCH"],
+    [apiEvidence({ clarq: "2026-08-08" }), "MYCASE_DATE_MISMATCH"],
+    [apiEvidence({ cajmc: "SYNTHETIC PLAINTIFF与OTHER SYNTHETIC CAUSE一案" }), "MYCASE_PARTIES_TITLE_MISMATCH"],
   ]) {
     assert.deepEqual(selectMyCaseApiEvidence({ record: apiRecord, sourceApiRow, rows: [row] }), {
       ok: false,
-      error: "MYCASE_EVIDENCE_UNAVAILABLE",
-    });
+      error,
+    }, error);
   }
+});
+
+test("ajlist 唯一候选缺少案号返回具体码，多候选仍保持 ambiguous", () => {
+  assert.deepEqual(selectMyCaseApiEvidence({
+    record: apiRecord,
+    sourceApiRow,
+    rows: [apiEvidence({ cah: "" })],
+  }), { ok: false, error: "MYCASE_CASE_NUMBER_MISSING" });
   assert.deepEqual(selectMyCaseApiEvidence({
     record: apiRecord,
     sourceApiRow,
     rows: [apiEvidence(), apiEvidence({ cah: "SYNTHETIC-LI-API-002" })],
   }), { ok: false, error: "MYCASE_EVIDENCE_AMBIGUOUS" });
+});
+
+test("结构化补证回执保留具体安全错误码，仅在无具体原因时使用通用码", () => {
+  assert.equal(evidenceFailureCode({
+    selection: { ok: false, error: "API_SCHEMA_DRIFT" },
+    updated: { needsHuman: true, errorCode: "MYCASE_EVIDENCE_UNAVAILABLE" },
+  }), "API_SCHEMA_DRIFT");
+  assert.equal(evidenceFailureCode({
+    selection: { ok: true },
+    updated: { needsHuman: true, errorCode: "SCREENSHOT_CAPTURE_FAILED" },
+  }), "SCREENSHOT_CAPTURE_FAILED");
+  assert.equal(evidenceFailureCode({ selection: { ok: false }, updated: { needsHuman: true } }), "MYCASE_EVIDENCE_UNAVAILABLE");
+  assert.equal(evidenceFailureCode({ selection: { ok: true }, updated: { needsHuman: false } }), null);
+  assert.equal(preferEvidenceError("MYCASE_EVIDENCE_UNAVAILABLE", "API_SCHEMA_DRIFT"), "API_SCHEMA_DRIFT");
+  assert.equal(preferEvidenceError("API_SCHEMA_DRIFT", "MYCASE_EVIDENCE_UNAVAILABLE"), "API_SCHEMA_DRIFT");
+});
+
+test("layy 来源行回绑逐字段返回安全诊断码且要求唯一", () => {
+  const record = {
+    sourceCaseName: "SYNTHETIC TITLE",
+    plaintiff: "SYNTHETIC PLAINTIFF",
+    defendant: "SYNTHETIC DEFENDANT",
+    sourceCause: "SYNTHETIC CAUSE",
+    sourceApplicationDate: "2026-08-01",
+  };
+  const row = {
+    caseName: record.sourceCaseName,
+    applicant: record.plaintiff,
+    respondent: record.defendant,
+    cause: record.sourceCause,
+    applicationDate: record.sourceApplicationDate,
+  };
+  assert.deepEqual(selectSourceApiRow(record, [row]), { ok: true, row });
+  for (const [field, error] of [
+    ["caseName", "SOURCE_CASE_NAME_MISMATCH"],
+    ["applicant", "SOURCE_APPLICANT_MISMATCH"],
+    ["respondent", "SOURCE_RESPONDENT_MISMATCH"],
+    ["cause", "SOURCE_CAUSE_MISMATCH"],
+    ["applicationDate", "SOURCE_APPLICATION_DATE_MISMATCH"],
+  ]) {
+    assert.deepEqual(selectSourceApiRow(record, [{ ...row, [field]: "OTHER" }]), { ok: false, error });
+  }
+  assert.deepEqual(selectSourceApiRow(record, [row, { ...row }]), { ok: false, error: "SOURCE_API_ROW_AMBIGUOUS" });
 });
