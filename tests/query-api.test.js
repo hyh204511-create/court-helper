@@ -211,6 +211,26 @@ test("fetchLayyPages 强执使用 createTime 作为缺失 tjsj 的申请日期",
   assert.equal(result.rows[0].applicationDate, "2026-08-08");
 });
 
+test("fetchLayyPages 强执案由为空但其余身份字段完整时按页面暂无值识别", async () => {
+  const result = await fetchLayyPages({
+    kind: "qz",
+    fetchImpl: async (url) => String(url).includes("/count")
+      ? jsonResponse({ data: 1 })
+      : jsonResponse({ data: [{
+        id: "SYNTHETIC-QZ-NO-CAUSE-ID",
+        zt: "11800007-3",
+        ajmc: "SYNTHETIC ENFORCEMENT NO CAUSE CASE",
+        dsrMc: "申请执行人：A；被执行人：B",
+        laay: "",
+        createTime: "2026-08-08T08:00:00Z",
+      }] }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.rows[0].cause, "暂无");
+  assert.equal(result.rows[0].statusText, "审核不通过");
+});
+
 test("fetchLayyPages 强执缺少 tjsj 与 createTime 时仍按字段漂移失败", async () => {
   const result = await fetchLayyPages({
     kind: "qz",

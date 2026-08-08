@@ -74,7 +74,7 @@
 
 - 网上立案页是 A/B、E、I/J/K 的事实源；成功案件 F/G 的事实源只能是「我的案件」列表（强执为其中的「执行」tab）。空模板不得把导入行或案件标题拆词当作这些字段的来源。
 - `QUERY_LI` 与 `QUERY_QZ` 的 F/G 结构化补证都必须直接调用 `POST /yzw/yzw-zxfw-ajfw/api/v1/ajlist`，不得修改 `location.hash`、不得跳转“我的案件”页、不得操作搜索框。执行器只可选择网上立案列表标签；只有“我的案件”标签或 content 在错误路由收到命令时，必须以 `ONLINE_FILING_PAGE_REQUIRED` 失败关闭。立案按来源原告、强执按来源申请执行人精确文本查询；`ajlist.ajlb` 分别固定为审判类别集合和执行类别 `1501_000001-1000`。每页响应必须显式提供可解析的非负整数 `data.total`，缺失、`null`、数组或对象均按 `API_SCHEMA_DRIFT` 转人工，且分页 total/累计条数必须守恒并不超过 50。
-- `layy` 与 `ajlist` 没有案件级共享 ID；`sfBh/csfid` 是账号级字段，单独使用会命中多条，禁止作为案件唯一键。`fyid` 与 `nfydm` 属于不同编码空间，禁止直接比较；法院必须以稳定翻译文本 `fymc=cfydmTranslateText` 精确匹配。候选必须同时满足：`sfBh=csfid`、`fymc=cfydmTranslateText`、`ajlx=cywlx`、`laay=claay`、`updateTime` 与 `clarq` 规范到同一 `YYYY-MM-DD`，并把 `cajmc` 去掉精确后缀“来源案由+一案”后，按 `与`、中英文逗号、顿号分隔为当事人 token；来源原告和被告必须分别作为完整 token 存在。允许标题含额外当事人，但禁止 `includes` 单独决定匹配、禁止改写“诉/与”后做标题全等。
+- `layy` 与 `ajlist` 没有案件级共享 ID；`sfBh/csfid` 是账号级字段，单独使用会命中多条，禁止作为案件唯一键。`fyid` 与 `nfydm` 属于不同编码空间，禁止直接比较；法院必须以稳定翻译文本 `fymc=cfydmTranslateText` 精确匹配。通常候选必须同时满足：`sfBh=csfid`、`fymc=cfydmTranslateText`、`ajlx=cywlx`、`laay=claay`、`updateTime` 与 `clarq` 规范到同一 `YYYY-MM-DD`，并把 `cajmc` 去掉精确后缀“来源案由+一案”后，按 `与`、中英文逗号、顿号分隔为当事人 token；来源原告和被告必须分别作为完整 token 存在。强执来源案由为空并规范为“暂无”时不比较案由，改为要求 `cajmc` 与来源完整案件名称精确相等，且账号、法院、执行类型、日期仍全部精确匹配并形成唯一候选。允许有案由的标题含额外当事人，但禁止 `includes` 单独决定匹配、禁止改写“诉/与”后做标题全等。
 - 上述严格结构必须得到唯一候选，且 `cah/clarq` 完整；零候选、重复候选、字段缺失、日期不可比较或分页不守恒统一 `MYCASE_EVIDENCE_UNAVAILABLE` / `MYCASE_EVIDENCE_AMBIGUOUS` 待人工。F=`clarq`，G=`cah`；不根据 `najzt` 猜状态。
 - 结构化补证失败时，任务回执必须优先保留已确认的具体安全错误码（如 `API_SCHEMA_DRIFT`、`PAGINATION_TOTAL_MISMATCH`、`MYCASE_EVIDENCE_AMBIGUOUS`），并附带已完成数/总数；只有无法确定具体原因时才使用 `MYCASE_EVIDENCE_UNAVAILABLE`，禁止把所有子错误折叠成同一个通用码。
 - `layy` 来源行回绑本地发现记录时必须逐字段失败关闭，并以不含业务值的 `SOURCE_CASE_NAME_MISMATCH`、`SOURCE_APPLICANT_MISMATCH`、`SOURCE_RESPONDENT_MISMATCH`、`SOURCE_CAUSE_MISMATCH`、`SOURCE_APPLICATION_DATE_MISMATCH` 或 `SOURCE_API_ROW_AMBIGUOUS` 标明首个失败阶段；批次聚合时任何具体码优先于 `MYCASE_EVIDENCE_UNAVAILABLE`，不得由记录顺序掩盖。
@@ -127,6 +127,6 @@
 
 Content script 必须在当前法院页面上下文中以 `credentials: "include"` 请求已确认的同源接口：`layy` 列表及 `layy/count`、`layyxq/{layyid}/0`、`pz/layymb/{fyid}/{ajlx}` 和 `ajlist`。仅接受 JSON；401/403、登录重定向、非 JSON 或传输异常统一 `needsHuman=true`，不得猜测字段。
 
-列表分页必须以 `count.data` 为总数，逐页累计条数与 total 守恒；超过单批 50 条拒绝执行。`layy` 采集必需字段为 `id/zt/ajmc/dsrMc/laay`，申请时间必须按法院当前列表渲染规则取非空字符串 `tjsj || createTime`：两者均缺失、为空或类型变化才视为字段签名漂移；平台增加未消费的元数据字段不阻断采集。身份映射固定为案件名称=`ajmc`、参与人=`dsrMc`、案由=`laay`、申请时间=`tjsj || createTime`；真实页面交叉验证确认 `laayMz` 不是列表 DOM“案由”的身份值，不得用它绑定。参与人只接受与 DOM 相同的“原告：…；被告：…”精确结构，ISO 日期时间只规范为 `YYYY-MM-DD` 后比较。重复签名，以及 API 与 DOM 的页码/排序/条数或双向五字段身份签名不一致，统一返回 `UNKNOWN` + `needsHuman=true`。DOM 不得按数组下标绑定 `id`，也不得只按案件名称绑定。
+列表分页必须以 `count.data` 为总数，逐页累计条数与 total 守恒；超过单批 50 条拒绝执行。`layy` 采集必需字段为 `id/zt/ajmc/dsrMc`，申请时间必须按法院当前列表渲染规则取非空字符串 `tjsj || createTime`：两者均缺失、为空或类型变化才视为字段签名漂移；平台增加未消费的元数据字段不阻断采集。立案案由 `laay` 仍须为非空字符串；强执 `laay` 缺失或为空时规范为页面可见值“暂无”，非字符串类型仍按字段漂移失败。身份映射固定为案件名称=`ajmc`、参与人=`dsrMc`、案由=`laay` 或强执“暂无”、申请时间=`tjsj || createTime`；真实页面交叉验证确认 `laayMz` 不是列表 DOM“案由”的身份值，不得用它绑定。参与人只接受与 DOM 相同的立案“原告：…；被告：…”或强执“申请执行人：…；被执行人：…”精确结构，ISO 日期时间只规范为 `YYYY-MM-DD` 后比较。重复签名，以及 API 与 DOM 的页码/排序/条数或双向五字段身份签名不一致，统一返回 `UNKNOWN` + `needsHuman=true`。DOM 不得按数组下标绑定 `id`，也不得只按案件名称绑定。
 
 案件空间按钮可能创建新标签页；执行器必须接管新标签并在该标签采集详情，不得继续等待原列表标签。详情 `data.shjgs[]` 必须按可解析 `shsj` 选择唯一最新记录；最新记录缺字段或最新时间并列时返回待人工，不得按数组顺序或回退历史记录。

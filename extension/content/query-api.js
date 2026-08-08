@@ -202,7 +202,7 @@ const LAYY_STATUS = new Map([
   ["11800007-6", "待补充材料"],
   ["11800007-31", "待补正"],
 ]);
-export const LAYY_REQUIRED_FIELDS = ["id", "zt", "ajmc", "dsrMc", "laay"];
+export const LAYY_REQUIRED_FIELDS = ["id", "zt", "ajmc", "dsrMc"];
 
 function parseLayyParticipants(value, kind = "li") {
   const text = String(value ?? "").trim();
@@ -237,7 +237,8 @@ export async function fetchLayyPages({ kind = "li", filters = {}, pageSize = 50,
     if (!statusText) return MANUAL("UNKNOWN_STATUS");
     const participants = parseLayyParticipants(raw.dsrMc, kind);
     const applicationDate = normalizeLayyDate(raw.tjsj || raw.createTime);
-    const cause = String(raw.laay ?? "").trim();
+    if (raw.laay != null && typeof raw.laay !== "string") return MANUAL("FIELD_SIGNATURE_DRIFT");
+    const cause = String(raw.laay ?? "").trim() || (kind === "qz" ? "暂无" : "");
     if (!participants || !applicationDate || !cause) return MANUAL("FIELD_SIGNATURE_DRIFT");
     rows.push({
       ...raw,

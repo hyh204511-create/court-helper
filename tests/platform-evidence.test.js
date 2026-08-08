@@ -145,6 +145,29 @@ test("ajlist 强执补证接受强执成功记录并沿用严格结构", () => {
   });
 });
 
+test("ajlist 强执案由暂无时由其余结构键与完整标题唯一补证", () => {
+  const record = {
+    ...apiRecord,
+    uid: "qz-api-no-cause-record",
+    status: "强执成功",
+    plaintiff: "SYNTHETIC APPLICANT",
+    defendant: "SYNTHETIC RESPONDENT",
+    sourceCause: "暂无",
+    sourceCaseName: "SYNTHETIC APPLICANT与SYNTHETIC RESPONDENT首次执行一案",
+  };
+  const source = { ...sourceApiRow, laay: "", cause: "暂无" };
+  const row = apiEvidence({
+    claay: "",
+    cajmc: record.sourceCaseName,
+    cah: "SYNTHETIC-QZ-NO-CAUSE-001",
+  });
+
+  assert.deepEqual(selectMyCaseApiEvidence({ kind: "qz", record, sourceApiRow: source, rows: [row] }), {
+    ok: true,
+    value: { uid: record.uid, caseNumber: "SYNTHETIC-QZ-NO-CAUSE-001", filedTime: "2026-08-07" },
+  });
+});
+
 test("ajlist 补证前置字段缺失返回具体且安全的诊断码", () => {
   const cases = [
     [{ record: null, sourceApiRow, rows: [] }, "MYCASE_RECORD_MISSING"],

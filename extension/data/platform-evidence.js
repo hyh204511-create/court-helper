@@ -76,6 +76,11 @@ function titleHasExactParties(title, cause, plaintiff, defendant) {
   return partyTokens.includes(plaintiff) && partyTokens.includes(defendant);
 }
 
+function unavailableCause(value) {
+  const valueText = text(value);
+  return !valueText || valueText === "暂无";
+}
+
 function stableEvidenceError(value) {
   return typeof value === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(value) ? value : null;
 }
@@ -135,12 +140,13 @@ export function selectMyCaseApiEvidence({ record, sourceApiRow, rows = [], kind 
   const sourceAccount = text(sourceApiRow.sfBh);
   const sourceCourt = text(sourceApiRow.fymc);
   const sourceType = text(sourceApiRow.ajlx);
-  const sourceCause = text(sourceApiRow.laay);
+  const sourceCause = text(sourceApiRow.cause) || text(sourceApiRow.laay);
   const sourceDate = apiDay(sourceApiRow.updateTime);
+  const causeUnavailable = kind === "qz" && unavailableCause(cause) && unavailableCause(sourceCause);
   if (!plaintiff) return { ok: false, error: "SOURCE_PLAINTIFF_MISSING" };
   if (!defendant) return { ok: false, error: "SOURCE_DEFENDANT_MISSING" };
-  if (!cause) return { ok: false, error: "SOURCE_CAUSE_MISSING" };
-  if (cause !== sourceCause) return { ok: false, error: "SOURCE_CAUSE_MISMATCH" };
+  if (!cause && !causeUnavailable) return { ok: false, error: "SOURCE_CAUSE_MISSING" };
+  if (!causeUnavailable && cause !== sourceCause) return { ok: false, error: "SOURCE_CAUSE_MISMATCH" };
   if (!sourceAccount) return { ok: false, error: "SOURCE_ACCOUNT_MISSING" };
   if (!sourceCourt) return { ok: false, error: "SOURCE_COURT_MISSING" };
   if (!sourceType) return { ok: false, error: "SOURCE_TYPE_MISSING" };
@@ -150,10 +156,17 @@ export function selectMyCaseApiEvidence({ record, sourceApiRow, rows = [], kind 
     [(row) => text(row?.csfid) === sourceAccount, "MYCASE_ACCOUNT_MISMATCH"],
     [(row) => text(row?.cfydmTranslateText) === sourceCourt, "MYCASE_COURT_MISMATCH"],
     [(row) => text(row?.cywlx) === sourceType, "MYCASE_TYPE_MISMATCH"],
-    [(row) => text(row?.claay) === sourceCause, "MYCASE_CAUSE_MISMATCH"],
-    [(row) => apiDay(row?.clarq) === sourceDate, "MYCASE_DATE_MISMATCH"],
-    [(row) => titleHasExactParties(text(row?.cajmc), sourceCause, plaintiff, defendant), "MYCASE_PARTIES_TITLE_MISMATCH"],
   ];
+  if (!causeUnavailable) stages.push([(row) => text(row?.claay) === sourceCause, "MYCASE_CAUSE_MISMATCH"]);
+  stages.push(
+    [(row) => apiDay(row?.clarq) === sourceDate, "MYCASE_DATE_MISMATCH"],
+    [
+      (row) => causeUnavailable
+        ? text(row?.cajmc) === text(record.sourceCaseName)
+        : titleHasExactParties(text(row?.cajmc), sourceCause, plaintiff, defendant),
+      "MYCASE_PARTIES_TITLE_MISMATCH",
+    ],
+  );
   let candidates = rows;
   for (const [matches, error] of stages) {
     candidates = candidates.filter(matches);
