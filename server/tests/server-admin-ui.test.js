@@ -226,6 +226,9 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
     assert.match(browserControl.body, /id="current-backoffice-user"/);
     assert.match(browserControl.body, /id="import-batch-form"/);
     assert.match(browserControl.body, /id="browser-command-rows"/);
+    assert.match(browserControl.body, /id="browser-account-search-form"/);
+    assert.match(browserControl.body, /id="browser-account-case-rows"/);
+    assert.match(browserControl.body, /id="browser-command-clear"/);
     assert.match(browserControl.body, /id="extension-authorization-title"/);
     assert.doesNotMatch(browserControl.body, /id="browser-connection-status"|id="court-tab-status"|id="court-login-status"/);
     assert.doesNotMatch(browserControl.body, /扩展运行状态/);
@@ -363,12 +366,26 @@ test('browser control renders full session and creator names, separates LOGIN, a
         if (requestUrl.pathname === '/api/v1/import-batches') {
           return jsonResponse({ importBatches: [emptyLiBatch, emptyQzBatch], nextCursor: null });
         }
+        if (requestUrl.pathname === '/api/v1/cases') {
+          assert.equal(requestUrl.searchParams.get('platformAccountId'), ACCOUNT_ID);
+          return jsonResponse({
+            cases: [
+              { id: 'case-li', platformAccountId: ACCOUNT_ID, kind: 'li', status: '立案成功', caseNumber: '（测）案号-001', queryTime: NOW.toISOString() },
+              { id: 'case-manual', platformAccountId: ACCOUNT_ID, kind: 'li', status: 'UNKNOWN', caseNumber: null, queryTime: NOW.toISOString() },
+            ],
+            nextCursor: null,
+          });
+        }
         if (requestUrl.pathname === '/api/v1/auth/extension-pairings') return jsonResponse({ pairings: [] });
         if (requestUrl.pathname === '/api/v1/auth/extension-devices') return jsonResponse({ devices: [] });
         if (requestUrl.pathname === '/api/v1/browser-commands' && method === 'POST') {
           const payload = JSON.parse(String(options.body));
           commands = [{ ...commands[0], id: '00000000-0000-0000-0000-000000000302', ...payload, requestedBy: session.id, status: 'pending' }, ...commands];
           return jsonResponse({ command: commands[0] }, 201);
+        }
+        if (requestUrl.pathname === '/api/v1/browser-commands' && method === 'DELETE') {
+          commands = commands.filter((command) => ['pending', 'executing'].includes(command.status));
+          return jsonResponse({ deletedCount: 1 });
         }
         if (requestUrl.pathname === '/api/v1/browser-commands') {
           return jsonResponse({ commands, nextCursor: null });
@@ -388,9 +405,17 @@ test('browser control renders full session and creator names, separates LOGIN, a
       await waitFor(() => dom.window.document.querySelector('[data-command-creator]')?.textContent === session.creatorName);
       assert.equal(dom.window.document.querySelector('#current-backoffice-user').textContent, session.username);
       assert.equal(dom.window.document.querySelector('[data-command-creator]').textContent, session.creatorName);
+      assert.equal(dom.window.document.querySelector('[data-command-account]').textContent, 'synthetic-account');
       assert.doesNotMatch(dom.window.document.body.textContent, /a\*\*\*l|w\*\*\*r/);
       const cancelButton = dom.window.document.querySelector('[data-action="cancel-browser-command"]');
       assert.equal(cancelButton !== null, session.creatorId === session.id);
+
+      const accountSearch = dom.window.document.querySelector('#browser-account-search');
+      accountSearch.value = 'synthetic-account';
+      dom.window.document.querySelector('#browser-account-search-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+      await waitFor(() => dom.window.document.querySelector('#browser-account-case-rows').textContent.includes('立案成功'));
+      assert.match(dom.window.document.querySelector('#browser-account-case-rows').textContent, /待人工/);
+      assert.ok(requests.some((request) => request.path === `/api/v1/cases?platformAccountId=${ACCOUNT_ID}&limit=100`));
 
       const taskTypes = [...dom.window.document.querySelector('#browser-command-type').options].map((option) => option.value);
       assert.deepEqual(taskTypes, ['QUERY_LI', 'QUERY_QZ', 'EXPORT_REPORT']);
@@ -411,6 +436,11 @@ test('browser control renders full session and creator names, separates LOGIN, a
       await new Promise((resolve) => setTimeout(resolve, 0));
       assert.equal(browserCommandPosts().length, queryRequestsBefore + 1);
       assert.equal(JSON.parse(String(browserCommandPosts().at(-1).body)).importBatchId, emptyLiBatch.id);
+
+      dom.window.confirm = () => true;
+      dom.window.document.querySelector('#browser-command-clear').click();
+      await waitFor(() => requests.some((request) => request.method === 'DELETE' && request.path === '/api/v1/browser-commands'));
+      assert.match(dom.window.document.querySelector('[data-browser-command-status]').textContent, /已清理 1 条/);
 
       taskType.value = 'QUERY_QZ';
       taskType.dispatchEvent(new dom.window.Event('change'));
