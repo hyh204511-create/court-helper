@@ -1,8 +1,9 @@
 # 规格：report-export-module（报表导出记录与再下载）
 
-> 版本：0.4 ｜ 状态：已确认、待真实验收 ｜ 依据：Phase 11 后台控制台唯一入口决策、browser-command-module、server-module（存储/鉴权/错误模型复用）
+> 版本：0.5 ｜ 状态：已确认、待真实验收 ｜ 依据：Phase 11 后台控制台唯一入口决策、browser-command-module、server-module（存储/鉴权/错误模型复用）
 > v0.3 变更：导出任务必须绑定控制台显式选择的非敏感 `platformAccountId`。该 UUID 使用既有 `browser_commands.platform_account_id` 持久化，以抵御 MV3 Worker 回收；不写入 payload、扩展 storage、日志，也不包含账号明文或凭据。
 > v0.4 变更：控制台以单一 `QUERY_ALL_EXPORT` 命令先完成立案和强执采集再导出；旧 `EXPORT_REPORT` 仅保留兼容 API，不再作为控制台独立按钮。
+> v0.5 变更：新生成报表统一使用 20 列合并模板；旧 12 列双区块仅保留读取兼容。
 
 ## 1. 目标与边界
 
@@ -10,6 +11,7 @@
 
 - 参考（san-ke-yi-wei）：服务端 `ExportJob` 记录 `file_name / file_sha256 / 导出人 / 创建时间`；`GET api/exports/<id>/download` 流式返回（`as_attachment` + 原文件名 + `Cache-Control: no-store` + `X-Content-SHA256` 响应头）；过期定期清理。
 - 本模块完全复用 `screenshots` 模块的既有模式：对象存储（本地磁盘 / COS/OSS）、鉴权（Bearer / Cookie）、错误信封、30 天保留。
+- 导出工作簿固定为 A–T 单表头：A–D 主体与账号，E–L 立案结果，M–T 强执结果；按 `账号 + 原告 + 被告` 将两类查询结果合并到同一行，单侧缺失时保留空白结果列。
 - **上传失败不阻塞**：本地下载先行，上传为尽力而为（best-effort），失败仅提示，不重试队列、不伪装成功。
 - 报表文件 = 业务数据（含当事人等），存储与截图同等级保护：对象键不出普通 API、日志不含业务明文、私有桶不可匿名读。
 
