@@ -129,6 +129,7 @@ export async function runBatch({ cases = [], pageOps, onUpdate, timing = {}, per
 
   for (const c of queue) {
     let raw = null;
+    let partialRaw = null;
     let error = null;
     for (let attempt = 0; attempt <= RETRY_COUNT; attempt++) {
       try {
@@ -137,9 +138,13 @@ export async function runBatch({ cases = [], pageOps, onUpdate, timing = {}, per
         break;
       } catch (e) {
         error = e;
+        if (e?.partialResult && typeof e.partialResult === "object") {
+          partialRaw = e.partialResult;
+        }
         if (attempt < RETRY_COUNT) await delay();
       }
     }
+    if (!raw && partialRaw) raw = partialRaw;
 
     const record = {
       uid: c.uid,

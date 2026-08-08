@@ -129,6 +129,69 @@ test("驳回截图失败只标待人工，不清空已确认文字事实", async
   assert.equal(updated[0].error, "SCREENSHOT_CAPTURE_FAILED");
 });
 
+test("强执待补充材料/审核不通过沿已驳回链路保留 I/J/K", async () => {
+  for (const statusText of ["待补充材料", "审核不通过"]) {
+    const updated = [];
+    const rejectImage = new Blob([`synthetic-${statusText}`], { type: "image/jpeg" });
+    const ops = makePageOps({
+      queryResults: {
+        rejected: {
+          statusText,
+          caseType: "首次执行案件",
+          pageKind: "wsla",
+          rejectTime: "2026-08-07",
+          rejectReason: "脱敏驳回原因",
+          rejectImage,
+        },
+      },
+    });
+    await runBatch({
+      cases: [{ uid: "rejected", account: "A", kind: "qz" }],
+      pageOps: ops,
+      onUpdate: (record) => updated.push(record),
+      timing: { delay: sleep0 },
+    });
+    assert.equal(updated[0].status, "已驳回", statusText);
+    assert.equal(updated[0].rejectTime, "2026-08-07", statusText);
+    assert.equal(updated[0].rejectReason, "脱敏驳回原因", statusText);
+    assert.equal(updated[0].rejectImage, rejectImage, statusText);
+    assert.equal(updated[0].successImage, null, statusText);
+    assert.equal(updated[0].needsHuman, false, statusText);
+  }
+});
+
+test("强执驳回详情交接持续失败仍保留列表状态和原因", async () => {
+  const updated = [];
+  let calls = 0;
+  const ops = {
+    async queryCase() {
+      calls += 1;
+      const error = new Error("DETAIL_TIMEOUT");
+      error.partialResult = {
+        statusText: "审核不通过",
+        caseType: "首次执行案件",
+        pageKind: "wsla",
+        rejectReason: "脱敏列表审核意见",
+        evidenceError: "DETAIL_TIMEOUT",
+      };
+      throw error;
+    },
+    async capture() { return null; },
+  };
+  await runBatch({
+    cases: [{ uid: "qz-detail-timeout", account: "A", kind: "qz" }],
+    pageOps: ops,
+    onUpdate: (record) => updated.push(record),
+    timing: { delay: sleep0 },
+  });
+  assert.equal(calls, 2);
+  assert.equal(updated[0].status, "已驳回");
+  assert.equal(updated[0].rejectReason, "脱敏列表审核意见");
+  assert.equal(updated[0].rejectImage, null);
+  assert.equal(updated[0].needsHuman, true);
+  assert.equal(updated[0].error, "DETAIL_TIMEOUT");
+});
+
 test("失败重试：第 1 次失败 → 重试成功；持续失败 → UNKNOWN 待人工", async () => {
   const updated = [];
   const ops = makePageOps({

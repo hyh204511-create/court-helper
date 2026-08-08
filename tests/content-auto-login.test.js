@@ -405,6 +405,61 @@ test("START_BATCH 驳回行使用真实 DOM 按钮触发详情取证", async () 
   }
 });
 
+test("START_BATCH 强执待补充材料沿已驳回链路写入驳回证据", async () => {
+  await db.resetDb();
+  const uid = "synthetic-qz-reject-row";
+  const sourceCaseName = "SYNTHETIC REJECTED ENFORCEMENT CASE";
+  await db.upsertByUid(db.STORE_ENFORCEMENT, uid, {
+    uid,
+    account: "demo-account",
+    plaintiff: "synthetic applicant",
+    defendant: "synthetic respondent",
+    sourceCaseName,
+    kind: "qz",
+    status: "UNKNOWN",
+  });
+  const { dom, listener } = await loadContent({
+    hash: "#/pagesWsla/pc/list/index",
+    html: `
+      <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
+      <div class="fd-case-item">
+        <div class="fd-header-status">待补充材料</div>
+        <div class="fd-header-ajmc">${sourceCaseName}</div>
+        <div class="fd-header-ajlx">首次执行案件</div>
+        <div class="fd-field-item"><span class="fd-field-lable">审核意见</span><span class="fd-field-value">synthetic qz opinion</span></div>
+        <button class="fd-case-space-btn">案件空间</button>
+      </div>`,
+  });
+  dom.window.document.querySelector(".fd-case-space-btn").addEventListener("click", async () => {
+    const current = await db.getByUid(db.STORE_ENFORCEMENT, uid);
+    await db.upsertByUid(db.STORE_ENFORCEMENT, uid, {
+      ...current,
+      rejectTime: "2026-08-07",
+      rejectReason: "synthetic qz opinion",
+      rejectImage: new Blob(["synthetic-qz-reject-image"], { type: "image/jpeg" }),
+      needsHuman: false,
+      errorCode: null,
+    });
+  });
+  const nativeSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, delay >= 1000 ? 0 : delay, ...args);
+  try {
+    const result = await dispatch(listener, { type: "START_BATCH", kind: "qz" });
+    assert.equal(result.response?.ok, true);
+    const stored = await db.getByUid(db.STORE_ENFORCEMENT, uid);
+    assert.equal(stored.status, "已驳回");
+    assert.equal(stored.rejectTime, "2026-08-07");
+    assert.equal(stored.rejectReason, "synthetic qz opinion");
+    assert.ok(stored.rejectImage instanceof Blob);
+    assert.equal(stored.successImage, null);
+    assert.equal(stored.needsHuman, false);
+  } finally {
+    globalThis.setTimeout = nativeSetTimeout;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
 test("详情页最新审核记录不完整时不回退历史记录或截图", async () => {
   await db.resetDb();
   const uid = "synthetic-reject-recapture";

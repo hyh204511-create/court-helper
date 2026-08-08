@@ -569,7 +569,9 @@ async function queryCase({ uid, kind }) {
       raw.rejectImage = updated.rejectImage ?? null;
       raw.evidenceError = updated.errorCode ?? null;
     } else {
-      throw new Error("DETAIL_TIMEOUT");
+      const error = new Error("DETAIL_TIMEOUT");
+      error.partialResult = { ...raw, evidenceError: "DETAIL_TIMEOUT" };
+      throw error;
     }
   } else if (status === "立案成功" || status === "强执成功") {
     raw.image = await captureRow(targetElement);
