@@ -855,16 +855,17 @@ async function loadBrowserControlAccounts() {
   if (!taskSelect && !loginSelect) return;
   try {
     const result = await api('/platform-accounts');
-    const accounts = (result.platformAccounts || []).filter((account) => account.enabled !== false);
-    browserControlAccounts = accounts;
-    fillPlatformAccountSelect(taskSelect, accounts, true);
-    fillPlatformAccountSelect(loginSelect, accounts, false);
+    const allAccounts = result.platformAccounts || [];
+    const enabledAccounts = allAccounts.filter((account) => account.enabled !== false);
+    browserControlAccounts = allAccounts;
+    fillPlatformAccountSelect(taskSelect, enabledAccounts, true);
+    fillPlatformAccountSelect(loginSelect, enabledAccounts, false);
     const labels = $('#browser-account-labels');
     if (labels) {
       clear(labels);
-      accounts.forEach((account) => { const option = document.createElement('option'); option.value = account.label || '未命名'; labels.appendChild(option); });
+      allAccounts.forEach((account) => { const option = document.createElement('option'); option.value = account.label || '未命名'; labels.appendChild(option); });
     }
-    if (loginSelect && !loginSelect.value && accounts[0]) loginSelect.value = accounts[0].id;
+    if (loginSelect && !loginSelect.value && enabledAccounts[0]) loginSelect.value = enabledAccounts[0].id;
     clearPlatformCredential();
   } catch (error) {
     setMessage($('[data-browser-command-message]'), errorMessage(error));

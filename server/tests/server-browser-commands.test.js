@@ -735,6 +735,13 @@ test('paired extension bearer cannot create, list, inspect, or cancel back-offic
       payload: {},
     });
     assert.equal(deniedCancel.statusCode, 403);
+
+    const deniedCleanup = await app.inject({
+      method: 'DELETE',
+      url: '/api/v1/browser-commands',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(deniedCleanup.statusCode, 403);
   } finally {
     await app.close();
   }

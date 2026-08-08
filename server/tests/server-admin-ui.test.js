@@ -18,6 +18,7 @@ const WORKER_PASSWORD = 'Worker-pass-1';
 const ADMIN_ID = '00000000-0000-0000-0000-000000000001';
 const WORKER_ID = '00000000-0000-0000-0000-000000000002';
 const ACCOUNT_ID = '00000000-0000-0000-0000-000000000010';
+const ARCHIVED_ACCOUNT_ID = '00000000-0000-0000-0000-000000000011';
 const CASE_ID = '00000000-0000-0000-0000-000000000100';
 const NOW = new Date('2026-08-31T12:00:00.000Z');
 
@@ -357,7 +358,10 @@ test('browser control renders full session and creator names, separates LOGIN, a
           return jsonResponse({ users: [{ id: WORKER_ID, username: session.creatorName, role: 'user', enabled: true }] });
         }
         if (requestUrl.pathname === '/api/v1/platform-accounts') {
-          return jsonResponse({ platformAccounts: [{ id: ACCOUNT_ID, label: 'synthetic-account', enabled: true }] });
+          return jsonResponse({ platformAccounts: [
+            { id: ACCOUNT_ID, label: 'synthetic-account', enabled: true },
+            { id: ARCHIVED_ACCOUNT_ID, label: 'archived-account', enabled: false },
+          ] });
         }
         if (requestUrl.pathname === `/api/v1/platform-accounts/${ACCOUNT_ID}/credential-view`) {
           if (deferredCredentialResponse) return deferredCredentialResponse;
@@ -411,6 +415,14 @@ test('browser control renders full session and creator names, separates LOGIN, a
       assert.equal(cancelButton !== null, session.creatorId === session.id);
 
       const accountSearch = dom.window.document.querySelector('#browser-account-search');
+      assert.deepEqual(
+        [...dom.window.document.querySelector('#browser-account-labels').options].map((option) => option.value),
+        ['synthetic-account', 'archived-account'],
+      );
+      assert.deepEqual(
+        [...dom.window.document.querySelector('#platform-login-account').options].map((option) => option.value),
+        [ACCOUNT_ID],
+      );
       accountSearch.value = 'synthetic-account';
       dom.window.document.querySelector('#browser-account-search-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
       await waitFor(() => dom.window.document.querySelector('#browser-account-case-rows').textContent.includes('立案成功'));

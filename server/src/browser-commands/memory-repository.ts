@@ -51,6 +51,10 @@ function active(command: BrowserCommandRecord): boolean {
   return command.status === 'pending' || command.status === 'executing';
 }
 
+function terminal(command: BrowserCommandRecord): boolean {
+  return ['succeeded', 'failed', 'expired', 'manual_required', 'cancelled'].includes(command.status);
+}
+
 export class MemoryBrowserCommandRepository implements BrowserCommandRepository {
   private readonly commands = new Map<string, BrowserCommandRecord>();
 
@@ -176,7 +180,7 @@ export class MemoryBrowserCommandRepository implements BrowserCommandRepository 
   async deleteTerminal(requestedBy?: string): Promise<number> {
     let count = 0;
     for (const [id, command] of this.commands) {
-      if (!active(command) && (requestedBy === undefined || command.requestedBy === requestedBy)) {
+      if (terminal(command) && (requestedBy === undefined || command.requestedBy === requestedBy)) {
         this.commands.delete(id);
         count += 1;
       }
