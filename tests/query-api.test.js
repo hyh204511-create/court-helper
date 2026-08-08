@@ -128,9 +128,9 @@ test("selectLatestAudit 按最新 shsj 选择；并列最新时待人工", () =>
 test("fetchLayyPages 先取 count，再携完整筛选参数逐页采集并映射状态", async () => {
   const calls = [];
   const rows = [
-    { id: "SYNTHETIC-ID-1", zt: "11800007-4", ajmc: "SYNTHETIC CASE 1", dsrMc: "原告：A；被告：B", laayMz: "CAUSE 1", tjsj: "2026-01-01T10:00:00Z", metadata: "allowed" },
-    { id: "SYNTHETIC-ID-2", zt: "11800007-3", ajmc: "SYNTHETIC CASE 2", dsrMc: "原告：C；被告：D", laayMz: "CAUSE 2", tjsj: "2026-01-02", metadata: "allowed" },
-    { id: "SYNTHETIC-ID-3", zt: "11800007-4", ajmc: "SYNTHETIC CASE 3", dsrMc: "原告：E；被告：F", laayMz: "CAUSE 3", tjsj: "2026-01-03", metadata: "allowed" },
+    { id: "SYNTHETIC-ID-1", zt: "11800007-4", ajmc: "SYNTHETIC CASE 1", dsrMc: "原告：A；被告：B", laay: "CAUSE 1", laayMz: "NOT THE DOM CAUSE", tjsj: "2026-01-01T10:00:00Z", metadata: "allowed" },
+    { id: "SYNTHETIC-ID-2", zt: "11800007-3", ajmc: "SYNTHETIC CASE 2", dsrMc: "原告：C；被告：D", laay: "CAUSE 2", laayMz: "NOT THE DOM CAUSE", tjsj: "2026-01-02", metadata: "allowed" },
+    { id: "SYNTHETIC-ID-3", zt: "11800007-4", ajmc: "SYNTHETIC CASE 3", dsrMc: "原告：E；被告：F", laay: "CAUSE 3", laayMz: "NOT THE DOM CAUSE", tjsj: "2026-01-03", metadata: "allowed" },
   ];
   const fetchImpl = async (url, init) => {
     const parsed = new URL(url, "https://court.invalid");
@@ -142,7 +142,7 @@ test("fetchLayyPages 先取 count，再携完整筛选参数逐页采集并映�
   const result = await fetchLayyPages({
     fetchImpl,
     pageSize: 2,
-    expectedFields: ["id", "zt", "ajmc", "dsrMc", "laayMz", "tjsj"],
+    expectedFields: ["id", "zt", "ajmc", "dsrMc", "laay", "tjsj"],
     filters: { cxtj: "synthetic", kssj: "2026-01-01", jssj: "2026-01-31", zt: "", sfid: "SYNTHETIC-SF", sqrsf: "1" },
   });
   assert.equal(result.ok, true);
@@ -169,17 +169,17 @@ test("fetchLayyPages 先取 count，再携完整筛选参数逐页采集并映�
 test("fetchLayyPages 对 total 不守恒和字段签名漂移统一转人工", async () => {
   const run = async (listBody) => fetchLayyPages({
     pageSize: 2,
-    expectedFields: ["id", "zt", "ajmc", "dsrMc", "laayMz", "tjsj"],
+    expectedFields: ["id", "zt", "ajmc", "dsrMc", "laay", "tjsj"],
     fetchImpl: async (url) => String(url).includes("/count")
       ? jsonResponse({ data: 2 })
       : jsonResponse({ data: listBody }),
   });
-  const shortPage = await run([{ id: "SYNTHETIC-ID-1", zt: "11800007-4", ajmc: "A", dsrMc: "原告：A；被告：B", laayMz: "CAUSE", tjsj: "2026-01-01" }]);
+  const shortPage = await run([{ id: "SYNTHETIC-ID-1", zt: "11800007-4", ajmc: "A", dsrMc: "原告：A；被告：B", laay: "CAUSE", tjsj: "2026-01-01" }]);
   assert.equal(shortPage.code, "PAGINATION_TOTAL_MISMATCH");
   assert.equal(shortPage.needsHuman, true);
   const drift = await run([
-    { id: "SYNTHETIC-ID-1", zt: "11800007-4", ajmc: "A", dsrMc: "原告：A；被告：B", laayMz: "CAUSE", tjsj: "2026-01-01" },
-    { id: "SYNTHETIC-ID-2", zt: "11800007-4", ajmc: "B", dsrMc: "原告：C；被告：D", laayMz: "CAUSE", renamedDate: "2026-01-02" },
+    { id: "SYNTHETIC-ID-1", zt: "11800007-4", ajmc: "A", dsrMc: "原告：A；被告：B", laay: "CAUSE", tjsj: "2026-01-01" },
+    { id: "SYNTHETIC-ID-2", zt: "11800007-4", ajmc: "B", dsrMc: "原告：C；被告：D", laay: "CAUSE", renamedDate: "2026-01-02" },
   ]);
   assert.equal(drift.code, "FIELD_SIGNATURE_DRIFT");
   assert.equal(drift.status, "UNKNOWN");

@@ -176,7 +176,7 @@ const LAYY_STATUS = new Map([
   ["11800007-4", "已立案"],
   ["11800007-3", "审核不通过"],
 ]);
-export const LAYY_REQUIRED_FIELDS = ["id", "zt", "ajmc", "dsrMc", "laayMz", "tjsj"];
+export const LAYY_REQUIRED_FIELDS = ["id", "zt", "ajmc", "dsrMc", "laay", "tjsj"];
 
 function parseLayyParticipants(value) {
   const text = String(value ?? "").trim();
@@ -205,7 +205,7 @@ export async function fetchLayyPages({ filters = {}, pageSize = 50, expectedFiel
     if (!statusText) return MANUAL("UNKNOWN_STATUS");
     const participants = parseLayyParticipants(raw.dsrMc);
     const applicationDate = normalizeLayyDate(raw.tjsj);
-    const cause = String(raw.laayMz ?? "").trim();
+    const cause = String(raw.laay ?? "").trim();
     if (!participants || !applicationDate || !cause) return MANUAL("FIELD_SIGNATURE_DRIFT");
     rows.push({
       ...raw,

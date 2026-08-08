@@ -222,7 +222,7 @@ test("QUERY_LI 优先调用结构化 layy API；API 与 DOM 签名不一致时�
       if (message?.type !== "QUERY_API_REQUEST") return undefined;
       return message.path.includes("/count")
         ? { ok: true, status: 200, data: { data: 1 } }
-        : { ok: true, status: 200, data: { data: [{ id: "SYNTHETIC-API-ID", zt: "11800007-4", ajmc: "DIFFERENT API TITLE", dsrMc: "原告：SYNTHETIC PLAINTIFF；被告：SYNTHETIC DEFENDANT", laayMz: "SYNTHETIC CAUSE", tjsj: "2026-08-01" }] } };
+        : { ok: true, status: 200, data: { data: [{ id: "SYNTHETIC-API-ID", zt: "11800007-4", ajmc: "DIFFERENT API TITLE", dsrMc: "原告：SYNTHETIC PLAINTIFF；被告：SYNTHETIC DEFENDANT", laay: "SYNTHETIC CAUSE", tjsj: "2026-08-01" }] } };
     },
   });
   try {
@@ -267,7 +267,8 @@ test("QUERY_LI 仅在 API 与 DOM 五字段双向唯一匹配后继续采集", a
               zt: "11800007-4",
               ajmc: "SYNTHETIC SOURCE TITLE",
               dsrMc: "原告：SYNTHETIC PLAINTIFF；被告：SYNTHETIC DEFENDANT",
-              laayMz: "SYNTHETIC CAUSE",
+              laay: "SYNTHETIC CAUSE",
+              laayMz: "NOT THE DOM CAUSE",
               tjsj: "2026-08-01T08:00:00Z",
               platformMetadata: "allowed",
             }],
