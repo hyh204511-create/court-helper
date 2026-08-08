@@ -191,6 +191,44 @@ test("fetchLayyPages 强执模式使用执行类别并解析申请执行人和�
   assert.equal(calls.every((url) => url.searchParams.get("ajlb") === "zx"), true);
 });
 
+test("fetchLayyPages 强执使用 createTime 作为缺失 tjsj 的申请日期", async () => {
+  const fetchImpl = async (url) => {
+    const parsed = new URL(url, "https://court.invalid");
+    return parsed.pathname.endsWith("/count")
+      ? jsonResponse({ data: 1 })
+      : jsonResponse({ data: [{
+        id: "SYNTHETIC-QZ-CREATED-ID",
+        zt: "11800007-2",
+        ajmc: "SYNTHETIC ENFORCEMENT CREATED CASE",
+        dsrMc: "申请执行人：A；被执行人：B",
+        laay: "SYNTHETIC ENFORCEMENT CAUSE",
+        createTime: "2026-08-08T08:00:00Z",
+      }] });
+  };
+
+  const result = await fetchLayyPages({ kind: "qz", fetchImpl });
+  assert.equal(result.ok, true);
+  assert.equal(result.rows[0].applicationDate, "2026-08-08");
+});
+
+test("fetchLayyPages 强执缺少 tjsj 与 createTime 时仍按字段漂移失败", async () => {
+  const result = await fetchLayyPages({
+    kind: "qz",
+    fetchImpl: async (url) => String(url).includes("/count")
+      ? jsonResponse({ data: 1 })
+      : jsonResponse({ data: [{
+        id: "SYNTHETIC-QZ-NO-DATE-ID",
+        zt: "11800007-2",
+        ajmc: "SYNTHETIC ENFORCEMENT NO DATE CASE",
+        dsrMc: "申请执行人：A；被执行人：B",
+        laay: "SYNTHETIC ENFORCEMENT CAUSE",
+      }] }),
+  });
+
+  assert.equal(result.code, "FIELD_SIGNATURE_DRIFT");
+  assert.equal(result.needsHuman, true);
+});
+
 test("fetchLayyPages 对 total 不守恒和字段签名漂移统一转人工", async () => {
   const run = async (listBody) => fetchLayyPages({
     pageSize: 2,

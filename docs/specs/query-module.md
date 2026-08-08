@@ -127,6 +127,6 @@
 
 Content script 必须在当前法院页面上下文中以 `credentials: "include"` 请求已确认的同源接口：`layy` 列表及 `layy/count`、`layyxq/{layyid}/0`、`pz/layymb/{fyid}/{ajlx}` 和 `ajlist`。仅接受 JSON；401/403、登录重定向、非 JSON 或传输异常统一 `needsHuman=true`，不得猜测字段。
 
-列表分页必须以 `count.data` 为总数，逐页累计条数与 total 守恒；超过单批 50 条拒绝执行。`layy` 采集必需字段为 `id/zt/ajmc/dsrMc/laay/tjsj`：缺失、为空或类型变化视为字段签名漂移；平台增加未消费的元数据字段不阻断采集。身份映射固定为案件名称=`ajmc`、参与人=`dsrMc`、案由=`laay`、申请时间=`tjsj`；真实页面交叉验证确认 `laayMz` 不是列表 DOM“案由”的身份值，不得用它绑定。参与人只接受与 DOM 相同的“原告：…；被告：…”精确结构，ISO 日期时间只规范为 `YYYY-MM-DD` 后比较。重复签名，以及 API 与 DOM 的页码/排序/条数或双向五字段身份签名不一致，统一返回 `UNKNOWN` + `needsHuman=true`。DOM 不得按数组下标绑定 `id`，也不得只按案件名称绑定。
+列表分页必须以 `count.data` 为总数，逐页累计条数与 total 守恒；超过单批 50 条拒绝执行。`layy` 采集必需字段为 `id/zt/ajmc/dsrMc/laay`，申请时间必须按法院当前列表渲染规则取非空字符串 `tjsj || createTime`：两者均缺失、为空或类型变化才视为字段签名漂移；平台增加未消费的元数据字段不阻断采集。身份映射固定为案件名称=`ajmc`、参与人=`dsrMc`、案由=`laay`、申请时间=`tjsj || createTime`；真实页面交叉验证确认 `laayMz` 不是列表 DOM“案由”的身份值，不得用它绑定。参与人只接受与 DOM 相同的“原告：…；被告：…”精确结构，ISO 日期时间只规范为 `YYYY-MM-DD` 后比较。重复签名，以及 API 与 DOM 的页码/排序/条数或双向五字段身份签名不一致，统一返回 `UNKNOWN` + `needsHuman=true`。DOM 不得按数组下标绑定 `id`，也不得只按案件名称绑定。
 
 案件空间按钮可能创建新标签页；执行器必须接管新标签并在该标签采集详情，不得继续等待原列表标签。详情 `data.shjgs[]` 必须按可解析 `shsj` 选择唯一最新记录；最新记录缺字段或最新时间并列时返回待人工，不得按数组顺序或回退历史记录。
