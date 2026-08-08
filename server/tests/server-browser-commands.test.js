@@ -122,7 +122,7 @@ async function makeService(
 }
 
 function commandInput(type, overrides = {}) {
-  const queryCommand = type === 'QUERY_LI' || type === 'QUERY_QZ';
+  const queryCommand = type === 'QUERY_LI' || type === 'QUERY_QZ' || type === 'QUERY_ALL_EXPORT';
   return {
     type,
     platformAccountId: ACCOUNT_ID,
@@ -333,6 +333,7 @@ test('005 browser command migration creates a reversible secure queue and keeps 
       '005_browser_commands',
       '006_import_batches',
       '007_extension_devices',
+      '008_query_all_export',
     ]);
 
     const columns = await pool.query(`
@@ -376,6 +377,7 @@ test('005 browser command migration creates a reversible secure queue and keeps 
       VALUES ($1, 'QUERY_QZ', $2, $3, $4, now() + interval '5 minutes')
     `, [randomUUID(), ACCOUNT_ID, ADMIN_ID, JSON.stringify({ batchId: 'batch-safe-2' })]));
 
+    assert.equal(await rollbackLastMigration(pool), '008_query_all_export');
     assert.equal(await rollbackLastMigration(pool), '007_extension_devices');
     assert.equal(await rollbackLastMigration(pool), '006_import_batches');
     assert.equal(await rollbackLastMigration(pool), '005_browser_commands');
@@ -396,16 +398,16 @@ test('005 browser command migration creates a reversible secure queue and keeps 
   }
 });
 
-test('browser command service accepts all four command types with safe payloads', async () => {
+test('browser command service accepts all five command types with safe payloads', async () => {
   const { service } = await makeService();
-  for (const type of ['LOGIN', 'QUERY_LI', 'QUERY_QZ', 'EXPORT_REPORT']) {
+  for (const type of ['LOGIN', 'QUERY_LI', 'QUERY_QZ', 'EXPORT_REPORT', 'QUERY_ALL_EXPORT']) {
     const command = await service.create(commandInput(type, {
       platformAccountId: randomUUID(),
     }));
     assert.equal(command.type, type);
     assert.equal(command.status, 'pending');
     assert.deepEqual(command.payload, type === 'LOGIN' ? {} : { batchId: 'batch-safe-1', kind: 'li' });
-    assert.equal(command.clientBatchId, type === 'QUERY_LI' || type === 'QUERY_QZ'
+    assert.equal(command.clientBatchId, type === 'QUERY_LI' || type === 'QUERY_QZ' || type === 'QUERY_ALL_EXPORT'
       ? IMPORT_BATCH_ID
       : null);
   }
@@ -776,6 +778,39 @@ test('browser command routes bind query importBatchId and reject free clientBatc
   } finally {
     await app.close();
   }
+});
+
+test('QUERY_ALL_EXPORT requires one empty batch and persists it for the single command', async () => {
+  const { app } = await makeApp();
+  try {
+    const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
+    const created = await createCommand(app, admin, '/api/v1', {
+      type: 'QUERY_ALL_EXPORT',
+      platformAccountId: ACCOUNT_ID,
+      importBatchId: IMPORT_BATCH_ID,
+    });
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().command.type, 'QUERY_ALL_EXPORT');
+    assert.equal(created.json().command.clientBatchId, IMPORT_BATCH_ID);
+  } finally {
+    await app.close();
+  }
+});
+
+test('QUERY_ALL_EXPORT rejects either non-empty table block and receives a 40-minute claim lease', async () => {
+  const now = new Date('2026-08-08T10:00:00.000Z');
+  const nonEmptyId = '00000000-0000-4000-8000-000000000088';
+  const { service } = await makeService(now, [
+    importBatchRecord(IMPORT_BATCH_ID, new Date('2026-08-08T12:00:00.000Z')),
+    { ...importBatchRecord(nonEmptyId, new Date('2026-08-08T12:00:00.000Z')), qzRows: 1 },
+  ]);
+  await assert.rejects(
+    service.create(commandInput('QUERY_ALL_EXPORT', { importBatchId: nonEmptyId })),
+    (error) => error?.code === 'TEMPLATE_NOT_EMPTY',
+  );
+  const command = await service.create(commandInput('QUERY_ALL_EXPORT'));
+  const claim = await service.claim(command.id, 'device-all');
+  assert.equal(claim.command.expiresAt.toISOString(), '2026-08-08T10:40:00.000Z');
 });
 
 test('browser command routes isolate user lists/details and allow owner cancellation', async () => {

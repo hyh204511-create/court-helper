@@ -39,6 +39,7 @@ import {
   selectSourceApiRow,
 } from "../data/platform-evidence.js";
 import { createMainWorldFetch, fetchLayyPages, fetchMyCases, matchApiDomRows } from "./query-api.js";
+import { runQueryAllExport, switchQueryCategory } from "./query-all-export.js";
 import * as db from "../data/db.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -741,7 +742,7 @@ async function completeMyCaseEvidenceFromApi({ kind = "li", account, platformAcc
   return { total: candidates.length, completed, needsHuman, error: firstError };
 }
 
-async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
+async function startPlatformDiscovery(kind, { platformAccountId = null, allowEmpty = false } = {}) {
   const currentRoute = location.hash.split("?", 1)[0];
   if (currentRoute !== ONLINE_FILING_ROUTE) {
     throw new Error("ONLINE_FILING_PAGE_REQUIRED");
@@ -752,9 +753,9 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
   if (!account) throw new Error("ACCOUNT_UNDETECTED");
   const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
   const rows = collectListRows(document);
-  if (!rows.length) throw new Error("NO_VISIBLE_CASES");
+  if (!rows.length && !allowEmpty) throw new Error("NO_VISIBLE_CASES");
   if (kind === "qz" && !rows.some((row) => isEnforcementCaseType(row.caseType))) {
-    throw new Error("EXECUTION_TAB_REQUIRED");
+    if (rows.length > 0) throw new Error("EXECUTION_TAB_REQUIRED");
   }
   // In the real page, the API count is the authoritative page-size guard.
   // JSDOM fixtures intentionally do not expose window.fetch and keep their
@@ -762,7 +763,7 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
   const structuredFetch = typeof chrome?.runtime?.id === "string"
     ? createMainWorldFetch(chrome.runtime.sendMessage.bind(chrome.runtime))
     : (typeof globalThis.fetch === "function" && globalThis.fetch.name !== "fetch" ? globalThis.fetch : null);
-  if (kind === "li" && !structuredFetch) throw new Error("BRIDGE_UNAVAILABLE");
+  if ((kind === "li" || allowEmpty) && !structuredFetch) throw new Error("BRIDGE_UNAVAILABLE");
   let sourceApiRows = [];
   let discoveryRows = rows;
   if (structuredFetch) {
@@ -774,6 +775,10 @@ async function startPlatformDiscovery(kind, { platformAccountId = null } = {}) {
     });
     if (!apiResult.ok) throw new Error(apiResult.code ?? "UNKNOWN");
     sourceApiRows = apiResult.rows;
+    if (allowEmpty && apiResult.total === 0 && rows.length === 0) {
+      await db.replaceAccountRecords(store, account, [], { platformAccountId });
+      return { ok: true, stats: { total: 0, completed: 0, needsHuman: 0 } };
+    }
     let domIdentityRows;
     try {
       domIdentityRows = rows.map((row) => {
@@ -851,6 +856,14 @@ async function executeBrowserCommand(message) {
   if (message.commandType === "EXPORT_REPORT") {
     ensureListReady();
     return handlePanelExport({ platformAccountId: message.platformAccountId });
+  }
+  if (message.commandType === "QUERY_ALL_EXPORT") {
+    if (message.queryMode !== "platform_discovery") return { ok: false, error: "TEMPLATE_NOT_EMPTY" };
+    return runQueryAllExport({
+      switchCategory: (kind) => switchQueryCategory(document, kind),
+      queryKind: (kind) => startPlatformDiscovery(kind, { platformAccountId: message.platformAccountId, allowEmpty: true }),
+      exportReport: () => handlePanelExport({ platformAccountId: message.platformAccountId }),
+    });
   }
   return { ok: false, error: "UNSUPPORTED_COMMAND" };
 }

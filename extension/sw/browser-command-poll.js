@@ -116,7 +116,7 @@ function courtTab(tabs, commandType) {
     tabs,
     (url) => {
       if (commandType === "LOGIN") return isLoginRoute(url.hash);
-      if (commandType === "QUERY_LI" || commandType === "QUERY_QZ") {
+      if (commandType === "QUERY_LI" || commandType === "QUERY_QZ" || commandType === "QUERY_ALL_EXPORT") {
         return url.hash.split("?", 1)[0] === WSLA_LIST_ROUTE;
       }
       return isCourtListRoute(url.hash);
@@ -304,7 +304,7 @@ export function createBrowserCommandPoller({
           return false;
         }
       });
-      if ((command.type === "QUERY_LI" || command.type === "QUERY_QZ") && hasCourtTab) {
+      if ((command.type === "QUERY_LI" || command.type === "QUERY_QZ" || command.type === "QUERY_ALL_EXPORT") && hasCourtTab) {
         return { ok: false, error: "ONLINE_FILING_PAGE_REQUIRED" };
       }
       return { ok: false, error: "NO_COURT_TAB" };
@@ -338,7 +338,7 @@ export function createBrowserCommandPoller({
       }
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
       message = { ...message, account: credential?.account, password: credential?.password, serviceUrl: "http://127.0.0.1:8765" };
-    } else if (command.type === "QUERY_LI" || command.type === "QUERY_QZ") {
+    } else if (command.type === "QUERY_LI" || command.type === "QUERY_QZ" || command.type === "QUERY_ALL_EXPORT") {
       if (activePlatformAccountId !== null && activePlatformAccountId !== command.platformAccountId) {
         return { ok: false, error: "ACCOUNT_MISMATCH" };
       }

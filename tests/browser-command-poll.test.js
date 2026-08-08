@@ -100,6 +100,43 @@ test("browser command poller claims QUERY_LI, reads only bound extension data, d
   });
 });
 
+test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命令", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000111",
+    type: "QUERY_ALL_EXPORT",
+    platformAccountId: "00000000-0000-4000-8000-000000000311",
+    clientBatchId: "00000000-0000-4000-8000-000000000211",
+  };
+  let batchReads = 0;
+  const messages = [];
+  const chromeApi = chromeMock(async (_tabId, message) => {
+    messages.push(message);
+    return { ok: true, progress: { stage: "exported" } };
+  });
+  const fetchImpl = async (url, init = {}) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command });
+    if (value.endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim-all" });
+    if (value.endsWith(`/import-batches/${command.clientBatchId}/extension-data`)) {
+      batchReads += 1;
+      return response({ queryMode: "platform_discovery", rows: [] });
+    }
+    if (value.endsWith(`/browser-commands/${command.id}/result`)) return response({ command: { status: JSON.parse(init.body).status } });
+    throw new Error(`unexpected ${value}`);
+  };
+
+  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl }).pollOnce();
+
+  assert.equal(result.ok, true);
+  assert.equal(batchReads, 1);
+  assert.deepEqual(messages, [{
+    type: "BROWSER_COMMAND_EXECUTE",
+    commandType: "QUERY_ALL_EXPORT",
+    queryMode: "platform_discovery",
+    platformAccountId: command.platformAccountId,
+  }]);
+});
+
 test("多个非活动法院列表标签时选择最近使用标签并在执行前显式激活", async () => {
   const command = {
     id: "00000000-0000-4000-8000-000000000121",

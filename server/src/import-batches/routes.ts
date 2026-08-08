@@ -196,8 +196,10 @@ export function registerImportBatchRoutes(
         claimToken,
       );
       const result = await service.readExecutionData(id);
-      const kind = executionAccess.command.type === 'QUERY_QZ' ? 'qz' : 'li';
-      const rows = result.rows.filter((row) => row.kind === kind);
+      const kinds = executionAccess.command.type === 'QUERY_ALL_EXPORT'
+        ? new Set(['li', 'qz'])
+        : new Set([executionAccess.command.type === 'QUERY_QZ' ? 'qz' : 'li']);
+      const rows = result.rows.filter((row) => kinds.has(row.kind));
       reply.header('cache-control', 'private, no-store');
       if (rows.length > 0) {
         return {

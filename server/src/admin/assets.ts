@@ -951,7 +951,9 @@ async function loadImportBatches() {
       const liLabel = batch.liRows === 0 ? '立案 0（平台发现）' : '立案 ' + batch.liRows;
       const qzLabel = batch.qzRows === 0 ? '强执 0（平台发现）' : '强执 ' + batch.qzRows;
       const option = element('option', batch.fileName + '（' + liLabel + ' / ' + qzLabel + '）');
-      option.value = batch.id; select.appendChild(option);
+      option.value = batch.id;
+      option.disabled = Number(batch.liRows) > 0 || Number(batch.qzRows) > 0;
+      select.appendChild(option);
       const row = element('tr');
       row.append(element('td', batch.fileName), element('td', batch.liRows === 0 ? '0（平台发现）' : batch.liRows), element('td', batch.qzRows === 0 ? '0（平台发现）' : batch.qzRows), element('td', batch.skippedRows), element('td', dateLabel(batch.createdAt)));
       target.appendChild(row);
@@ -1054,7 +1056,6 @@ function initBrowserControl() {
   const loginForm = $('#platform-login-form');
   const loginAccount = $('#platform-login-account');
   const importForm = $('#import-batch-form');
-  const type = $('#browser-command-type');
   const account = $('#browser-command-account');
   const batch = $('#browser-command-batch');
   const accountSearchForm = $('#browser-account-search-form');
@@ -1102,14 +1103,14 @@ function initBrowserControl() {
       setMessage($('[data-platform-login-message]'), errorMessage(error));
     } finally { setFormBusy(loginForm, false); }
   });
-  type?.addEventListener('change', () => { account.required = true; batch.required = type.value.startsWith('QUERY_'); });
-  type?.dispatchEvent(new Event('change'));
+  account.required = true;
+  batch.required = true;
   commandForm?.addEventListener('submit', async (event) => {
-    event.preventDefault(); const selectedType = type.value; const platformAccountId = account.value || null; const importBatchId = selectedType.startsWith('QUERY_') ? (batch.value || null) : null;
+    event.preventDefault(); const platformAccountId = account.value || null; const importBatchId = batch.value || null;
     if (!platformAccountId) { setMessage($('[data-browser-command-message]'), '请选择平台账号'); return; }
-    if (selectedType.startsWith('QUERY_') && !importBatchId) { setMessage($('[data-browser-command-message]'), '查询任务必须选择导入批次'); return; }
+    if (!importBatchId) { setMessage($('[data-browser-command-message]'), '一键任务必须选择空白导入批次'); return; }
     setFormBusy(commandForm, true);
-    try { await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: selectedType, platformAccountId, importBatchId }) }); setMessage($('[data-browser-command-message]'), '任务已创建', 'success'); await loadBrowserCommands(); }
+    try { await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: 'QUERY_ALL_EXPORT', platformAccountId, importBatchId }) }); setMessage($('[data-browser-command-message]'), '一键查询导出任务已创建', 'success'); await loadBrowserCommands(); }
     catch (error) { setMessage($('[data-browser-command-message]'), errorMessage(error)); } finally { setFormBusy(commandForm, false); }
   });
   importForm?.addEventListener('submit', async (event) => {

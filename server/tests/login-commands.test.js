@@ -422,6 +422,7 @@ test('003 login command migration has reversible table, constraints, and indexes
       '005_browser_commands',
       '006_import_batches',
       '007_extension_devices',
+      '008_query_all_export',
     ]);
 
     const columns = await pool.query(`
@@ -493,6 +494,7 @@ test('003 login command migration has reversible table, constraints, and indexes
       )
     `));
 
+    assert.equal(await rollbackLastMigration(pool), '008_query_all_export');
     assert.equal(await rollbackLastMigration(pool), '007_extension_devices');
     assert.equal(await rollbackLastMigration(pool), '006_import_batches');
     assert.equal(await rollbackLastMigration(pool), '005_browser_commands');

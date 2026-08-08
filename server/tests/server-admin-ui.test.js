@@ -296,9 +296,9 @@ test('browser control renders full session and creator names, separates LOGIN, a
     assert.match(script.body, /TEMPLATE_NOT_EMPTY/);
     const emptyLiBatch = {
       id: '00000000-0000-0000-0000-000000000401',
-      fileName: 'synthetic-qz-only.xlsx',
+      fileName: 'synthetic-empty.xlsx',
       liRows: 0,
-      qzRows: 1,
+      qzRows: 0,
       skippedRows: 0,
       createdAt: NOW.toISOString(),
     };
@@ -431,25 +431,26 @@ test('browser control renders full session and creator names, separates LOGIN, a
       assert.match(dom.window.document.querySelector('#browser-account-case-rows').textContent, /待人工/);
       assert.ok(requests.some((request) => request.path === `/api/v1/cases?platformAccountId=${ACCOUNT_ID}&limit=100`));
 
-      const taskTypes = [...dom.window.document.querySelector('#browser-command-type').options].map((option) => option.value);
-      assert.deepEqual(taskTypes, ['QUERY_LI', 'QUERY_QZ', 'EXPORT_REPORT']);
+      assert.equal(dom.window.document.querySelector('#browser-command-type'), null);
+      assert.match(dom.window.document.querySelector('#browser-command-form').textContent, /一键查询并导出/);
 
       await waitFor(() => dom.window.document.querySelector('#browser-command-batch').options.length === 3);
-      const taskType = dom.window.document.querySelector('#browser-command-type');
       const taskAccount = dom.window.document.querySelector('#browser-command-account');
       const taskBatch = dom.window.document.querySelector('#browser-command-batch');
       assert.match(taskBatch.options[1].textContent, /平台发现/);
       assert.match(dom.window.document.querySelector('#import-batch-rows').textContent, /0（平台发现）/);
       const browserCommandPosts = () => requests.filter((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands');
-      taskType.value = 'QUERY_LI';
-      taskType.dispatchEvent(new dom.window.Event('change'));
       taskAccount.value = ACCOUNT_ID;
       taskBatch.value = emptyLiBatch.id;
       const queryRequestsBefore = browserCommandPosts().length;
       dom.window.document.querySelector('#browser-command-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
       await new Promise((resolve) => setTimeout(resolve, 0));
       assert.equal(browserCommandPosts().length, queryRequestsBefore + 1);
-      assert.equal(JSON.parse(String(browserCommandPosts().at(-1).body)).importBatchId, emptyLiBatch.id);
+      assert.deepEqual(JSON.parse(String(browserCommandPosts().at(-1).body)), {
+        type: 'QUERY_ALL_EXPORT',
+        platformAccountId: ACCOUNT_ID,
+        importBatchId: emptyLiBatch.id,
+      });
 
       dom.window.confirm = () => true;
       dom.window.document.querySelector('#browser-command-clear').click();
@@ -457,29 +458,8 @@ test('browser control renders full session and creator names, separates LOGIN, a
       await waitFor(() => dom.window.document.querySelector('[data-browser-command-status]').textContent.includes('已清理 1 条'));
       assert.match(dom.window.document.querySelector('[data-browser-command-status]').textContent, /已清理 1 条/);
 
-      taskType.value = 'QUERY_QZ';
-      taskType.dispatchEvent(new dom.window.Event('change'));
-      taskBatch.value = emptyQzBatch.id;
-      const qzRequestsBefore = browserCommandPosts().length;
-      dom.window.document.querySelector('#browser-command-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      assert.equal(browserCommandPosts().length, qzRequestsBefore + 1);
-      assert.equal(JSON.parse(String(browserCommandPosts().at(-1).body)).importBatchId, emptyQzBatch.id);
-
-      taskType.value = 'EXPORT_REPORT';
-      taskType.dispatchEvent(new dom.window.Event('change'));
-      taskAccount.value = ACCOUNT_ID;
       assert.equal(taskAccount.required, true);
-      assert.equal(taskBatch.required, false);
-      const exportRequestsBefore = browserCommandPosts().length;
-      dom.window.document.querySelector('#browser-command-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      assert.equal(browserCommandPosts().length, exportRequestsBefore + 1);
-      assert.deepEqual(JSON.parse(String(browserCommandPosts().at(-1).body)), {
-        type: 'EXPORT_REPORT',
-        platformAccountId: ACCOUNT_ID,
-        importBatchId: null,
-      });
+      assert.equal(taskBatch.required, true);
 
       await waitFor(() => dom.window.document.querySelector('#platform-login-account').value === ACCOUNT_ID);
       dom.window.document.querySelector('#platform-login-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));

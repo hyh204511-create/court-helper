@@ -3,6 +3,7 @@ export const BROWSER_COMMAND_TYPES = [
   'QUERY_LI',
   'QUERY_QZ',
   'EXPORT_REPORT',
+  'QUERY_ALL_EXPORT',
 ] as const;
 
 export type BrowserCommandType = (typeof BROWSER_COMMAND_TYPES)[number];

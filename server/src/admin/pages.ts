@@ -233,15 +233,14 @@ function browserControlPage(role: AdminRole): string {
     </section>
     ${extensionAuthorization}
     <section class="panel" aria-labelledby="browser-command-title">
-      <div class="panel-head"><div><h3 id="browser-command-title">通用任务</h3><p>仅创建立案查询、强执查询或导出；登录请使用上方独立入口。</p></div></div>
+      <div class="panel-head"><div><h3 id="browser-command-title">一键查询并导出</h3><p>依次查询立案和强执，全部采集完成后生成并上传报表；登录请使用上方独立入口。</p></div></div>
       <div class="panel-body">
         <form id="browser-command-form">
           <div class="field-grid">
-            <div class="field"><label for="browser-command-type">任务类型</label><select id="browser-command-type"><option value="QUERY_LI">开始立案查询</option><option value="QUERY_QZ">开始强执查询</option><option value="EXPORT_REPORT">导出报表</option></select></div>
             <div class="field"><label for="browser-command-account">平台账号（必选）</label><select id="browser-command-account"><option value="">加载中…</option></select></div>
-            <div class="field"><label for="browser-command-batch">导入批次（仅查询必选）</label><select id="browser-command-batch"><option value="">不选择</option></select></div>
+            <div class="field"><label for="browser-command-batch">空白导入批次（必选）</label><select id="browser-command-batch"><option value="">不选择</option></select></div>
           </div>
-          <div class="form-actions"><button class="primary" type="submit">创建任务</button><button class="secondary" id="browser-command-refresh" type="button">立即刷新</button></div>
+          <div class="form-actions"><button class="primary" type="submit">一键查询并导出</button><button class="secondary" id="browser-command-refresh" type="button">立即刷新</button></div>
         </form><p class="message" data-browser-command-message aria-live="polite"></p>
       </div>
     </section>

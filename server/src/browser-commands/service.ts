@@ -28,6 +28,7 @@ export const BROWSER_COMMAND_PENDING_TTL_MS = 5 * 60 * 1000;
 // then perform the bounded cross-route evidence phase. Keep the claim alive
 // for that single execution without introducing a heartbeat protocol.
 export const BROWSER_COMMAND_LEASE_TTL_MS = 20 * 60 * 1000;
+export const QUERY_ALL_EXPORT_LEASE_TTL_MS = 40 * 60 * 1000;
 export const BROWSER_COMMAND_RESULT_SUMMARY_LIMIT = 200;
 export const BROWSER_COMMAND_PAYLOAD_BYTES_LIMIT = 16 * 1024;
 export const BROWSER_COMMAND_PROGRESS_BYTES_LIMIT = 2 * 1024;
@@ -180,7 +181,7 @@ function normalizeCreate(input: BrowserCommandCreateInput): NormalizedBrowserCom
   }
 
   const importBatchId = input.importBatchId ?? null;
-  const queryCommand = input.type === 'QUERY_LI' || input.type === 'QUERY_QZ';
+  const queryCommand = input.type === 'QUERY_LI' || input.type === 'QUERY_QZ' || input.type === 'QUERY_ALL_EXPORT';
   if (queryCommand) {
     assertUuid(importBatchId, 'importBatchId');
   } else if (importBatchId !== null) {
@@ -350,7 +351,9 @@ export class BrowserCommandService {
         ? importBatch.liRows
         : normalized.type === 'QUERY_QZ'
           ? importBatch.qzRows
-          : 0;
+          : normalized.type === 'QUERY_ALL_EXPORT'
+            ? importBatch.liRows + importBatch.qzRows
+            : 0;
       if (rowCount > 0) {
         throw new AppError('Import template must be empty', 'TEMPLATE_NOT_EMPTY', 400, false);
       }
@@ -408,7 +411,7 @@ export class BrowserCommandService {
       deviceId,
       hashToken(claimToken),
       now,
-      new Date(now.getTime() + BROWSER_COMMAND_LEASE_TTL_MS),
+      new Date(now.getTime() + (current.type === 'QUERY_ALL_EXPORT' ? QUERY_ALL_EXPORT_LEASE_TTL_MS : BROWSER_COMMAND_LEASE_TTL_MS)),
     );
     if (claimed) return { command: claimed, claimToken };
 
@@ -481,7 +484,7 @@ export class BrowserCommandService {
       || command.claimedBy !== deviceId
       || command.claimTokenHash !== claimHash
       || command.clientBatchId !== importBatchId
-      || !['QUERY_LI', 'QUERY_QZ'].includes(command.type)
+      || !['QUERY_LI', 'QUERY_QZ', 'QUERY_ALL_EXPORT'].includes(command.type)
     ) {
       throw new ForbiddenError('Browser command lease is not valid');
     }
