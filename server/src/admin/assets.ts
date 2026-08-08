@@ -852,24 +852,7 @@ function clearPlatformCredential() {
   if (view) view.hidden = true;
 }
 
-function fillPlatformAccountSelect(select, accounts, includeEmpty) {
-  if (!select) return;
-  const selected = select.value;
-  clear(select);
-  if (includeEmpty) {
-    const empty = element('option', '不选择');
-    empty.value = '';
-    select.appendChild(empty);
-  }
-  accounts.forEach((account) => {
-    const option = element('option', account.label || '未命名');
-    option.value = account.id;
-    option.selected = account.id === selected;
-    select.appendChild(option);
-  });
-}
-
-function fillPlatformAccountLabelList(input, list, accounts) {
+function fillPlatformAccountLabelList(input, list, accounts, selectFirst = false) {
   if (!input || !list) return;
   const selected = input.value;
   const normalizedSelected = String(selected || '').trim().toLocaleLowerCase('zh-CN');
@@ -881,23 +864,26 @@ function fillPlatformAccountLabelList(input, list, accounts) {
     option.dataset.platformAccountLabel = account.label || '';
     list.appendChild(option);
   });
-  if (!accounts.some((account) => String(account.label || '').trim().toLocaleLowerCase('zh-CN') === normalizedSelected)) input.value = accounts[0]?.label || '';
+  if (!accounts.some((account) => String(account.label || '').trim().toLocaleLowerCase('zh-CN') === normalizedSelected)) {
+    input.value = selectFirst ? accounts[0]?.label || '' : '';
+  }
   list.hidden = true;
   input.setAttribute('aria-expanded', 'false');
 }
 
 async function loadBrowserControlAccounts() {
-  const taskSelect = $('#browser-command-account');
+  const taskInput = $('#browser-command-account');
+  const taskLabels = $('#browser-command-account-menu');
   const loginInput = $('#platform-login-account');
   const loginLabels = $('#platform-login-account-menu');
-  if (!taskSelect && !loginInput) return;
+  if (!taskInput && !loginInput) return;
   try {
     const result = await api('/platform-accounts');
     const allAccounts = result.platformAccounts || [];
     const enabledAccounts = allAccounts.filter((account) => account.enabled !== false);
     browserControlAccounts = allAccounts;
-    fillPlatformAccountSelect(taskSelect, enabledAccounts, true);
-    fillPlatformAccountLabelList(loginInput, loginLabels, enabledAccounts);
+    fillPlatformAccountLabelList(taskInput, taskLabels, enabledAccounts);
+    fillPlatformAccountLabelList(loginInput, loginLabels, enabledAccounts, true);
     const labels = $('#browser-account-labels');
     if (labels) {
       clear(labels);
@@ -925,6 +911,48 @@ function selectedBrowserAccount(query, accounts = browserControlAccounts) {
 
 function selectedEnabledBrowserAccount(query) {
   return selectedBrowserAccount(query, browserControlAccounts.filter((account) => account.enabled !== false));
+}
+
+function bindAccountPicker(input, picker, toggle, menu) {
+  if (!input || !menu) return;
+  const filterMenu = (useQuery = true) => {
+    const query = useQuery ? String(input.value || '').trim().toLocaleLowerCase('zh-CN') : '';
+    menu.querySelectorAll('[role="option"]').forEach((option) => {
+      const label = String(option.dataset.platformAccountLabel || '').toLocaleLowerCase('zh-CN');
+      option.hidden = Boolean(query) && !label.includes(query);
+    });
+  };
+  const closeMenu = () => {
+    menu.hidden = true;
+    input.setAttribute('aria-expanded', 'false');
+    toggle?.setAttribute('aria-expanded', 'false');
+  };
+  const openMenu = (showAll = false) => {
+    filterMenu(!showAll);
+    menu.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    toggle?.setAttribute('aria-expanded', 'true');
+  };
+  input.addEventListener('input', () => {
+    if (input.value.trim()) openMenu();
+    else closeMenu();
+  });
+  toggle?.addEventListener('click', (event) => {
+    event.preventDefault();
+    if (menu.hidden) openMenu(true);
+    else closeMenu();
+    input.focus();
+  });
+  menu.addEventListener('click', (event) => {
+    const option = event.target.closest('[role="option"]');
+    if (!option) return;
+    input.value = option.dataset.platformAccountLabel || '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    closeMenu();
+  });
+  document.addEventListener('click', (event) => {
+    if (picker && !picker.contains(event.target)) closeMenu();
+  });
 }
 
 function filterBrowserCommandRows() {
@@ -1143,6 +1171,9 @@ function initBrowserControl() {
   const loginAccountMenu = $('#platform-login-account-menu');
   const importForm = $('#import-batch-form');
   const account = $('#browser-command-account');
+  const accountPicker = $('#browser-command-account-picker');
+  const accountToggle = $('#browser-command-account-toggle');
+  const accountMenu = $('#browser-command-account-menu');
   const batch = $('#browser-command-batch');
   const accountSearchForm = $('#browser-account-search-form');
   const accountSearch = $('#browser-account-search');
@@ -1151,51 +1182,12 @@ function initBrowserControl() {
     credentialRequestGeneration += 1;
     clearPlatformCredential();
   };
-  const filterLoginAccountMenu = (useQuery = true) => {
-    if (!loginAccountMenu) return;
-    const query = useQuery ? String(loginAccount?.value || '').trim().toLocaleLowerCase('zh-CN') : '';
-    loginAccountMenu.querySelectorAll('[role="option"]').forEach((option) => {
-      const label = String(option.dataset.platformAccountLabel || '').toLocaleLowerCase('zh-CN');
-      option.hidden = Boolean(query) && !label.includes(query);
-    });
-  };
-  const closeLoginAccountMenu = () => {
-    if (!loginAccountMenu) return;
-    loginAccountMenu.hidden = true;
-    loginAccount?.setAttribute('aria-expanded', 'false');
-    loginAccountToggle?.setAttribute('aria-expanded', 'false');
-  };
-  const openLoginAccountMenu = (showAll = false) => {
-    if (!loginAccountMenu) return;
-    filterLoginAccountMenu(!showAll);
-    loginAccountMenu.hidden = false;
-    loginAccount?.setAttribute('aria-expanded', 'true');
-    loginAccountToggle?.setAttribute('aria-expanded', 'true');
-  };
   document.addEventListener('visibilitychange', () => { browserControlVisible = document.visibilityState === 'visible'; if (browserControlVisible) void loadBrowserCommands(); });
   window.addEventListener('pagehide', invalidatePlatformCredential);
   loginAccount?.addEventListener('input', invalidatePlatformCredential);
   loginAccount?.addEventListener('change', invalidatePlatformCredential);
-  loginAccount?.addEventListener('input', () => {
-    if (loginAccount.value.trim()) openLoginAccountMenu();
-    else closeLoginAccountMenu();
-  });
-  loginAccountToggle?.addEventListener('click', (event) => {
-    event.preventDefault();
-    if (loginAccountMenu?.hidden) openLoginAccountMenu(true);
-    else closeLoginAccountMenu();
-    loginAccount?.focus();
-  });
-  loginAccountMenu?.addEventListener('click', (event) => {
-    const option = event.target.closest('[role="option"]');
-    if (!option || !loginAccount) return;
-    loginAccount.value = option.dataset.platformAccountLabel || '';
-    loginAccount.dispatchEvent(new Event('input', { bubbles: true }));
-    closeLoginAccountMenu();
-  });
-  document.addEventListener('click', (event) => {
-    if (loginAccountPicker && !loginAccountPicker.contains(event.target)) closeLoginAccountMenu();
-  });
+  bindAccountPicker(loginAccount, loginAccountPicker, loginAccountToggle, loginAccountMenu);
+  bindAccountPicker(account, accountPicker, accountToggle, accountMenu);
   $('#platform-credential-hide')?.addEventListener('click', invalidatePlatformCredential);
   $('#platform-credential-show')?.addEventListener('click', async () => {
     const selected = selectedEnabledBrowserAccount(loginAccount?.value);
@@ -1237,9 +1229,10 @@ function initBrowserControl() {
   account.required = true;
   batch.required = true;
   commandForm?.addEventListener('submit', async (event) => {
-    event.preventDefault(); const platformAccountId = account.value || null; const importBatchId = batch.value || null;
-    if (!platformAccountId) { setMessage($('[data-browser-command-message]'), '请选择平台账号'); return; }
+    event.preventDefault(); const selected = selectedEnabledBrowserAccount(account.value); const platformAccountId = selected?.id || null; const importBatchId = batch.value || null;
+    if (!selected) { setMessage($('[data-browser-command-message]'), '请从启用平台账号标签提示中选择'); return; }
     if (!importBatchId) { setMessage($('[data-browser-command-message]'), '一键任务必须选择空白导入批次'); return; }
+    account.value = selected.label || '';
     setFormBusy(commandForm, true);
     try { await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: 'QUERY_ALL_EXPORT', platformAccountId, importBatchId }) }); setMessage($('[data-browser-command-message]'), '一键查询导出任务已创建', 'success'); await loadBrowserCommands(); }
     catch (error) { setMessage($('[data-browser-command-message]'), errorMessage(error)); } finally { setFormBusy(commandForm, false); }

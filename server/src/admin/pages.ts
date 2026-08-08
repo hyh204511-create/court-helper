@@ -237,7 +237,7 @@ function browserControlPage(role: AdminRole): string {
       <div class="panel-body">
         <form id="browser-command-form">
           <div class="field-grid">
-            <div class="field"><label for="browser-command-account">平台账号（必选）</label><select id="browser-command-account"><option value="">加载中…</option></select></div>
+            <div class="field"><label for="browser-command-account">平台账号（必选）</label><div class="account-picker" id="browser-command-account-picker"><input id="browser-command-account" type="search" autocomplete="off" placeholder="输入账号标签或关键词" role="combobox" aria-autocomplete="list" aria-controls="browser-command-account-menu" aria-expanded="false" required><button id="browser-command-account-toggle" class="account-picker-toggle" type="button" aria-label="展开平台账号列表" aria-controls="browser-command-account-menu" aria-expanded="false">▼</button><div id="browser-command-account-menu" class="account-picker-menu" role="listbox" hidden></div></div></div>
             <div class="field"><label for="browser-command-batch">空白导入批次（必选）</label><select id="browser-command-batch"><option value="">不选择</option></select></div>
           </div>
           <div class="form-actions"><button class="primary" type="submit">一键查询并导出</button><button class="secondary" id="browser-command-refresh" type="button">立即刷新</button></div>
