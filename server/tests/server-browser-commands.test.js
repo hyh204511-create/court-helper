@@ -608,6 +608,32 @@ test('browser command cancellation is owner-only and terminal-state idempotent',
   assert.equal((await service.cancel(command.id, USER_ID)).status, 'cancelled');
 });
 
+test('browser command cleanup deletes only terminal commands in the requested ownership scope', async () => {
+  const { service } = await makeService();
+  const userFinished = await service.create(commandInput('EXPORT_REPORT', {
+    platformAccountId: randomUUID(),
+    requestedBy: USER_ID,
+  }));
+  const adminFinished = await service.create(commandInput('EXPORT_REPORT', {
+    platformAccountId: randomUUID(),
+    requestedBy: ADMIN_ID,
+  }));
+  const active = await service.create(commandInput('EXPORT_REPORT', {
+    platformAccountId: randomUUID(),
+    requestedBy: USER_ID,
+  }));
+  await service.cancel(userFinished.id, USER_ID);
+  await service.cancel(adminFinished.id, ADMIN_ID);
+
+  assert.equal(await service.deleteTerminal(USER_ID), 1);
+  assert.equal((await service.list({ limit: 100 })).items.some((item) => item.id === userFinished.id), false);
+  assert.equal((await service.get(active.id)).status, 'pending');
+  assert.equal((await service.get(adminFinished.id)).status, 'cancelled');
+
+  assert.equal(await service.deleteTerminal(), 1);
+  assert.deepEqual((await service.list({ limit: 100 })).items.map((item) => item.id), [active.id]);
+});
+
 test('browser command service validates UUIDs, result states, progress, and safe summaries', async () => {
   const { service } = await makeService();
   await assert.rejects(
@@ -795,6 +821,75 @@ test('browser command routes isolate user lists/details and allow owner cancella
   }
 });
 
+test('browser command cleanup route is CSRF protected, role scoped, and preserves active commands', async () => {
+  const { app } = await makeApp();
+  try {
+    const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
+    const user = await loginUi(app, 'worker', USER_PASSWORD);
+    const adminFinished = await createCommand(app, admin, '/api/v1', {
+      type: 'EXPORT_REPORT',
+      platformAccountId: randomUUID(),
+    });
+    const userFinished = await createCommand(app, user, '/api/v1', {
+      type: 'EXPORT_REPORT',
+      platformAccountId: randomUUID(),
+    });
+    const active = await createCommand(app, user, '/api/v1', {
+      type: 'EXPORT_REPORT',
+      platformAccountId: randomUUID(),
+    });
+    for (const [session, command] of [[admin, adminFinished], [user, userFinished]]) {
+      const cancelled = await app.inject({
+        method: 'POST',
+        url: `/api/v1/browser-commands/${command.json().command.id}/cancel`,
+        headers: cookieHeaders(session),
+        payload: {},
+      });
+      assert.equal(cancelled.statusCode, 200);
+    }
+
+    const missingCsrf = await app.inject({
+      method: 'DELETE',
+      url: '/api/v1/browser-commands',
+      headers: { cookie: user.cookie, origin: 'https://admin.example.test' },
+    });
+    assert.equal(missingCsrf.statusCode, 403);
+
+    const userCleanup = await app.inject({
+      method: 'DELETE',
+      url: '/api/v1/browser-commands',
+      headers: cookieHeaders(user),
+    });
+    assert.equal(userCleanup.statusCode, 200);
+    assert.deepEqual(userCleanup.json(), { deletedCount: 1 });
+
+    const afterUserCleanup = await app.inject({
+      method: 'GET',
+      url: '/api/v1/browser-commands?limit=100',
+      headers: { cookie: admin.cookie },
+    });
+    assert.deepEqual(
+      new Set(afterUserCleanup.json().commands.map((item) => item.id)),
+      new Set([adminFinished.json().command.id, active.json().command.id]),
+    );
+
+    const adminCleanup = await app.inject({
+      method: 'DELETE',
+      url: '/api/v1/browser-commands',
+      headers: cookieHeaders(admin),
+    });
+    assert.deepEqual(adminCleanup.json(), { deletedCount: 1 });
+    const remaining = await app.inject({
+      method: 'GET',
+      url: '/api/v1/browser-commands?limit=100',
+      headers: { cookie: admin.cookie },
+    });
+    assert.deepEqual(remaining.json().commands.map((item) => item.id), [active.json().command.id]);
+  } finally {
+    await app.close();
+  }
+});
+
 test('browser command extension claim and claimant result reject strangers and expose no token hash', async () => {
   const { app } = await makeApp();
   try {
@@ -935,7 +1030,7 @@ test('browser command routes reject malformed UUIDs and sensitive payload/result
   }
 });
 
-test('postgres browser command repository persists safe JSON, claims atomically, completes, lists, and cancels', async () => {
+test('postgres browser command repository persists safe JSON, claims atomically, completes, lists, cancels, and clears terminal rows', async () => {
   const { pool } = await postgres();
   try {
     await runMigrations(pool);
@@ -973,6 +1068,8 @@ test('postgres browser command repository persists safe JSON, claims atomically,
     assert.equal(result.status, 'succeeded');
     assert.equal((await repository.list({ requestedBy: ADMIN_ID, limit: 10 })).items.length, 1);
     assert.equal((await repository.cancel(command.id, ADMIN_ID, new Date('2026-08-06T10:02:00.000Z'))).status, 'succeeded');
+    assert.equal(await repository.deleteTerminal(ADMIN_ID), 1);
+    assert.equal((await repository.list({ requestedBy: ADMIN_ID, limit: 10 })).items.length, 0);
   } finally {
     await pool.end();
   }
