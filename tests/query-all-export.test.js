@@ -32,6 +32,55 @@ test("一键流程遇到结构硬失败立即停止且不导出", async () => {
   assert.equal(exported, 0);
 });
 
+test("一键流程允许仅一类有记录：另一类切换超时但结构化探测确认为空时仍导出", async () => {
+  const calls = [];
+  const result = await runQueryAllExport({
+    switchCategory: async (kind) => {
+      calls.push(`switch:${kind}`);
+      return kind === "li" ? { ok: false, error: "QUERY_TAB_TIMEOUT" } : { ok: true };
+    },
+    queryKind: async (kind) => {
+      calls.push(`query:${kind}`);
+      return kind === "li"
+        ? { ok: true, stats: { total: 0, completed: 0, needsHuman: 0 } }
+        : { ok: true, stats: { total: 1, completed: 1, needsHuman: 0 } };
+    },
+    exportReport: async () => {
+      calls.push("export");
+      return { ok: true, upload: { status: "uploaded" } };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ["switch:li", "query:li", "switch:qz", "query:qz", "export"]);
+});
+
+test("一键流程不能用另一类成功掩盖 API-DOM 硬失败", async () => {
+  let exported = 0;
+  const result = await runQueryAllExport({
+    switchCategory: async () => ({ ok: true }),
+    queryKind: async (kind) => kind === "li"
+      ? { ok: false, error: "API_DOM_MISMATCH" }
+      : { ok: true, stats: { total: 1, completed: 1, needsHuman: 0 } },
+    exportReport: async () => { exported += 1; return { ok: true }; },
+  });
+
+  assert.deepEqual(result, { ok: false, error: "API_DOM_MISMATCH" });
+  assert.equal(exported, 0);
+});
+
+test("分类切换超时后的结构化探测出现 API-DOM 硬失败时仍不导出", async () => {
+  let exported = 0;
+  const result = await runQueryAllExport({
+    switchCategory: async () => ({ ok: false, error: "QUERY_TAB_TIMEOUT" }),
+    queryKind: async () => ({ ok: false, error: "API_DOM_MISMATCH" }),
+    exportReport: async () => { exported += 1; return { ok: true }; },
+  });
+
+  assert.deepEqual(result, { ok: false, error: "API_DOM_MISMATCH" });
+  assert.equal(exported, 0);
+});
+
 test("分类切换只点击唯一精确文本 tab 和唯一查询按钮", async () => {
   const dom = new JSDOM(`<!doctype html><body>
     <div class="fd-com-tab"><button>审判</button><button>执行</button><button>执行帮助</button></div>

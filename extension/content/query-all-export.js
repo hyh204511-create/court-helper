@@ -97,9 +97,15 @@ export async function runQueryAllExport({ switchCategory, queryKind, exportRepor
   let needsHuman = false;
   for (const kind of ["li", "qz"]) {
     const switched = await switchCategory(kind);
-    if (!switched?.ok) return { ok: false, error: switched?.error ?? "SELECTOR_CHANGED" };
+    const canProbeAfterTimeout = switched?.ok !== true && switched?.error === "QUERY_TAB_TIMEOUT";
+    if (!switched?.ok && !canProbeAfterTimeout) {
+      return { ok: false, error: switched?.error ?? "SELECTOR_CHANGED" };
+    }
     const queried = await queryKind(kind);
     if (!queried?.ok) {
+      if (canProbeAfterTimeout) {
+        return { ok: false, error: queried?.error ?? switched.error };
+      }
       if (!softManualResult(queried)) return { ok: false, error: queried?.error ?? "NEEDS_HUMAN" };
       needsHuman = true;
     }
