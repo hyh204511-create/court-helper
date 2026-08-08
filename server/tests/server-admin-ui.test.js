@@ -187,6 +187,79 @@ test('admin login shell and static assets are same-origin, CSP protected, and RE
   }
 });
 
+test('enterprise admin shell fixes desktop navigation and exposes an accessible mobile drawer', async () => {
+  const { app } = await makeApp();
+  try {
+    const admin = await login(app, 'admin', ADMIN_PASSWORD);
+    const protectedRoutes = [
+      '/admin/browser-control',
+      '/admin/cases',
+      `/admin/cases/${CASE_ID}`,
+      '/admin/report-exports',
+      '/admin/users',
+      '/admin/platform-accounts',
+    ];
+    let casesPage;
+    for (const route of protectedRoutes) {
+      const page = await app.inject({ method: 'GET', url: route, headers: { cookie: admin.cookie } });
+      assert.equal(page.statusCode, 200, route);
+      assert.match(page.body, /id="admin-sidebar"/);
+      assert.match(page.body, /id="sidebar-toggle"[^>]*aria-controls="admin-sidebar"[^>]*aria-expanded="false"/);
+      assert.match(page.body, /id="sidebar-scrim"[^>]*hidden/);
+      assert.match(page.body, /id="main-content"/);
+      if (route === '/admin/cases') casesPage = page;
+    }
+
+    const css = await app.inject({ method: 'GET', url: '/admin/assets/admin.css' });
+    assert.match(css.body, /--sidebar-width:\s*264px/);
+    assert.match(css.body, /\.sidebar\s*\{[^}]*position:\s*fixed/s);
+    assert.match(css.body, /\.content\s*\{[^}]*margin-left:\s*var\(--sidebar-width\)/s);
+    assert.match(css.body, /@media\s*\(max-width:\s*960px\)/);
+    assert.match(css.body, /\.sidebar-scrim/);
+    assert.match(css.body, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+
+    const script = await app.inject({ method: 'GET', url: '/admin/assets/admin.js' });
+    assert.match(script.body, /initNavigationDrawer/);
+    assert.match(script.body, /event\.key === 'Escape'/);
+
+    const shellOnlyHtml = casesPage.body.replace('data-page="cases"', 'data-page="forbidden"');
+    const dom = new JSDOM(shellOnlyHtml, {
+      runScripts: 'outside-only',
+      url: 'https://admin.example.test/admin/cases',
+    });
+    dom.window.eval(script.body);
+    dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const toggle = dom.window.document.querySelector('#sidebar-toggle');
+    const scrim = dom.window.document.querySelector('#sidebar-scrim');
+    const firstLink = dom.window.document.querySelector('#admin-sidebar .nav a');
+
+    toggle.click();
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+    assert.equal(scrim.hidden, false);
+    assert.equal(dom.window.document.body.classList.contains('sidebar-open'), true);
+
+    scrim.click();
+    assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(scrim.hidden, true);
+    assert.equal(dom.window.document.activeElement, toggle);
+
+    toggle.click();
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape' }));
+    assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(dom.window.document.activeElement, toggle);
+
+    toggle.click();
+    firstLink.dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+    assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(dom.window.document.activeElement, toggle);
+    dom.window.close();
+  } finally {
+    await app.close();
+  }
+});
+
 test('admin and user page reachability is role-isolated, while unauthenticated pages redirect', async () => {
   const { app } = await makeApp();
   try {
