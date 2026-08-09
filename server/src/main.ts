@@ -21,6 +21,11 @@ const storageBackend = createStorageBackend(config);
 const localLoginHelper = config.localLoginHelper.autoStart ? createLocalLoginHelper() : undefined;
 const app = buildApp({
   config,
+  unexpectedErrorLogger: {
+    error(details) {
+      console.error(JSON.stringify(details));
+    },
+  },
   authRepository: new PgAuthRepository(pool),
   platformAccountRepository: new PgPlatformAccountRepository(pool),
   loginCommandRepository: new PgLoginCommandRepository(pool),

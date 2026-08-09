@@ -58,6 +58,15 @@ export interface BuildAppOptions {
   config?: ServerConfig;
   dependencies?: Partial<HealthDependencies>;
   logger?: boolean;
+  unexpectedErrorLogger?: {
+    error(details: {
+      requestId: string;
+      method: string;
+      route: string;
+      errorName: string;
+      errorCode: string;
+    }): void;
+  };
   register?: (app: FastifyInstance) => void | Promise<void>;
   authRepository?: AuthRepository;
   platformAccountRepository?: PlatformAccountRepository;
@@ -131,6 +140,26 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   app.setErrorHandler((error, request, reply) => {
     const normalized = errorFromFastify(error);
+    if (normalized.code === 'INTERNAL_ERROR' && options.unexpectedErrorLogger) {
+      const candidate = error as { code?: unknown; name?: unknown };
+      const errorCode = typeof candidate.code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(candidate.code)
+        ? candidate.code
+        : 'UNEXPECTED_ERROR';
+      const errorName = typeof candidate.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(candidate.name)
+        ? candidate.name
+        : 'Error';
+      try {
+        options.unexpectedErrorLogger.error({
+          requestId: request.requestId,
+          method: request.method,
+          route: request.routeOptions.url ?? 'UNMATCHED_ROUTE',
+          errorName,
+          errorCode,
+        });
+      } catch {
+        // Diagnostics must never replace the original safe error response.
+      }
+    }
     reply
       .code(normalized.statusCode)
       .send(errorEnvelope(normalized, request.requestId));

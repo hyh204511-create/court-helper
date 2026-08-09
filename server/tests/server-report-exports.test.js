@@ -124,7 +124,7 @@ async function readStream(stream) {
   return Buffer.concat(chunks);
 }
 
-async function makeApp(storageBackend = new CountingStorageBackend()) {
+async function makeApp(storageBackend = new CountingStorageBackend(), unexpectedErrorLogger = undefined) {
   const authRepository = new MemoryAuthRepository();
   const reportExportRepository = new MemoryReportExportRepository();
   const now = new Date();
@@ -142,6 +142,7 @@ async function makeApp(storageBackend = new CountingStorageBackend()) {
   ]);
   const app = buildApp({
     config: config(),
+    unexpectedErrorLogger,
     dependencies: {
       database: { check: async () => true },
       objectStorage: storageBackend,
@@ -169,6 +170,40 @@ async function makeApp(storageBackend = new CountingStorageBackend()) {
   });
   return { app, authRepository, platformAccountRepository, reportExportRepository, storageBackend };
 }
+
+test('unexpected report export failures emit only safe diagnostic fields', async () => {
+  const diagnostics = [];
+  const { app, reportExportRepository } = await makeApp(
+    new CountingStorageBackend(),
+    { error(details) { diagnostics.push(details); } },
+  );
+
+  try {
+    const token = await login(app, 'user-a', USER_A_PASSWORD);
+    const unsafeError = Object.assign(
+      new Error('SQL failed for private-report.xlsx and synthetic plaintiff'),
+      { code: 'SYNTHETIC_DATABASE_FAILURE', detail: 'private object key' },
+    );
+    reportExportRepository.create = async () => { throw unsafeError; };
+
+    const response = await upload(app, token);
+
+    assert.equal(response.statusCode, 500);
+    assert.equal(response.json().error.code, 'INTERNAL_ERROR');
+    assert.equal(diagnostics.length, 1);
+    assert.deepEqual(Object.keys(diagnostics[0]).sort(), [
+      'errorCode', 'errorName', 'method', 'requestId', 'route',
+    ]);
+    assert.equal(diagnostics[0].method, 'POST');
+    assert.equal(diagnostics[0].route, '/api/v1/report-exports');
+    assert.equal(diagnostics[0].errorName, 'Error');
+    assert.equal(diagnostics[0].errorCode, 'SYNTHETIC_DATABASE_FAILURE');
+    assert.equal(diagnostics[0].requestId, response.json().error.requestId);
+    assert.doesNotMatch(JSON.stringify(diagnostics), /private-report|synthetic plaintiff|object key|SQL failed/);
+  } finally {
+    await app.close();
+  }
+});
 
 async function login(app, username, password, origin = 'chrome-extension://test-extension') {
   if (origin === 'chrome-extension://test-extension') {
