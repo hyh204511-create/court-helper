@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 
-import { runQueryAllExport, switchQueryCategory } from "../extension/content/query-all-export.js";
+import { runQueryAllExport, switchQueryCategory, waitForListQuiet } from "../extension/content/query-all-export.js";
 
 test("一键流程严格按审判查询、执行查询、导出顺序运行", async () => {
   const calls = [];
@@ -79,6 +79,18 @@ test("分类切换超时后的结构化探测出现 API-DOM 硬失败时仍不�
 
   assert.deepEqual(result, { ok: false, error: "API_DOM_MISMATCH" });
   assert.equal(exported, 0);
+});
+
+test("API-DOM 复核前等待案件列表连续静默", async () => {
+  const dom = new JSDOM(`<!doctype html><body><div class="fd-com-list-container"><div>OLD</div></div></body>`);
+  const container = dom.window.document.querySelector(".fd-com-list-container");
+  const waiting = waitForListQuiet(dom.window.document, { quietMs: 30, timeoutMs: 200 });
+  dom.window.setTimeout(() => { container.innerHTML = "<div>NEW</div>"; }, 15);
+  assert.equal(await waiting, true);
+  assert.equal(
+    await waitForListQuiet(new JSDOM("<!doctype html><body></body>").window.document, { quietMs: 5, timeoutMs: 20 }),
+    false,
+  );
 });
 
 test("分类切换只点击唯一精确文本 tab 和唯一查询按钮", async () => {

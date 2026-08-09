@@ -116,6 +116,46 @@ export function matchApiDomRows(apiRows = [], domRows = []) {
   return { ok: true, matches: apiRows.map((row) => domRows.findIndex((candidate) => identity(candidate) === identity(row))) };
 }
 
+/**
+ * Compare one fresh API/DOM snapshot and allow exactly one re-read after the
+ * caller confirms the SPA list has become quiet. Neither side of a failed
+ * snapshot is reused, so a transitional DOM cannot be paired with stale API
+ * rows and a permanent mismatch still fails closed.
+ */
+export async function reconcileApiDomRows({ readApi, readDom, waitForQuiet } = {}) {
+  if (typeof readApi !== "function" || typeof readDom !== "function" || typeof waitForQuiet !== "function") {
+    return MANUAL("API_DOM_MISMATCH");
+  }
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let api;
+    let dom;
+    try {
+      api = await readApi();
+      if (!api?.ok) return api ?? MANUAL("API_DOM_MISMATCH");
+      dom = await readDom();
+    } catch {
+      api = api?.ok ? api : null;
+      dom = null;
+    }
+    const domRows = dom?.rows;
+    const matched = Number.isInteger(api?.total)
+      && api.total === domRows?.length
+      ? matchApiDomRows(api.rows, domRows)
+      : MANUAL("API_DOM_MISMATCH");
+    if (matched.ok) return { ok: true, api, dom, retried: attempt > 0 };
+    if (attempt === 0) {
+      let quiet = false;
+      try {
+        quiet = await waitForQuiet();
+      } catch {
+        quiet = false;
+      }
+      if (!quiet) return MANUAL("API_DOM_MISMATCH");
+    }
+  }
+  return MANUAL("API_DOM_MISMATCH");
+}
+
 export async function takeoverCaseSpaceTab({ originalTabId, tabsBefore = [], tabsAfter = [], isDetail = (tab) => /detail|layyxq/i.test(String(tab?.url ?? "")) } = {}) {
   const before = new Set((Array.isArray(tabsBefore) ? tabsBefore : []).map((tab) => tab?.id));
   const candidate = (Array.isArray(tabsAfter) ? tabsAfter : []).find((tab) => tab?.id !== originalTabId && !before.has(tab?.id) && isDetail(tab));

@@ -53,7 +53,7 @@ function myCasePage({ rows, placeholderSearch = false }) {
 }
 
 function wslaPage(rows) {
-  return `<div class="fd-header-operate"><div class="fd-user-name">PLATFORM-ACCOUNT</div></div>${rows}`;
+  return `<div class="fd-header-operate"><div class="fd-user-name">PLATFORM-ACCOUNT</div></div><div class="fd-com-list-container">${rows}</div>`;
 }
 
 async function loadContent({ placeholderSearch = false, runtimeSendMessage } = {}) {
@@ -201,11 +201,11 @@ async function loadEnforcementList({ status = "已立案", myCase = false, keepS
   return { dom, chrome, title, executionRow };
 }
 
-async function dispatch(listener, message) {
+async function dispatch(listener, message, timeoutMs = 5000) {
   let response;
   const keepAlive = listener(message, {}, (value) => { response = value; });
   assert.equal(keepAlive, true);
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + timeoutMs;
   while (response === undefined && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
@@ -289,6 +289,97 @@ test("QUERY_LI 优先调用结构化 layy API；API 与 DOM 签名不一致时�
     assert.equal(response.error === "UNKNOWN" || response.error === "API_DOM_MISMATCH", true);
   } finally {
     globalThis.setTimeout = nativeSetTimeout;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("QUERY_LI 首次 API-DOM 不一致时等待 SPA 二次渲染并复核新快照", async () => {
+  await db.resetDb();
+  let domRef;
+  let listReads = 0;
+  const stableRow = caseRow({
+    status: "待审核",
+    name: "SYNTHETIC STABLE TITLE",
+    type: "民事一审案件",
+    values: {
+      参与人: "原告：SYNTHETIC PLAINTIFF；被告：SYNTHETIC DEFENDANT",
+      案由: "SYNTHETIC CAUSE",
+      申请日期: "2026-08-09",
+    },
+  });
+  const { dom, chrome } = await loadContent({
+    runtimeSendMessage: async (message) => {
+      if (message?.type !== "QUERY_API_REQUEST") return undefined;
+      if (message.path.includes("/count")) return { ok: true, status: 200, data: { data: 1 } };
+      if (message.path.includes("/layy")) {
+        listReads += 1;
+        if (listReads === 1) {
+          domRef.window.setTimeout(() => {
+            domRef.window.document.querySelector(".fd-com-list-container").innerHTML = stableRow;
+          }, 50);
+        }
+        return {
+          ok: true,
+          status: 200,
+          data: { data: [{
+            id: "SYNTHETIC-STABLE-ID",
+            zt: "11800007-1",
+            ajmc: "SYNTHETIC STABLE TITLE",
+            dsrMc: "原告：SYNTHETIC PLAINTIFF；被告：SYNTHETIC DEFENDANT",
+            laay: "SYNTHETIC CAUSE",
+            tjsj: "2026-08-09T08:00:00Z",
+          }] },
+        };
+      }
+      return undefined;
+    },
+  });
+  domRef = dom;
+  const nativeRandom = Math.random;
+  Math.random = () => 0;
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_LI",
+      queryMode: "platform_discovery",
+      platformAccountId: "00000000-0000-4000-8000-000000000096",
+    }, 12_000);
+    assert.notEqual(response.error, "API_DOM_MISMATCH");
+    assert.equal(listReads, 2);
+  } finally {
+    Math.random = nativeRandom;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("QUERY_QZ 对残留审判卡片先执行结构化复核而非提前报执行分类错误", async () => {
+  await db.resetDb();
+  const { dom, chrome } = await loadContent({
+    runtimeSendMessage: async (message) => {
+      if (message?.type !== "QUERY_API_REQUEST") return undefined;
+      return message.path.includes("/count")
+        ? { ok: true, status: 200, data: { data: 1 } }
+        : { ok: true, status: 200, data: { data: [{
+          id: "SYNTHETIC-QZ-TRANSITION-ID",
+          zt: "11800007-1",
+          ajmc: "SYNTHETIC EXECUTION TITLE",
+          dsrMc: "申请执行人：SYNTHETIC APPLICANT；被执行人：SYNTHETIC RESPONDENT",
+          laay: "SYNTHETIC EXECUTION CAUSE",
+          tjsj: "2026-08-09",
+        }] } };
+    },
+  });
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_QZ",
+      queryMode: "platform_discovery",
+      platformAccountId: "00000000-0000-4000-8000-000000000095",
+    });
+    assert.equal(response.error, "API_DOM_MISMATCH");
+  } finally {
     cleanup(dom);
     await db.resetDb();
   }

@@ -38,8 +38,8 @@ import {
   selectMyCaseApiEvidence,
   selectSourceApiRow,
 } from "../data/platform-evidence.js";
-import { createMainWorldFetch, fetchLayyPages, fetchMyCases, matchApiDomRows } from "./query-api.js";
-import { isQueryControlsReady, runQueryAllExport, switchQueryCategory } from "./query-all-export.js";
+import { createMainWorldFetch, fetchLayyPages, fetchMyCases, reconcileApiDomRows } from "./query-api.js";
+import { isQueryControlsReady, runQueryAllExport, switchQueryCategory, waitForListQuiet } from "./query-all-export.js";
 import * as db from "../data/db.js";
 import { sanitizeReportFileName } from "../data/report-file-name.js";
 
@@ -763,11 +763,8 @@ async function startPlatformDiscovery(kind, { platformAccountId = null, allowEmp
   const account = getCurrentAccount(document);
   if (!account) throw new Error("ACCOUNT_UNDETECTED");
   const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
-  const rows = collectListRows(document);
+  let rows = collectListRows(document);
   if (!rows.length && !allowEmpty) throw new Error("NO_VISIBLE_CASES");
-  if (kind === "qz" && !rows.some((row) => isEnforcementCaseType(row.caseType))) {
-    if (rows.length > 0) throw new Error("EXECUTION_TAB_REQUIRED");
-  }
   // In the real page, the API count is the authoritative page-size guard.
   // JSDOM fixtures intentionally do not expose window.fetch and keep their
   // deterministic DOM-only path.
@@ -775,24 +772,20 @@ async function startPlatformDiscovery(kind, { platformAccountId = null, allowEmp
     ? createMainWorldFetch(chrome.runtime.sendMessage.bind(chrome.runtime))
     : (typeof globalThis.fetch === "function" && globalThis.fetch.name !== "fetch" ? globalThis.fetch : null);
   if ((kind === "li" || allowEmpty) && !structuredFetch) throw new Error("BRIDGE_UNAVAILABLE");
+  if (!structuredFetch && kind === "qz" && rows.length > 0
+    && !rows.some((row) => isEnforcementCaseType(row.caseType))) throw new Error("EXECUTION_TAB_REQUIRED");
   let sourceApiRows = [];
   let discoveryRows = rows;
   if (structuredFetch) {
-    const apiResult = await fetchLayyPages({
+    const readApi = () => fetchLayyPages({
       kind,
       filters: { cxtj: "", kssj: "", jssj: "", zt: "", ajlb: kind === "qz" ? "zx" : "sp", sfid: "", sqrsf: "" },
       pageSize: 50,
       fetchImpl: structuredFetch,
     });
-    if (!apiResult.ok) throw new Error(apiResult.code ?? "UNKNOWN");
-    sourceApiRows = apiResult.rows;
-    if (allowEmpty && apiResult.total === 0 && rows.length === 0) {
-      await db.replaceAccountRecords(store, account, [], { platformAccountId });
-      return { ok: true, stats: { total: 0, completed: 0, needsHuman: 0 } };
-    }
-    let domIdentityRows;
-    try {
-      domIdentityRows = rows.map((row) => {
+    const readDom = () => {
+      const value = collectListRows(document);
+      const identities = value.map((row) => {
         const participants = parseParticipantField(findField(row.fields, "参与人"), kind);
         return {
           caseName: String(row.caseName ?? "").trim(),
@@ -802,11 +795,21 @@ async function startPlatformDiscovery(kind, { platformAccountId = null, allowEmp
           applicationDate: String(findField(row.fields, "申请日期") ?? "").trim(),
         };
       });
-    } catch {
-      throw new Error("API_DOM_MISMATCH");
+      return { value, rows: identities };
+    };
+    const reconciled = await reconcileApiDomRows({
+      readApi,
+      readDom,
+      waitForQuiet: () => waitForListQuiet(document),
+    });
+    if (!reconciled.ok) throw new Error(reconciled.code ?? "UNKNOWN");
+    const apiResult = reconciled.api;
+    rows = reconciled.dom.value;
+    sourceApiRows = apiResult.rows;
+    if (allowEmpty && apiResult.total === 0 && rows.length === 0) {
+      await db.replaceAccountRecords(store, account, [], { platformAccountId });
+      return { ok: true, stats: { total: 0, completed: 0, needsHuman: 0 } };
     }
-    const matched = matchApiDomRows(apiResult.rows, domIdentityRows);
-    if (apiResult.total !== rows.length || !matched.ok) throw new Error("API_DOM_MISMATCH");
     discoveryRows = rows.map((row, index) => ({
       ...row,
       sourceStatusText: apiResult.rows[index].statusText,

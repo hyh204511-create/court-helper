@@ -39,6 +39,37 @@ function trackListMutations(root) {
   return { container, lastMutationAt: () => lastMutationAt, hasFreshRows, disconnect: () => observer.disconnect() };
 }
 
+export function waitForListQuiet(root, { quietMs = 800, timeoutMs = 3_000 } = {}) {
+  const container = root?.querySelector?.(SELECTORS.list.container);
+  const MutationObserverImpl = root?.defaultView?.MutationObserver
+    ?? root?.ownerDocument?.defaultView?.MutationObserver
+    ?? globalThis.MutationObserver;
+  if (!container || typeof MutationObserverImpl !== "function"
+    || !Number.isFinite(quietMs) || quietMs < 1
+    || !Number.isFinite(timeoutMs) || timeoutMs < quietMs) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let settled = false;
+    let quietTimer = null;
+    let timeoutTimer = null;
+    const observer = new MutationObserverImpl(() => armQuietTimer());
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      observer.disconnect();
+      clearTimeout(quietTimer);
+      clearTimeout(timeoutTimer);
+      resolve(value);
+    };
+    const armQuietTimer = () => {
+      clearTimeout(quietTimer);
+      quietTimer = setTimeout(() => finish(true), quietMs);
+    };
+    observer.observe(container, { childList: true, subtree: true, characterData: true });
+    armQuietTimer();
+    timeoutTimer = setTimeout(() => finish(false), timeoutMs);
+  });
+}
+
 async function defaultWaitForList(root, kind, tracker, { timeoutMs = 10_000, intervalMs = 100, settleMs = 200 } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {

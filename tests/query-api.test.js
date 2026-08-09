@@ -7,6 +7,7 @@ import {
   assertPaginationConservation,
   validateFieldSignature,
   matchApiDomRows,
+  reconcileApiDomRows,
   takeoverCaseSpaceTab,
   selectLatestAudit,
   fetchLayyPages,
@@ -97,6 +98,64 @@ test("matchApiDomRows 双向唯一匹配，重复签名或 API/DOM 不一致转 
   const orderMismatch = matchApiDomRows(api, [...dom].reverse());
   assert.equal(orderMismatch.status, "UNKNOWN");
   assert.equal(orderMismatch.needsHuman, true);
+});
+
+test("reconcileApiDomRows 首次过渡快照不一致时只复核一次稳定快照", async () => {
+  const stable = [{
+    caseName: "SYNTHETIC CASE",
+    applicant: "SYNTHETIC PLAINTIFF",
+    respondent: "SYNTHETIC DEFENDANT",
+    cause: "SYNTHETIC CAUSE",
+    applicationDate: "2026-08-09",
+  }];
+  const transitional = [{ ...stable[0], applicationDate: "2026-08-08" }];
+  let apiReads = 0;
+  let domReads = 0;
+  let waits = 0;
+  const result = await reconcileApiDomRows({
+    readApi: async () => {
+      apiReads += 1;
+      return { ok: true, total: 1, rows: stable };
+    },
+    readDom: () => {
+      domReads += 1;
+      return { rows: domReads === 1 ? transitional : stable, value: `snapshot-${domReads}` };
+    },
+    waitForQuiet: async () => {
+      waits += 1;
+      return true;
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.retried, true);
+  assert.equal(result.dom.value, "snapshot-2");
+  assert.equal(apiReads, 2);
+  assert.equal(domReads, 2);
+  assert.equal(waits, 1);
+});
+
+test("reconcileApiDomRows 永久不一致或列表未静默时继续待人工", async () => {
+  const apiRows = [{ caseName: "API", applicant: "A", respondent: "B", cause: "C", applicationDate: "2026-08-09" }];
+  const domRows = [{ caseName: "DOM", applicant: "A", respondent: "B", cause: "C", applicationDate: "2026-08-09" }];
+  let reads = 0;
+  const mismatch = await reconcileApiDomRows({
+    readApi: async () => ({ ok: true, total: 1, rows: apiRows }),
+    readDom: () => ({ rows: domRows }),
+    waitForQuiet: async () => true,
+  });
+  assert.equal(mismatch.ok, false);
+  assert.equal(mismatch.code, "API_DOM_MISMATCH");
+  const notQuiet = await reconcileApiDomRows({
+    readApi: async () => {
+      reads += 1;
+      return { ok: true, total: 1, rows: apiRows };
+    },
+    readDom: () => ({ rows: domRows }),
+    waitForQuiet: async () => false,
+  });
+  assert.equal(notQuiet.ok, false);
+  assert.equal(notQuiet.code, "API_DOM_MISMATCH");
+  assert.equal(reads, 1);
 });
 
 test("takeoverCaseSpaceTab 接管案件空间新标签，不继续等待原列表标签", async () => {
