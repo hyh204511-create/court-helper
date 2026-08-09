@@ -1,6 +1,6 @@
 {
   "name": "court-helper",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "法院立案/强执查询助手 Edge 插件（MV3）",
@@ -10,7 +10,8 @@
     "server:migrate": "npm run server:build && node server/dist/migrate.js",
     "server:start": "node server/dist/main.js",
     "fixture": "python scripts/generate-fixtures.py",
-    "build": "node ./scripts/build-extension.mjs"
+    "build": "node ./scripts/build-extension.mjs",
+    "release": "node ./scripts/release-package.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

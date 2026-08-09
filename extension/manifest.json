@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "法院立案/强执查询助手",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "辅助查询人民法院诉讼服务网立案/强制执行状态，截图存证并按模板导出 Excel。",
   "permissions": [
     "storage",

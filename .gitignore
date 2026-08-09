@@ -1,5 +1,7 @@
 # 敏感数据与产物
 accounts.txt
+.release-secrets/
+release/
 *.xlsx
 !tests/fixtures/*.xlsx
 *.png

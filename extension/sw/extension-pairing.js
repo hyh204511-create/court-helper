@@ -1,10 +1,11 @@
 import { createRemoteClient } from '../data/remote-client.js';
+import { DEPLOYMENT_SERVER_URL, normalizeServerUrl } from '../config/deployment.js';
 
 export const EXTENSION_PAIRING_ALARM_NAME = 'extension-device-pairing';
 export const EXTENSION_PAIRING_ALARM_PERIOD_MINUTES = 1;
 export const EXTENSION_PAIRING_STATUS_REQUEST = 'EXTENSION_PAIRING_STATUS_REQUEST';
 export const EXTENSION_PAIRING_REQUEST = 'EXTENSION_PAIRING_REQUEST';
-export const DEFAULT_EXTENSION_SERVER_URL = 'http://127.0.0.1:3000';
+export const DEFAULT_EXTENSION_SERVER_URL = DEPLOYMENT_SERVER_URL;
 
 const PAIRING_KEYS = Object.freeze([
   'serverUrl',
@@ -42,23 +43,7 @@ function trim(value) {
 }
 
 export function normalizeExtensionServerUrl(value) {
-  if (typeof value !== 'string' || value.trim() === '') return null;
-  try {
-    const parsed = new URL(value.trim());
-    if (
-      parsed.protocol !== 'http:'
-      || parsed.hostname !== '127.0.0.1'
-      || parsed.port !== '3000'
-      || parsed.username
-      || parsed.password
-      || (parsed.pathname !== '/' && parsed.pathname !== '')
-      || parsed.search
-      || parsed.hash
-    ) return null;
-    return DEFAULT_EXTENSION_SERVER_URL;
-  } catch {
-    return null;
-  }
+  return normalizeServerUrl(value, DEFAULT_EXTENSION_SERVER_URL);
 }
 
 function safeStatus(status, code = null, verificationCode = null, expiresAt = null) {
