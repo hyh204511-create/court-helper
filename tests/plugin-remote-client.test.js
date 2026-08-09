@@ -99,7 +99,7 @@ test("截图上传使用 multipart 且携带幂等键，不把 Blob 放进 JSON"
   assert.equal(requests[0].init.body.get("file").type, "image/jpeg");
 });
 
-test("报表导出上传只使用 sha256 与文件作为幂等契约", async () => {
+test("报表导出上传携带账号关联、sha256 与文件", async () => {
   const requests = [];
   const client = createRemoteClient({
     baseUrl: "https://sync.example.test/api/v1",
@@ -124,6 +124,7 @@ test("报表导出上传只使用 sha256 与文件作为幂等契约", async () 
     blob,
     fileName: "立案与强执查询表-2026-08-06.xlsx",
     sha256: "a".repeat(64),
+    platformAccountId: "00000000-0000-0000-0000-000000000010",
   });
 
   assert.deepEqual(result, {
@@ -140,6 +141,7 @@ test("报表导出上传只使用 sha256 与文件作为幂等契约", async () 
   assert.equal(requests[0].init.headers["Idempotency-Key"], undefined);
   assert.ok(requests[0].init.body instanceof FormData);
   assert.equal(requests[0].init.body.get("sha256"), "a".repeat(64));
+  assert.equal(requests[0].init.body.get("platformAccountId"), "00000000-0000-0000-0000-000000000010");
   assert.equal(requests[0].init.body.get("clientExportId"), null);
   const file = requests[0].init.body.get("file");
   assert.equal(file.name, "立案与强执查询表-2026-08-06.xlsx");

@@ -404,6 +404,23 @@ export function createBrowserCommandPoller({
       if (!contentReady) return { ok: false, error: "CONTENT_UNAVAILABLE" };
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
     }
+    if (command.type === "QUERY_ALL_EXPORT" || command.type === "EXPORT_REPORT") {
+      let credential;
+      try {
+        credential = await client.request(`/platform-accounts/${path(command.platformAccountId)}/credential`, { method: "POST", signal });
+      } catch {
+        return { ok: false, error: "CREDENTIAL_FETCH_FAILED" };
+      }
+      if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
+      if (!credential?.account || !credential?.password || !credential?.label) {
+        return { ok: false, error: "CREDENTIAL_FETCH_FAILED" };
+      }
+      message = {
+        ...message,
+        accountLabel: credential.label,
+        exportCredential: { account: credential.account, password: credential.password },
+      };
+    }
     try {
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
       const response = await chromeApi.tabs.sendMessage(tab.id, message);

@@ -153,6 +153,8 @@ export function registerPlatformAccountRoutes(
 
   app.post(route(prefix, '/platform-accounts/:id/credential'), { preHandler: extensionCredentialPreHandler }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    return service.credential((request.params as { id: string }).id);
+    const id = (request.params as { id: string }).id;
+    const [record, credential] = await Promise.all([service.get(id), service.credential(id)]);
+    return { label: record.label, ...credential };
   });
 }

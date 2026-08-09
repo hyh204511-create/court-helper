@@ -334,6 +334,7 @@ test('005 browser command migration creates a reversible secure queue and keeps 
       '006_import_batches',
       '007_extension_devices',
       '008_query_all_export',
+      '009_report_exports_platform_account',
     ]);
 
     const columns = await pool.query(`
@@ -377,6 +378,7 @@ test('005 browser command migration creates a reversible secure queue and keeps 
       VALUES ($1, 'QUERY_QZ', $2, $3, $4, now() + interval '5 minutes')
     `, [randomUUID(), ACCOUNT_ID, ADMIN_ID, JSON.stringify({ batchId: 'batch-safe-2' })]));
 
+    assert.equal(await rollbackLastMigration(pool), '009_report_exports_platform_account');
     assert.equal(await rollbackLastMigration(pool), '008_query_all_export');
     assert.equal(await rollbackLastMigration(pool), '007_extension_devices');
     assert.equal(await rollbackLastMigration(pool), '006_import_batches');

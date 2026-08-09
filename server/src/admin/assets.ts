@@ -504,8 +504,7 @@ async function loadPlatformLabels() {
     const result = await api('/platform-accounts');
     const accounts = result.platformAccounts || [];
     platformLabels = new Map(accounts.map((account) => [account.id, account.label]));
-    const select = $('#case-account');
-    if (select) {
+    for (const select of [$('#case-account'), $('#report-export-account')].filter(Boolean)) {
       const selected = select.value;
       while (select.options.length > 1) select.remove(1);
       accounts.forEach((account) => {
@@ -615,7 +614,16 @@ function initCases() {
     caseCursor = nextCaseCursor;
     void loadCases();
   });
-  void loadPlatformLabels();
+  const requestedAccount = new URLSearchParams(window.location.search).get('platformAccountId');
+  void loadPlatformLabels().then(() => {
+    const account = $('#case-account');
+    if (account && requestedAccount && [...account.options].some((option) => option.value === requestedAccount)) {
+      account.value = requestedAccount;
+      caseCursor = null;
+      nextCaseCursor = null;
+      void loadCases();
+    }
+  });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') startCasePolling();
     else stopCasePolling();
@@ -859,6 +867,8 @@ async function loadReportExportUsers() {
 function reportExportListPath(cursor) {
   const params = new URLSearchParams({ limit: '200' });
   if (cursor) params.set('cursor', cursor);
+  const account = $('#report-export-account');
+  if (account?.value) params.set('platformAccountId', account.value);
   return '/report-exports?' + params.toString();
 }
 
@@ -888,7 +898,7 @@ async function loadReportExports(append = false) {
     if (!append && !reportExports.length) {
       const row = element('tr');
       const cell = element('td', '暂无报表导出');
-      cell.colSpan = document.body.dataset.role === 'admin' ? 6 : 5;
+      cell.colSpan = document.body.dataset.role === 'admin' ? 7 : 6;
       row.appendChild(cell);
       target.appendChild(row);
     }
@@ -896,6 +906,13 @@ async function loadReportExports(append = false) {
       const row = element('tr');
       row.dataset.id = reportExport.id;
       row.dataset.fileName = reportExport.fileName || 'report-export.xlsx';
+      const accountCell = element('td');
+      const accountLink = element('a', platformLabels.get(reportExport.platformAccountId) || '历史记录');
+      accountLink.href = reportExport.platformAccountId
+        ? '/admin/cases?platformAccountId=' + encodeURIComponent(reportExport.platformAccountId)
+        : '/admin/cases';
+      accountCell.appendChild(accountLink);
+      row.appendChild(accountCell);
       row.appendChild(element('td', reportExport.fileName || '—'));
       row.appendChild(element('td', reportExportSizeLabel(reportExport.byteSize)));
       row.appendChild(element('td', String(reportExport.sha256 || '').slice(0, 8) || '—'));
@@ -1487,6 +1504,7 @@ function initReportExports() {
   const list = $('#report-export-rows');
   const message = $('[data-report-export-message]');
   const next = ensureReportExportNextButton(message);
+  const filters = $('#report-export-filters');
   if (list) list.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-action]');
     if (!button) return;
@@ -1519,7 +1537,12 @@ function initReportExports() {
       next.disabled = false;
     }
   });
-  void loadReportExports();
+  if (filters) filters.addEventListener('submit', (event) => {
+    event.preventDefault();
+    nextReportExportCursor = null;
+    void loadReportExports();
+  });
+  void loadPlatformLabels().finally(() => loadReportExports());
 }
 
 function renderDetail(caseValue, screenshots) {

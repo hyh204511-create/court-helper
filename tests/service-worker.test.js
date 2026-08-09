@@ -274,6 +274,7 @@ test("EXPORT_UPLOAD 未配置服务器时返回 NOT_CONFIGURED", async () => {
       type: "EXPORT_UPLOAD",
       fileName: "report.xlsx",
       sha256: "a".repeat(64),
+      platformAccountId: "00000000-0000-0000-0000-000000000010",
       base64: Buffer.from("xlsx").toString("base64"),
       mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
@@ -383,6 +384,7 @@ test("EXPORT_UPLOAD 已配置时调用远端客户端并返回导出元数据", 
       type: "EXPORT_UPLOAD",
       fileName: "report.xlsx",
       sha256: "a".repeat(64),
+      platformAccountId: "00000000-0000-0000-0000-000000000010",
       base64: Buffer.from("xlsx").toString("base64"),
       mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
@@ -398,6 +400,7 @@ test("EXPORT_UPLOAD 已配置时调用远端客户端并返回导出元数据", 
     assert.ok(upload);
     assert.equal(upload.init.headers.Authorization, "Bearer opaque-device-token");
     assert.equal(upload.init.body.get("sha256"), "a".repeat(64));
+    assert.equal(upload.init.body.get("platformAccountId"), "00000000-0000-0000-0000-000000000010");
     assert.equal(upload.init.body.get("file").name, "report.xlsx");
     assert.equal(upload.init.body.get("file").type, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     assert.deepEqual(

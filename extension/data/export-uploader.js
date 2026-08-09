@@ -56,6 +56,7 @@ export async function exportWorkbookToServer({
   buffer,
   blob,
   fileName,
+  platformAccountId,
   chromeApi = globalThis.chrome,
   cryptoImpl = globalThis.crypto,
   btoaImpl = globalThis.btoa,
@@ -78,6 +79,7 @@ export async function exportWorkbookToServer({
       sha256: toHex(digest),
       base64: toBase64(data, btoaImpl),
       mime,
+      platformAccountId: String(platformAccountId || ""),
     });
     return normalizeResponse(response);
   } catch (error) {

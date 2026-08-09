@@ -46,6 +46,9 @@ function platformDiscoveryHarness(command) {
       if (value.endsWith(`/import-batches/${command.clientBatchId}/extension-data`)) {
         return response({ queryMode: "platform_discovery", rows: [] });
       }
+      if (value.endsWith(`/platform-accounts/${command.platformAccountId}/credential`)) {
+        return response({ label: "测试账号标签", account: "synthetic-account", password: "synthetic-password" });
+      }
       if (value.endsWith(`/browser-commands/${command.id}/result`)) {
         resultBody = JSON.parse(init.body);
         return response({ command: { status: resultBody.status } });
@@ -122,6 +125,9 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
       batchReads += 1;
       return response({ queryMode: "platform_discovery", rows: [] });
     }
+    if (value.endsWith(`/platform-accounts/${command.platformAccountId}/credential`)) {
+      return response({ label: "测试账号标签", account: "synthetic-account", password: "synthetic-password" });
+    }
     if (value.endsWith(`/browser-commands/${command.id}/result`)) return response({ command: { status: JSON.parse(init.body).status } });
     throw new Error(`unexpected ${value}`);
   };
@@ -135,6 +141,8 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
     commandType: "QUERY_ALL_EXPORT",
     queryMode: "platform_discovery",
     platformAccountId: command.platformAccountId,
+    accountLabel: "测试账号标签",
+    exportCredential: { account: "synthetic-account", password: "synthetic-password" },
   }]);
 });
 
@@ -705,6 +713,9 @@ test("报表命令在 Worker 冷启动后仍使用命令绑定的账号执行导
   const fetchImpl = async (url, init = {}) => {
     if (String(url).endsWith("/browser-commands/next")) return response({ command });
     if (String(url).endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim" });
+    if (String(url).endsWith(`/platform-accounts/${platformAccountId}/credential`)) {
+      return response({ label: "测试账号标签", account: "synthetic-account", password: "synthetic-password" });
+    }
     if (String(url).endsWith(`/browser-commands/${command.id}/result`)) {
       resultBody = JSON.parse(init.body);
       return response({ command: { status: "succeeded" } });
@@ -720,6 +731,8 @@ test("报表命令在 Worker 冷启动后仍使用命令绑定的账号执行导
       type: "BROWSER_COMMAND_EXECUTE",
       commandType: "EXPORT_REPORT",
       platformAccountId,
+      accountLabel: "测试账号标签",
+      exportCredential: { account: "synthetic-account", password: "synthetic-password" },
     },
   }]);
   assert.deepEqual(resultBody, {
@@ -797,6 +810,8 @@ test("报表命令回写区分服务器上传成功、未配置与失败", async
         type: "BROWSER_COMMAND_EXECUTE",
         commandType: "EXPORT_REPORT",
         platformAccountId,
+        accountLabel: "测试账号标签",
+        exportCredential: { account: "synthetic-account", password: "synthetic-password" },
       });
       return contentResponse;
     });
@@ -804,7 +819,7 @@ test("报表命令回写区分服务器上传成功、未配置与失败", async
     const fetchImpl = async (url, init = {}) => {
       if (String(url).endsWith("/browser-commands/next")) return response({ command: commands.shift() ?? null });
       if (String(url).endsWith(`/platform-accounts/${platformAccountId}/credential`)) {
-        return response({ account: "synthetic-account", password: "synthetic-password" });
+        return response({ label: "测试账号标签", account: "synthetic-account", password: "synthetic-password" });
       }
       if (String(url).endsWith(`/browser-commands/${loginCommand.id}/claim`)) {
         return response({ command: loginCommand, claimToken: "claim-login" });

@@ -26,6 +26,7 @@ function reportExportFromRow(row: Record<string, unknown>): ReportExportRecord {
     contentType: row.content_type as ReportExportRecord['contentType'],
     byteSize: Number(row.byte_size),
     sha256: String(row.sha256),
+    platformAccountId: row.platform_account_id == null ? null : String(row.platform_account_id),
     createdBy: String(row.created_by),
     createdAt: dateValue(row.created_at),
     updatedAt: dateValue(row.updated_at),
@@ -55,10 +56,10 @@ export class PgReportExportRepository implements ReportExportRepository {
     return result.rows[0] ? reportExportFromRow(result.rows[0]) : null;
   }
 
-  async findBySha256AndCreatedBy(sha256: string, createdBy: string): Promise<ReportExportRecord | null> {
+  async findBySha256AndCreatedBy(sha256: string, createdBy: string, platformAccountId: string): Promise<ReportExportRecord | null> {
     const result = await this.database.query(
-      'SELECT * FROM report_exports WHERE sha256 = $1 AND created_by = $2 LIMIT 1',
-      [sha256, createdBy],
+      'SELECT * FROM report_exports WHERE sha256 = $1 AND created_by = $2 AND platform_account_id = $3 LIMIT 1',
+      [sha256, createdBy, platformAccountId],
     );
     return result.rows[0] ? reportExportFromRow(result.rows[0]) : null;
   }
@@ -70,6 +71,10 @@ export class PgReportExportRepository implements ReportExportRepository {
     if (options.createdBy !== undefined) {
       values.push(options.createdBy);
       conditions.push(`created_by = $${values.length}`);
+    }
+    if (options.platformAccountId !== undefined) {
+      values.push(options.platformAccountId);
+      conditions.push(`platform_account_id = $${values.length}`);
     }
     if (options.cursor !== undefined) {
       conditions.push(cursorValues(options.cursor, values));
@@ -98,9 +103,9 @@ export class PgReportExportRepository implements ReportExportRepository {
   async create(input: NewReportExport): Promise<ReportExportRecord> {
     const result = await this.database.query(`
       INSERT INTO report_exports (
-        id, file_name, object_key, content_type, byte_size, sha256, created_by
+        id, file_name, object_key, content_type, byte_size, sha256, platform_account_id, created_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *
     `, [
       input.id ?? randomUUID(),
@@ -109,6 +114,7 @@ export class PgReportExportRepository implements ReportExportRepository {
       input.contentType,
       input.byteSize,
       input.sha256,
+      input.platformAccountId,
       input.createdBy,
     ]);
     return reportExportFromRow(result.rows[0]);

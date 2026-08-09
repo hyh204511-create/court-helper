@@ -37,6 +37,7 @@ test("导出上传助手计算 SHA-256，发送 base64 消息，并归一化成�
   const result = await exportWorkbookToServer({
     buffer,
     fileName: "report.xlsx",
+    platformAccountId: "00000000-0000-0000-0000-000000000010",
     chromeApi,
     cryptoImpl,
     btoaImpl: (binary) => Buffer.from(binary, "binary").toString("base64"),
@@ -54,12 +55,14 @@ test("导出上传助手计算 SHA-256，发送 base64 消息，并归一化成�
     sha256: chromeApi.messages[0].sha256,
     base64: chromeApi.messages[0].base64,
     mime: chromeApi.messages[0].mime,
+    platformAccountId: chromeApi.messages[0].platformAccountId,
   }, {
     type: "EXPORT_UPLOAD",
     fileName: "report.xlsx",
     sha256: "00010fff",
     base64: "AQID",
     mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    platformAccountId: "00000000-0000-0000-0000-000000000010",
   });
   assert.equal(Object.hasOwn(chromeApi.messages[0], "blob"), false);
   assert.deepEqual(Uint8Array.from(Buffer.from(chromeApi.messages[0].base64, "base64")), Uint8Array.from([1, 2, 3]));

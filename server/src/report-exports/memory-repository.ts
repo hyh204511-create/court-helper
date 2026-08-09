@@ -34,9 +34,11 @@ export class MemoryReportExportRepository implements ReportExportRepository {
     return value && (createdBy === undefined || value.createdBy === createdBy) ? copy(value) : null;
   }
 
-  async findBySha256AndCreatedBy(sha256: string, createdBy: string): Promise<ReportExportRecord | null> {
+  async findBySha256AndCreatedBy(sha256: string, createdBy: string, platformAccountId: string): Promise<ReportExportRecord | null> {
     const value = [...this.reportExports.values()].find(
-      (candidate) => candidate.sha256 === sha256 && candidate.createdBy === createdBy,
+      (candidate) => candidate.sha256 === sha256
+        && candidate.createdBy === createdBy
+        && candidate.platformAccountId === platformAccountId,
     );
     return value ? copy(value) : null;
   }
@@ -44,6 +46,7 @@ export class MemoryReportExportRepository implements ReportExportRepository {
   async list(options: ReportExportListOptions): Promise<ReportExportPage> {
     const values = [...this.reportExports.values()]
       .filter((value) => options.createdBy === undefined || value.createdBy === options.createdBy)
+      .filter((value) => options.platformAccountId === undefined || value.platformAccountId === options.platformAccountId)
       .filter((value) => {
         if (options.cursor === undefined) return true;
         const valueTime = value.createdAt.getTime();
@@ -70,7 +73,9 @@ export class MemoryReportExportRepository implements ReportExportRepository {
     if (this.reportExports.has(id)) throw uniqueViolation();
     if ([...this.reportExports.values()].some(
       (value) => value.objectKey === input.objectKey
-        || (value.sha256 === input.sha256 && value.createdBy === input.createdBy),
+        || (value.sha256 === input.sha256
+          && value.createdBy === input.createdBy
+          && value.platformAccountId === input.platformAccountId),
     )) {
       throw uniqueViolation();
     }
@@ -82,6 +87,7 @@ export class MemoryReportExportRepository implements ReportExportRepository {
       contentType: input.contentType,
       byteSize: input.byteSize,
       sha256: input.sha256,
+      platformAccountId: input.platformAccountId,
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,

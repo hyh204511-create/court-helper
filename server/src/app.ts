@@ -247,10 +247,11 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         service: screenshotService,
       });
     }
-    if (options.reportExportRepository && options.storageBackend) {
+    if (options.reportExportRepository && options.storageBackend && options.platformAccountRepository) {
       const reportExportService = new ReportExportService(
         options.reportExportRepository,
         options.storageBackend,
+        options.platformAccountRepository,
         clock,
       );
       registerReportExportRoutes(app, {

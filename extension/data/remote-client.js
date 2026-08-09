@@ -207,10 +207,11 @@ export function createRemoteClient(options = {}) {
     });
   }
 
-  async function uploadReportExport({ blob, fileName, sha256 } = {}) {
+  async function uploadReportExport({ blob, fileName, sha256, platformAccountId } = {}) {
     if (!blob) throw new TypeError("report export blob required");
     const form = new FormData();
     form.set("sha256", String(sha256 ?? ""));
+    form.set("platformAccountId", String(platformAccountId ?? ""));
     form.set("file", blob, String(fileName || "report.xlsx"));
     return request("/report-exports", {
       method: "POST",

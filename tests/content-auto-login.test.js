@@ -180,6 +180,8 @@ test("EXPORT_REPORT 仅导出当前登录链路绑定的 platformAccountId 记�
       type: "BROWSER_COMMAND_EXECUTE",
       commandType: "EXPORT_REPORT",
       platformAccountId: targetPlatformAccountId,
+      accountLabel: "测试账号标签",
+      exportCredential: { account: "demo-account", password: "真实平台密码" },
     });
     assert.deepEqual(result.response, { status: "uploaded", exportId: "synthetic-export" });
     assert.equal(uploads.length, 1);
@@ -187,7 +189,11 @@ test("EXPORT_REPORT 仅导出当前登录链路绑定的 platformAccountId 记�
     await workbook.xlsx.load(Buffer.from(uploads[0].base64, "base64"));
     const worksheet = workbook.getWorksheet("Sheet1");
     assert.equal(worksheet.getCell("A2").value, "TARGET PLAINTIFF");
+    assert.equal(worksheet.getCell("C2").value, "demo-account");
+    assert.equal(worksheet.getCell("D2").value, "真实平台密码");
     assert.equal(worksheet.getCell("A3").value, null);
+    assert.equal(uploads[0].fileName, "测试账号标签.xlsx");
+    assert.equal(uploads[0].platformAccountId, targetPlatformAccountId);
   } finally {
     dom.window.HTMLAnchorElement.prototype.click = anchorClick;
     cleanup(dom);
@@ -215,6 +221,8 @@ test("EXPORT_REPORT 两表零行时返回 REPORT_EMPTY 且不下载不上传", a
       type: "BROWSER_COMMAND_EXECUTE",
       commandType: "EXPORT_REPORT",
       platformAccountId,
+      accountLabel: "测试账号标签",
+      exportCredential: { account: "demo-account", password: "真实平台密码" },
     });
     assert.deepEqual(result.response, { ok: false, error: "REPORT_EMPTY" });
     assert.equal(downloads, 0);
@@ -223,6 +231,33 @@ test("EXPORT_REPORT 两表零行时返回 REPORT_EMPTY 且不下载不上传", a
     dom.window.HTMLAnchorElement.prototype.click = anchorClick;
     cleanup(dom);
     await db.resetDb();
+  }
+});
+
+test("EXPORT_REPORT 页面账号与服务端凭据不一致时拒绝下载上传", async () => {
+  const { dom, chrome, listener } = await loadContent({
+    hash: "#/pagesWsla/pc/list/index",
+    html: batchListHtml(),
+  });
+  let uploads = 0;
+  chrome.runtime.sendMessage = async () => { uploads += 1; return { ok: true }; };
+  const anchorClick = dom.window.HTMLAnchorElement.prototype.click;
+  let downloads = 0;
+  dom.window.HTMLAnchorElement.prototype.click = () => { downloads += 1; };
+  try {
+    const result = await dispatch(listener, {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "EXPORT_REPORT",
+      platformAccountId: "00000000-0000-4000-8000-000000000499",
+      accountLabel: "测试账号标签",
+      exportCredential: { account: "other-account", password: "真实平台密码" },
+    });
+    assert.deepEqual(result.response, { ok: false, error: "ACCOUNT_MISMATCH" });
+    assert.equal(downloads, 0);
+    assert.equal(uploads, 0);
+  } finally {
+    dom.window.HTMLAnchorElement.prototype.click = anchorClick;
+    cleanup(dom);
   }
 });
 

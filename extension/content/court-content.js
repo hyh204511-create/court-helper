@@ -41,6 +41,7 @@ import {
 import { createMainWorldFetch, fetchLayyPages, fetchMyCases, matchApiDomRows } from "./query-api.js";
 import { isQueryControlsReady, runQueryAllExport, switchQueryCategory } from "./query-all-export.js";
 import * as db from "../data/db.js";
+import { sanitizeReportFileName } from "../data/report-file-name.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ONLINE_FILING_ROUTE = "#/pagesWsla/pc/list/index";
@@ -306,28 +307,31 @@ async function handlePanelImport(file) {
 }
 
 /** 面板导出：只导出当前平台账号绑定的 IndexedDB 记录。 */
-function handlePanelExport({ platformAccountId = null } = {}) {
+function handlePanelExport({ platformAccountId = null, accountLabel = "", exportCredential = null } = {}) {
   if (_exportInFlight) return _exportInFlight;
   const current = (async () => {
     ensureListReady();
     const account = getCurrentAccount(document);
     if (!account) throw new Error("ACCOUNT_UNDETECTED");
     if (typeof platformAccountId !== "string" || !platformAccountId) throw new Error("PLATFORM_ACCOUNT_UNAVAILABLE");
+    if (!exportCredential?.account || !exportCredential?.password || exportCredential.account !== account) {
+      throw new Error("ACCOUNT_MISMATCH");
+    }
     const filter = { account, platformAccountId };
     const cases = await db.query(db.STORE_CASES, filter);
     const enforcementCases = await db.query(db.STORE_ENFORCEMENT, filter);
     if (cases.length + enforcementCases.length === 0) throw new Error("REPORT_EMPTY");
-    const wb = await buildExportWorkbook({ cases, enforcementCases });
+    const wb = await buildExportWorkbook({ cases, enforcementCases, exportCredential });
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const fileName = `立案与强执查询表-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const fileName = sanitizeReportFileName(accountLabel);
     const a = document.createElement("a");
     const objectUrl = URL.createObjectURL(blob);
     a.href = objectUrl;
     a.download = fileName;
     a.click();
     URL.revokeObjectURL(objectUrl);
-    const result = await exportWorkbookToServer({ blob, fileName, chromeApi: chrome });
+    const result = await exportWorkbookToServer({ blob, fileName, platformAccountId, chromeApi: chrome });
     showToast(exportUploadMessage(result), 6000);
     return result;
   })();
@@ -860,14 +864,22 @@ async function executeBrowserCommand(message) {
   }
   if (message.commandType === "EXPORT_REPORT") {
     ensureListReady();
-    return handlePanelExport({ platformAccountId: message.platformAccountId });
+    return handlePanelExport({
+      platformAccountId: message.platformAccountId,
+      accountLabel: message.accountLabel,
+      exportCredential: message.exportCredential,
+    });
   }
   if (message.commandType === "QUERY_ALL_EXPORT") {
     if (message.queryMode !== "platform_discovery") return { ok: false, error: "TEMPLATE_NOT_EMPTY" };
     return runQueryAllExport({
       switchCategory: (kind) => switchQueryCategory(document, kind),
       queryKind: (kind) => startPlatformDiscovery(kind, { platformAccountId: message.platformAccountId, allowEmpty: true }),
-      exportReport: () => handlePanelExport({ platformAccountId: message.platformAccountId }),
+      exportReport: () => handlePanelExport({
+        platformAccountId: message.platformAccountId,
+        accountLabel: message.accountLabel,
+        exportCredential: message.exportCredential,
+      }),
     });
   }
   return { ok: false, error: "UNSUPPORTED_COMMAND" };

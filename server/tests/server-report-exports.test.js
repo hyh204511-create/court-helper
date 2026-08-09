@@ -7,6 +7,7 @@ import { buildApp, loadConfig } from '../src/app.ts';
 import { hashPassword } from '../src/auth/password.ts';
 import { MemoryAuthRepository } from '../src/auth/memory-repository.ts';
 import { runMigrations } from '../src/db/migrator.ts';
+import { MemoryPlatformAccountRepository } from '../src/platform-accounts/memory-repository.ts';
 import { MemoryReportExportRepository } from '../src/report-exports/memory-repository.ts';
 import { PgReportExportRepository } from '../src/report-exports/repository.ts';
 import {
@@ -23,6 +24,9 @@ const USER_B_PASSWORD = 'User-b-pass-1';
 const ADMIN_ID = '00000000-0000-0000-0000-000000000001';
 const USER_A_ID = '00000000-0000-0000-0000-000000000002';
 const USER_B_ID = '00000000-0000-0000-0000-000000000003';
+const PLATFORM_ACCOUNT_ID = '00000000-0000-0000-0000-000000000010';
+const OTHER_PLATFORM_ACCOUNT_ID = '00000000-0000-0000-0000-000000000011';
+const DISABLED_PLATFORM_ACCOUNT_ID = '00000000-0000-0000-0000-000000000012';
 const XLSX_FIXTURE = Buffer.from([
   0x50, 0x4b, 0x03, 0x04,
   0x14, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00,
@@ -104,6 +108,7 @@ function multipart(fields = {}, file = undefined) {
 function uploadPayload(buffer = XLSX_FIXTURE, overrides = {}) {
   const fields = {
     sha256: createHash('sha256').update(buffer).digest('hex'),
+    platformAccountId: PLATFORM_ACCOUNT_ID,
     ...overrides,
   };
   return multipart(fields, {
@@ -122,6 +127,19 @@ async function readStream(stream) {
 async function makeApp(storageBackend = new CountingStorageBackend()) {
   const authRepository = new MemoryAuthRepository();
   const reportExportRepository = new MemoryReportExportRepository();
+  const now = new Date();
+  const platformAccountRepository = new MemoryPlatformAccountRepository([
+    ...[PLATFORM_ACCOUNT_ID, OTHER_PLATFORM_ACCOUNT_ID].map((id, index) => ({
+      id, label: `report-account-${index + 1}`, secretCiphertext: Buffer.from('cipher'),
+      secretIv: Buffer.alloc(12), secretTag: Buffer.alloc(16), secretVersion: 1,
+      enabled: true, deletedAt: null, createdBy: USER_A_ID, createdAt: now, updatedAt: now,
+    })),
+    {
+      id: DISABLED_PLATFORM_ACCOUNT_ID, label: 'disabled-report-account', secretCiphertext: Buffer.from('cipher'),
+      secretIv: Buffer.alloc(12), secretTag: Buffer.alloc(16), secretVersion: 1,
+      enabled: false, deletedAt: null, createdBy: USER_A_ID, createdAt: now, updatedAt: now,
+    },
+  ]);
   const app = buildApp({
     config: config(),
     dependencies: {
@@ -129,6 +147,7 @@ async function makeApp(storageBackend = new CountingStorageBackend()) {
       objectStorage: storageBackend,
     },
     authRepository,
+    platformAccountRepository,
     reportExportRepository,
     storageBackend,
   });
@@ -148,7 +167,7 @@ async function makeApp(storageBackend = new CountingStorageBackend()) {
     role: 'user',
     enabled: true,
   });
-  return { app, authRepository, reportExportRepository, storageBackend };
+  return { app, authRepository, platformAccountRepository, reportExportRepository, storageBackend };
 }
 
 async function login(app, username, password, origin = 'chrome-extension://test-extension') {
@@ -182,7 +201,7 @@ test('report export upload stores metadata and is idempotent per user', async ()
     const token = await login(app, 'user-a', USER_A_PASSWORD);
     const content = XLSX_FIXTURE;
     const hash = createHash('sha256').update(content).digest('hex');
-    const firstPayload = multipart({ sha256: hash }, {
+    const firstPayload = multipart({ sha256: hash, platformAccountId: PLATFORM_ACCOUNT_ID }, {
       buffer: content,
       contentType: XLSX_CONTENT_TYPE,
       fileName: '../报表<2026>（一）.xlsx',
@@ -191,12 +210,13 @@ test('report export upload stores metadata and is idempotent per user', async ()
     const created = await upload(app, token, firstPayload);
     assert.equal(created.statusCode, 201);
     assert.deepEqual(Object.keys(created.json()).sort(), [
-      'byteSize', 'created', 'createdAt', 'fileName', 'id', 'sha256',
+      'byteSize', 'created', 'createdAt', 'fileName', 'id', 'platformAccountId', 'sha256',
     ]);
     assert.equal(created.json().created, true);
     assert.equal(created.json().byteSize, content.length);
     assert.equal(created.json().sha256, hash);
     assert.match(created.json().fileName, /^报表2026（一）\.xlsx$/);
+    assert.equal(created.json().platformAccountId, PLATFORM_ACCOUNT_ID);
 
     const record = await reportExportRepository.findById(created.json().id);
     assert.ok(record);
@@ -206,7 +226,15 @@ test('report export upload stores metadata and is idempotent per user', async ()
     assert.deepEqual(await readStream(await storageBackend.get(record.objectKey)), content);
     assert.equal(storageBackend.putCount, 1);
 
-    const repeated = await upload(app, token, multipart({ sha256: hash }, {
+    const filtered = await app.inject({
+      method: 'GET',
+      url: `/api/v1/report-exports?platformAccountId=${PLATFORM_ACCOUNT_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(filtered.statusCode, 200);
+    assert.deepEqual(filtered.json().reportExports.map((item) => item.id), [created.json().id]);
+
+    const repeated = await upload(app, token, multipart({ sha256: hash, platformAccountId: PLATFORM_ACCOUNT_ID }, {
       buffer: content,
       contentType: XLSX_CONTENT_TYPE,
       fileName: 'different-name.xlsx',
@@ -215,6 +243,19 @@ test('report export upload stores metadata and is idempotent per user', async ()
     assert.equal(repeated.json().id, created.json().id);
     assert.equal(repeated.json().created, false);
     assert.equal(storageBackend.putCount, 1);
+
+    const otherAccount = await upload(app, token, multipart({
+      sha256: hash,
+      platformAccountId: OTHER_PLATFORM_ACCOUNT_ID,
+    }, {
+      buffer: content,
+      contentType: XLSX_CONTENT_TYPE,
+      fileName: 'other-account.xlsx',
+    }));
+    assert.equal(otherAccount.statusCode, 201);
+    assert.equal(otherAccount.json().platformAccountId, OTHER_PLATFORM_ACCOUNT_ID);
+    assert.notEqual(otherAccount.json().id, created.json().id);
+    assert.equal(storageBackend.putCount, 2);
   } finally {
     await app.close();
   }
@@ -225,6 +266,17 @@ test('report export validation rejects malformed multipart files and oversized p
 
   try {
     const token = await login(app, 'user-a', USER_A_PASSWORD);
+    const missingAccount = await upload(app, token, uploadPayload(XLSX_FIXTURE, {
+      platformAccountId: '00000000-0000-0000-0000-000000000099',
+    }));
+    assert.equal(missingAccount.statusCode, 400);
+    assert.equal(missingAccount.json().error.details[0].code, 'not_found');
+
+    const disabledAccount = await upload(app, token, uploadPayload(XLSX_FIXTURE, {
+      platformAccountId: DISABLED_PLATFORM_ACCOUNT_ID,
+    }));
+    assert.equal(disabledAccount.statusCode, 409);
+    assert.equal(disabledAccount.json().error.code, 'ACCOUNT_DISABLED');
     const missingHash = await upload(app, token, multipart({}, {
       buffer: XLSX_FIXTURE,
       contentType: XLSX_CONTENT_TYPE,
@@ -245,7 +297,7 @@ test('report export validation rejects malformed multipart files and oversized p
     assert.equal(legacyClientExportId.statusCode, 400);
     assert.equal(legacyClientExportId.json().error.details[0].code, 'unknown_field');
 
-    const missingFile = await upload(app, token, multipart({ sha256: 'a'.repeat(64) }));
+    const missingFile = await upload(app, token, multipart({ sha256: 'a'.repeat(64), platformAccountId: PLATFORM_ACCOUNT_ID }));
     assert.equal(missingFile.statusCode, 400);
     assert.equal(missingFile.json().error.details[0].code, 'file_required');
 
@@ -256,6 +308,7 @@ test('report export validation rejects malformed multipart files and oversized p
 
     const mismatchedMime = await upload(app, token, multipart({
       sha256: createHash('sha256').update(XLSX_FIXTURE).digest('hex'),
+      platformAccountId: PLATFORM_ACCOUNT_ID,
     }, {
       buffer: XLSX_FIXTURE,
       contentType: 'application/zip',
@@ -394,6 +447,7 @@ test('report export download streams content with sanitized filename and digest 
     const content = Buffer.concat([XLSX_FIXTURE, Buffer.from('download')]);
     const created = await upload(app, token, multipart({
       sha256: createHash('sha256').update(content).digest('hex'),
+      platformAccountId: PLATFORM_ACCOUNT_ID,
     }, {
       buffer: content,
       contentType: XLSX_CONTENT_TYPE,
@@ -507,6 +561,10 @@ test('postgres report export repository persists ownership, pagination, and idem
       INSERT INTO users (id, username, password_hash, role)
       VALUES ($1, 'worker', 'hash', 'user')
     `, [USER_A_ID]);
+    await pool.query(`
+      INSERT INTO platform_accounts (id, label, secret_ciphertext, secret_iv, secret_tag, created_by)
+      VALUES ($1, 'report-account', $2, $3, $4, $5)
+    `, [PLATFORM_ACCOUNT_ID, Buffer.from('cipher'), Buffer.alloc(12), Buffer.alloc(16), USER_A_ID]);
 
     const repository = new PgReportExportRepository(pool);
     const created = await repository.create({
@@ -516,10 +574,11 @@ test('postgres report export repository persists ownership, pagination, and idem
       contentType: XLSX_CONTENT_TYPE,
       byteSize: XLSX_FIXTURE.length,
       sha256: createHash('sha256').update(XLSX_FIXTURE).digest('hex'),
+      platformAccountId: PLATFORM_ACCOUNT_ID,
       createdBy: USER_A_ID,
     });
     assert.equal(created.fileName, 'report.xlsx');
-    assert.equal((await repository.findBySha256AndCreatedBy(created.sha256, USER_A_ID)).id, created.id);
+    assert.equal((await repository.findBySha256AndCreatedBy(created.sha256, USER_A_ID, PLATFORM_ACCOUNT_ID)).id, created.id);
     assert.equal((await repository.list({ createdBy: USER_A_ID, limit: 200 })).items.length, 1);
     assert.equal((await repository.findById(created.id, USER_A_ID)).objectKey, created.objectKey);
     assert.equal(await repository.findById(created.id, USER_B_ID), null);

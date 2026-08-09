@@ -54,7 +54,7 @@ test('versioned migrations create the required tables and constraints', async ()
       cases: ['id', 'client_uid', 'platform_account_id', 'created_by', 'kind', 'plaintiff', 'defendant', 'status', 'filed_time', 'case_number', 'reject_time', 'reject_reason', 'query_time', 'needs_human', 'error_code', 'source_event_id', 'source_updated_at', 'revision', 'created_at', 'updated_at'],
       screenshots: ['id', 'case_id', 'type', 'object_key', 'content_type', 'byte_size', 'sha256', 'captured_at', 'created_at'],
       login_commands: ['id', 'platform_account_id', 'status', 'result_code', 'result_message', 'claimed_by', 'created_by', 'created_at', 'updated_at', 'expires_at'],
-      report_exports: ['id', 'file_name', 'object_key', 'content_type', 'byte_size', 'sha256', 'created_by', 'created_at', 'updated_at'],
+      report_exports: ['id', 'file_name', 'object_key', 'content_type', 'byte_size', 'sha256', 'platform_account_id', 'created_by', 'created_at', 'updated_at'],
       import_batches: ['id', 'file_name', 'object_key', 'content_type', 'byte_size', 'sha256', 'li_rows', 'qz_rows', 'skipped_rows', 'created_by', 'created_at', 'updated_at', 'expires_at'],
     };
 
@@ -262,8 +262,9 @@ test('running migrations twice is harmless and explicit rollback restores a clea
       VALUES ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', $1, 'extension', '00000000-0000-0000-0000-000000000002', NOW() + INTERVAL '30 days')
     `, ['a'.repeat(64)]);
     const applied = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
-    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands', '006_import_batches', '007_extension_devices', '008_query_all_export']);
+    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands', '006_import_batches', '007_extension_devices', '008_query_all_export', '009_report_exports_platform_account']);
 
+    await rollbackLastMigration(pool);
     await rollbackLastMigration(pool);
     await rollbackLastMigration(pool);
     const afterRollback = await tableNames(pool);

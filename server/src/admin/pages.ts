@@ -205,8 +205,9 @@ function reportExportsPage(role: AdminRole): string {
     <section class="panel" aria-labelledby="report-export-list-title">
       <div class="panel-head"><div><h3 id="report-export-list-title">导出记录</h3><p>文件内容不在页面缓存；下载由当前会话直接鉴权。</p></div></div>
       <div class="panel-body">
+        <form id="report-export-filters" class="filters"><div class="field"><label for="report-export-account">平台账号</label><select id="report-export-account"><option value="">全部平台账号</option></select></div><div class="filter-actions"><button class="primary" type="submit">应用筛选</button></div></form>
         <div class="case-status"><span data-report-export-message class="message muted" aria-live="polite">准备读取</span></div>
-        <div class="table-wrap"><table class="data-table"><thead><tr><th>文件名</th><th>大小</th><th>SHA256</th>${exporterColumn}<th>导出时间</th><th>操作</th></tr></thead><tbody id="report-export-rows"></tbody></table></div>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>平台账号</th><th>文件名</th><th>大小</th><th>SHA256</th>${exporterColumn}<th>导出时间</th><th>操作</th></tr></thead><tbody id="report-export-rows"></tbody></table></div>
       </div>
     </section>`);
 }

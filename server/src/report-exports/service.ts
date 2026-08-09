@@ -9,6 +9,7 @@ import {
   ValidationError,
 } from '../errors.ts';
 import type { StorageBackend } from '../storage/types.ts';
+import type { PlatformAccountRepository } from '../platform-accounts/types.ts';
 import type {
   NewReportExport,
   ReportExportAccess,
@@ -27,6 +28,7 @@ export interface ReportExportUploadInput {
   fileName: string;
   contentType: string;
   sha256: string;
+  platformAccountId: string;
   buffer: Buffer;
 }
 
@@ -131,6 +133,7 @@ export function publicReportExport(value: ReportExportRecord) {
     fileName: value.fileName,
     byteSize: value.byteSize,
     sha256: value.sha256,
+    platformAccountId: value.platformAccountId,
     createdAt: value.createdAt.toISOString(),
     createdBy: value.createdBy,
   };
@@ -142,6 +145,7 @@ export function publicReportExportUpload(value: ReportExportRecord, created: boo
     fileName: value.fileName,
     byteSize: value.byteSize,
     sha256: value.sha256,
+    platformAccountId: value.platformAccountId,
     createdAt: value.createdAt.toISOString(),
     created,
   };
@@ -154,19 +158,29 @@ export function isReportExportUuid(value: unknown): value is string {
 export class ReportExportService {
   public readonly repository: ReportExportRepository;
   private readonly storage: StorageBackend;
+  private readonly platformAccounts: PlatformAccountRepository;
   private readonly clock: () => Date;
 
   constructor(
     repository: ReportExportRepository,
     storage: StorageBackend,
+    platformAccounts: PlatformAccountRepository,
     clock: () => Date = () => new Date(),
   ) {
     this.repository = repository;
     this.storage = storage;
+    this.platformAccounts = platformAccounts;
     this.clock = clock;
   }
 
   async upload(input: ReportExportUploadInput, access: ReportExportAccess): Promise<ReportExportUploadResult> {
+    const platformAccount = await this.platformAccounts.findById(input.platformAccountId);
+    if (!platformAccount) {
+      throw new ValidationError([{ field: 'platformAccountId', code: 'not_found' }]);
+    }
+    if (!platformAccount.enabled || platformAccount.deletedAt !== null) {
+      throw new AppError('Platform account disabled', 'ACCOUNT_DISABLED', 409, false);
+    }
     if (input.buffer.length > MAX_REPORT_EXPORT_BYTES) throw new PayloadTooLargeError();
     const normalizedHash = validateSha256(input.sha256);
     validateReportExportContentType(input.buffer, input.contentType);
@@ -175,7 +189,7 @@ export class ReportExportService {
       throw new ValidationError([{ field: 'sha256', code: 'mismatch' }]);
     }
 
-    const existing = await this.repository.findBySha256AndCreatedBy(normalizedHash, access.userId);
+    const existing = await this.repository.findBySha256AndCreatedBy(normalizedHash, access.userId, input.platformAccountId);
     if (existing) return { reportExport: existing, created: false };
 
     const objectKey = `report-exports/${randomUUID()}.xlsx`;
@@ -187,6 +201,7 @@ export class ReportExportService {
       contentType: REPORT_EXPORT_CONTENT_TYPE,
       byteSize: input.buffer.length,
       sha256: normalizedHash,
+      platformAccountId: input.platformAccountId,
       createdBy: access.userId,
     };
 
@@ -196,7 +211,7 @@ export class ReportExportService {
     } catch (error) {
       await storageCall(() => this.storage.delete(objectKey));
       if (uniqueViolation(error)) {
-        const concurrent = await this.repository.findBySha256AndCreatedBy(normalizedHash, access.userId);
+        const concurrent = await this.repository.findBySha256AndCreatedBy(normalizedHash, access.userId, input.platformAccountId);
         if (concurrent) return { reportExport: concurrent, created: false };
       }
       throw error;

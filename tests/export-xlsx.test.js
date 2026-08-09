@@ -115,6 +115,19 @@ test("UNKNOWN 状态：单元格留空 + 浅红填充 + 深红字体（ExcelJS �
   assert.equal(cell.font.color.argb, "FF9C0006");
 });
 
+test("导出凭据统一覆盖所有行的账号密码且不修改本地记录", async () => {
+  const source = rec({ account: "页面账号", password: "旧模板密码" });
+  const wb = await buildExportWorkbook({
+    cases: [source],
+    exportCredential: { account: "真实平台账号", password: "真实平台密码" },
+  });
+  const ws = wb.getWorksheet("Sheet1");
+  assert.equal(ws.getCell("C2").value, "真实平台账号");
+  assert.equal(ws.getCell("D2").value, "真实平台密码");
+  assert.equal(source.account, "页面账号");
+  assert.equal(source.password, "旧模板密码");
+});
+
 test("样式复刻：表头加粗/填充/行高、数据行高（ExcelJS 读回）", async () => {
   const wb = await buildExportWorkbook({ cases: [rec()] });
   const ws = wb.getWorksheet("Sheet1");

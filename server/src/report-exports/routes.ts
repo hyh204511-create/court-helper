@@ -33,9 +33,10 @@ interface MultipartFileData {
 interface QueryParams {
   cursor?: unknown;
   limit?: unknown;
+  platformAccountId?: unknown;
 }
 
-const FIELD_NAMES = new Set(['sha256']);
+const FIELD_NAMES = new Set(['sha256', 'platformAccountId']);
 
 function route(prefix: string, path: string): string {
   return `${prefix}${path}`;
@@ -55,6 +56,17 @@ function requiredSha256(fields: Map<string, string>): string {
     throw new ValidationError([{ field: 'sha256', code: 'sha256_invalid' }]);
   }
   return value.toLowerCase();
+}
+
+function requiredPlatformAccountId(fields: Map<string, string>): string {
+  const value = fields.get('platformAccountId');
+  if (value === undefined || value.trim() === '') {
+    throw new ValidationError([{ field: 'platformAccountId', code: 'required' }]);
+  }
+  if (!isReportExportUuid(value)) {
+    throw new ValidationError([{ field: 'platformAccountId', code: 'invalid' }]);
+  }
+  return value;
 }
 
 async function readFilePart(part: MultipartFile): Promise<Buffer> {
@@ -115,12 +127,14 @@ async function multipartUpload(request: FastifyRequest) {
 
   if (validationError) throw validationError;
   const sha256 = requiredSha256(fields);
+  const platformAccountId = requiredPlatformAccountId(fields);
   if (file === null) throw new ValidationError([{ field: 'file', code: 'file_required' }]);
 
   return {
     fileName: file.fileName,
     contentType: file.contentType,
     sha256,
+    platformAccountId,
     buffer: file.buffer,
   };
 }
@@ -150,6 +164,14 @@ function queryCursor(value: unknown) {
   return decodeReportExportCursor(value);
 }
 
+function queryPlatformAccountId(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isReportExportUuid(value)) {
+    throw new ValidationError([{ field: 'platformAccountId', code: 'invalid' }]);
+  }
+  return value;
+}
+
 function reportExportId(request: FastifyRequest): string {
   const id = (request.params as { id?: unknown }).id;
   if (!isReportExportUuid(id)) throw new NotFoundError('Report export not found');
@@ -175,6 +197,7 @@ export function registerReportExportRoutes(
     const page = await service.list({
       limit: queryLimit(query.limit),
       cursor: queryCursor(query.cursor),
+      platformAccountId: queryPlatformAccountId(query.platformAccountId),
     }, accessOf(request));
     return {
       reportExports: page.items.map(publicReportExport),

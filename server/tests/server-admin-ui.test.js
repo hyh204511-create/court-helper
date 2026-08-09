@@ -100,6 +100,7 @@ function reportExportRecord(id, createdBy, fileName, byteSize, createdAt) {
     contentType: REPORT_EXPORT_CONTENT_TYPE,
     byteSize,
     sha256: id.replaceAll('-', '').padEnd(64, 'a').slice(0, 64),
+    platformAccountId: ACCOUNT_ID,
     createdBy,
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -787,6 +788,7 @@ test('report export page is available to both roles and supports filtered listin
       sha256: value.sha256,
       createdAt: value.createdAt.toISOString(),
       createdBy: value.createdBy,
+      platformAccountId: value.platformAccountId,
     }));
     const jsonResponse = (body, status = 200) => ({
       ok: status >= 200 && status < 300,
@@ -800,6 +802,7 @@ test('report export page is available to both roles and supports filtered listin
       const method = String(options.method || 'GET').toUpperCase();
       requests.push({ method, path: requestUrl.pathname + requestUrl.search });
       if (requestUrl.pathname === '/api/v1/auth/me') return jsonResponse({ csrfToken: 'ui-csrf' });
+      if (requestUrl.pathname === '/api/v1/platform-accounts') return jsonResponse({ platformAccounts: [{ id: ACCOUNT_ID, label: '账号标签甲', enabled: true }] });
       if (requestUrl.pathname === '/api/v1/users') {
         return jsonResponse({ users: [
           { id: ADMIN_ID, username: 'admin-user-3', role: 'admin', enabled: true },
@@ -845,10 +848,12 @@ test('report export page is available to both roles and supports filtered listin
     };
     await waitFor(() => dom.window.document.querySelectorAll('#report-export-rows tr').length === 2);
     const rows = dom.window.document.querySelectorAll('#report-export-rows tr');
-    assert.equal(rows[0].children[0].textContent, adminExport.fileName);
-    assert.equal(rows[0].children[1].textContent, '2.0 KB');
-    assert.equal(rows[0].children[2].textContent, adminExport.sha256.slice(0, 8));
-    assert.equal(rows[0].children[3].textContent, 'a***3');
+    assert.equal(rows[0].children[0].textContent, '账号标签甲');
+    assert.match(rows[0].children[0].querySelector('a').href, /\/admin\/cases\?platformAccountId=/);
+    assert.equal(rows[0].children[1].textContent, adminExport.fileName);
+    assert.equal(rows[0].children[2].textContent, '2.0 KB');
+    assert.equal(rows[0].children[3].textContent, adminExport.sha256.slice(0, 8));
+    assert.equal(rows[0].children[4].textContent, 'a***3');
     assert.doesNotMatch(dom.window.document.querySelector('.data-table').textContent, /admin-user-3/);
 
     const downloadButton = rows[0].querySelector('[data-action="download-report-export"]');
@@ -909,6 +914,7 @@ test('report export page appends cursor pages and hides the load-more button at 
       const method = String(options.method || 'GET').toUpperCase();
       requests.push({ method, path: requestUrl.pathname + requestUrl.search });
       if (requestUrl.pathname === '/api/v1/auth/me') return jsonResponse({ csrfToken: 'ui-csrf' });
+      if (requestUrl.pathname === '/api/v1/platform-accounts') return jsonResponse({ platformAccounts: [{ id: ACCOUNT_ID, label: '账号标签甲', enabled: true }] });
       if (requestUrl.pathname === '/api/v1/users') {
         return jsonResponse({ users: [{ id: ADMIN_ID, username: 'admin-user-3', role: 'admin', enabled: true }] });
       }
@@ -922,6 +928,7 @@ test('report export page appends cursor pages and hides the load-more button at 
               sha256: value.sha256,
               createdAt: value.createdAt.toISOString(),
               createdBy: value.createdBy,
+              platformAccountId: value.platformAccountId,
             })),
             nextCursor: null,
           })
@@ -933,6 +940,7 @@ test('report export page appends cursor pages and hides the load-more button at 
               sha256: value.sha256,
               createdAt: value.createdAt.toISOString(),
               createdBy: value.createdBy,
+              platformAccountId: value.platformAccountId,
             })),
             nextCursor: 'page-two-cursor',
           });
@@ -956,7 +964,7 @@ test('report export page appends cursor pages and hides the load-more button at 
 
     next.click();
     await waitFor(() => dom.window.document.querySelectorAll('#report-export-rows tr').length === 2);
-    assert.equal(dom.window.document.querySelectorAll('#report-export-rows tr')[1].children[0].textContent, secondExport.fileName);
+    assert.equal(dom.window.document.querySelectorAll('#report-export-rows tr')[1].children[1].textContent, secondExport.fileName);
     assert.equal(next.style.display, 'none');
     assert.ok(requests.some((request) => request.path.includes('cursor=page-two-cursor')));
     dom.window.close();

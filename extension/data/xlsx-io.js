@@ -139,13 +139,13 @@ function combinedRows(cases, enforcementCases) {
   return rows;
 }
 
-function writeCombinedRow(ws, row, pair, imageJobs) {
+function writeCombinedRow(ws, row, pair, imageJobs, exportCredential = null) {
   formatDataRow(ws, row);
   const identity = pair.li ?? pair.qz ?? {};
   ws.getCell(row, 1).value = identity.plaintiff ?? "";
   ws.getCell(row, 2).value = identity.defendant ?? "";
-  ws.getCell(row, 3).value = identity.account ?? "";
-  ws.getCell(row, 4).value = identity.password ?? "";
+  ws.getCell(row, 3).value = exportCredential?.account ?? identity.account ?? "";
+  ws.getCell(row, 4).value = exportCredential?.password ?? identity.password ?? "";
   writeResult(ws, row, pair.li, 5, imageJobs, {
     success: STYLE.image.liSuccess, reject: STYLE.image.liReject,
   });
@@ -159,7 +159,7 @@ function writeCombinedRow(ws, row, pair, imageJobs) {
  * @param {{cases?: object[], enforcementCases?: object[]}} [data] db 记录（含 Blob 图片）
  * @returns {Promise<ExcelJS.Workbook>}
  */
-export async function buildExportWorkbook({ cases = [], enforcementCases = [] } = {}) {
+export async function buildExportWorkbook({ cases = [], enforcementCases = [], exportCredential = null } = {}) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Sheet1");
   for (const [letter, width] of Object.entries(STYLE.colWidths)) {
@@ -170,7 +170,7 @@ export async function buildExportWorkbook({ cases = [], enforcementCases = [] } 
   const imageJobs = [];
   let row = 2;
   for (const pair of combinedRows(cases, enforcementCases)) {
-    writeCombinedRow(ws, row, pair, imageJobs);
+    writeCombinedRow(ws, row, pair, imageJobs, exportCredential);
     row += 1;
   }
   const reservedEnd = Math.max(row - 1, 11);
