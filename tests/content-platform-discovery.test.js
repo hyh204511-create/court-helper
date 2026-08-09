@@ -18,7 +18,16 @@ function makeChrome(sendMessage) {
       onMessage: { addListener(listener) { listeners.push(listener); } },
       sendMessage: async (message) => {
         sentMessages.push(message);
-        return typeof sendMessage === "function" ? sendMessage(message) : undefined;
+        const response = typeof sendMessage === "function" ? await sendMessage(message) : undefined;
+        if (response !== undefined) return response;
+        if (message?.type === "CASE_SYNC_ENQUEUE") {
+          return {
+            ok: true,
+            status: "sent",
+            clientMutationId: message.event?.clientMutationId,
+          };
+        }
+        return undefined;
       },
     },
     storage: {
@@ -799,6 +808,10 @@ test("强执平台发现通过 layy 与 ajlist 在网上立案页直接补全 F/
     assert.equal(record.status, "强执成功");
     assert.equal(record.caseNumber, "SYNTHETIC-QZ-API-001");
     assert.equal(record.filedTime, "2026-08-07");
+    const syncEvents = chrome.sentMessages.filter((message) => message.type === "CASE_SYNC_ENQUEUE");
+    assert.equal(syncEvents.length, 1, "each finalized case must receive a server ACK");
+    assert.equal(syncEvents[0].event.payload.clientUid, record.uid);
+    assert.equal(syncEvents[0].event.payload.caseNumber, "SYNTHETIC-QZ-API-001");
     assert.equal(dom.window.location.hash, "#/pagesWsla/pc/list/index");
   } finally {
     globalThis.setTimeout = nativeSetTimeout;

@@ -2,7 +2,9 @@ import { handleMessage, sanitizeLoginState } from "./shared/message-router.js";
 import { sanitizeSyncState } from "./shared/message-router.js";
 import { createRemoteClient } from "./data/remote-client.js";
 import { createSyncCoordinator } from "./data/sync-coordinator.js";
+import * as syncOutbox from "./data/outbox.js";
 import { createDebuggerDriver } from "./sw/debugger-driver.js";
+import { createCaseSyncBridge } from "./sw/case-sync-bridge.js";
 import {
   BROWSER_COMMAND_ALARM_NAME,
   createBrowserCommandPoller,
@@ -37,6 +39,10 @@ let syncGeneration = 0;
 export let syncInitialization = Promise.resolve(null);
 const debuggerDriver = createDebuggerDriver();
 const browserCommandPoller = createBrowserCommandPoller();
+const caseSyncBridge = createCaseSyncBridge({
+  ensureCoordinator: ensureSyncCoordinator,
+  outbox: syncOutbox,
+});
 const extensionPairer = createExtensionPairer({
   onAuthorized: async () => wakeBrowserCommandPoller({ immediate: true }),
 });
@@ -393,6 +399,15 @@ function handleCaseDetailMessage(message, sender, sendResponse) {
 
 if (globalThis.chrome?.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (caseSyncBridge.canHandle(message)) {
+      caseSyncBridge.handle(message, sender)
+        .then((response) => sendResponse(response))
+        .catch((error) => sendResponse({
+          ok: false,
+          code: typeof error?.code === "string" ? error.code : "CASE_SYNC_NOT_ACKNOWLEDGED",
+        }));
+      return true;
+    }
     if (message?.type === QUERY_API_REQUEST) {
       handleMainWorldQueryRequest({ message, sender, chromeApi: chrome })
         .then((response) => sendResponse(response))

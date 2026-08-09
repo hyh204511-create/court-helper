@@ -26,6 +26,7 @@ import {
 import { doAutoLogin } from "./login-auto.js";
 import { captureElement } from "./screen-capturer.js";
 import { persistSyncRecord, runBatch, jitterMs } from "../data/batch-runner.js";
+import { createRuntimeCaseOutbox } from "../data/runtime-case-outbox.js";
 import { recognizeStatus, reconcileStatusText } from "./status-recognizer.js";
 import { createCourtPanel } from "./court-panel.js";
 import { importXlsx } from "../data/import-xlsx.js";
@@ -613,7 +614,7 @@ async function captureRow(target) {
 }
 
 /** 批量执行入口（START_BATCH 消息） */
-async function startBatch(kind, { account = null, platformAccountId = null } = {}) {
+async function startBatch(kind, { account = null, platformAccountId = null, syncPersistence = null } = {}) {
   if (!ensureListReady()) throw new Error("NOT_READY");
   if (kind === "qz") {
     const rows = collectListRows(document);
@@ -652,6 +653,7 @@ async function startBatch(kind, { account = null, platformAccountId = null } = {
       },
     },
     timing: { delay: delayWithPause },
+    syncPersistence,
     onUpdate: async (record) => {
       if (record.needsHuman && firstManualError === null) {
         const code = record.error ?? record.errorCode;
@@ -705,16 +707,16 @@ function recordManualError(record) {
   return null;
 }
 
-async function persistMyCaseEvidence(record, selection) {
+async function persistMyCaseEvidence(record, selection, syncPersistence) {
   const existingManualError = recordManualError(record);
   const update = selection.ok
     ? { ...record, ...selection.value, needsHuman: record.needsHuman === true, errorCode: existingManualError }
     : { ...record, needsHuman: true, errorCode: existingManualError ?? selection.error };
-  await persistSyncRecord(update);
+  await persistSyncRecord(update, syncPersistence);
   return update;
 }
 
-async function completeMyCaseEvidenceFromApi({ kind = "li", account, platformAccountId, sourceApiRows, fetchImpl }) {
+async function completeMyCaseEvidenceFromApi({ kind = "li", account, platformAccountId, sourceApiRows, fetchImpl, syncPersistence }) {
   const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
   const candidates = (await db.query(store, { account, platformAccountId }))
     .filter((record) => record.status === expectedSuccessStatus(kind))
@@ -744,7 +746,7 @@ async function completeMyCaseEvidenceFromApi({ kind = "li", account, platformAcc
         ? selectMyCaseApiEvidence({ kind, record, sourceApiRow, rows: result.rows })
         : { ok: false, error: result.code ?? "MYCASE_EVIDENCE_UNAVAILABLE" };
     }
-    const updated = await persistMyCaseEvidence(record, selection);
+    const updated = await persistMyCaseEvidence(record, selection, syncPersistence);
     if (selection.ok && !updated.needsHuman) completed += 1;
     else {
       needsHuman += 1;
@@ -764,6 +766,9 @@ async function startPlatformDiscovery(kind, { platformAccountId = null, allowEmp
   if (typeof platformAccountId !== "string" || !platformAccountId) throw new Error("PLATFORM_ACCOUNT_UNAVAILABLE");
   const account = getCurrentAccount(document);
   if (!account) throw new Error("ACCOUNT_UNDETECTED");
+  const sendMessage = globalThis.chrome?.runtime?.sendMessage?.bind(globalThis.chrome.runtime);
+  if (typeof sendMessage !== "function") throw new Error("CASE_SYNC_UNAVAILABLE");
+  const syncPersistence = { db, outbox: createRuntimeCaseOutbox({ sendMessage }) };
   const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
   let rows = collectListRows(document);
   if (!rows.length && !allowEmpty) throw new Error("NO_VISIBLE_CASES");
@@ -819,7 +824,7 @@ async function startPlatformDiscovery(kind, { platformAccountId = null, allowEmp
   }
   const records = buildPlatformDiscoveryRecords({ account, platformAccountId, kind, rows: discoveryRows });
   await db.replaceAccountRecords(store, account, records, { platformAccountId });
-  const initial = await startBatch(kind, { account, platformAccountId });
+  const initial = await startBatch(kind, { account, platformAccountId, syncPersistence });
   if (kind === "qz" && !structuredFetch) {
     if (!initial.ok) return initial;
     const pendingEvidence = (await db.query(store, { account, platformAccountId }))
@@ -831,7 +836,14 @@ async function startPlatformDiscovery(kind, { platformAccountId = null, allowEmp
   }
   _batchRunning = true;
   try {
-    const evidence = await completeMyCaseEvidenceFromApi({ kind, account, platformAccountId, sourceApiRows, fetchImpl: structuredFetch });
+    const evidence = await completeMyCaseEvidenceFromApi({
+      kind,
+      account,
+      platformAccountId,
+      sourceApiRows,
+      fetchImpl: structuredFetch,
+      syncPersistence,
+    });
     return !initial.ok
       ? { ...initial, evidence }
       : evidence.needsHuman
