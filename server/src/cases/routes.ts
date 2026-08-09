@@ -70,6 +70,10 @@ function requiredString(value: unknown, field: string): string {
   return value;
 }
 
+function databaseIdentifier(value: unknown, field: string): string {
+  return requiredString(value, field).replaceAll('\u0000', '%00');
+}
+
 function requiredField(body: RequestBody, field: string): string {
   return requiredString(body[field], field);
 }
@@ -155,7 +159,7 @@ function parseSyncItem(value: unknown, index: number): CaseSyncItem {
 
   return {
     eventId: requiredString(body.eventId, field('eventId')),
-    clientUid: requiredString(body.clientUid, field('clientUid')),
+    clientUid: databaseIdentifier(body.clientUid, field('clientUid')),
     platformAccountId: requiredString(body.platformAccountId, field('platformAccountId')),
     kind,
     plaintiff: nullableString(body.plaintiff, field('plaintiff')),

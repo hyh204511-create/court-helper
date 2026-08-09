@@ -1,7 +1,7 @@
 # 规格：server-module（服务器核心与插件同步）
 
 > 版本：0.2 ｜ 状态：已确认、待实现 ｜ 依据：2026-08-04 已确认服务器决策（覆盖实施计划 §6，ponytail 轻便模式）
-> v0.2 变更：案件同步边界必须移除平台/API 文本中的 Unicode `NUL`（U+0000），避免 PostgreSQL `22021` 导致整批 500；正常中文、空格、制表与换行保持不变。
+> v0.2 变更：案件同步边界必须移除或编码平台/API 文本中的 Unicode `NUL`（U+0000），避免 PostgreSQL `22021` 导致整批 500；正常中文、空格、制表与换行保持不变。
 
 ## 1. 目标与运行形态
 
@@ -73,9 +73,9 @@ status, filedTime, caseNumber, rejectTime, rejectReason, queryTime,
 needsHuman, errorCode, sourceUpdatedAt
 ```
 
-- `clientUid` 沿用 `db.js` 的唯一键语义；服务器不得重新猜测合并键。
+- `clientUid` 沿用 `db.js` 的唯一键语义；服务器不得重新猜测合并键。由于插件现有唯一键使用 U+0000 作为分隔符，同步边界将其中的 U+0000 编码为字面量 `%00` 后再落库，并在后续同步中继续使用同一编码；其他标识符仍严格校验，不做静默改写。
 - `batch-runner.js` 的 `filedDate` 在同步边界明确映射为 `filedTime`，IndexedDB 数字型 `updatedAt` 转为 ISO 8601 `sourceUpdatedAt`；`image` 不进 JSON，由状态映射到独立截图类型后上传。
-- `plaintiff / defendant / caseNumber / rejectReason / errorCode` 是可能来自平台或采集链路的数据库文本；路由解析时统一移除 U+0000 后再进入幂等比较和写库。不得因单个不可存储空字符返回 `INTERNAL_ERROR`，也不得删除正常中文、空格、制表或换行。`eventId / clientUid / platformAccountId` 等标识符仍严格校验，不做静默改写。
+- `plaintiff / defendant / caseNumber / rejectReason / errorCode` 是可能来自平台或采集链路的数据库文本；路由解析时统一移除 U+0000 后再进入幂等比较和写库。不得因单个不可存储空字符返回 `INTERNAL_ERROR`，也不得删除正常中文、空格、制表或换行。`eventId / platformAccountId` 等标识符仍严格校验，不做静默改写。
 - 带本地 `blobRef` 的 outbox 事件只有在案件同步响应 `accepted[]` 返回对应服务器案件 `id` 后，才读取 IndexedDB 中指定的 `successImage` / `rejectImage` Blob，计算 SHA-256 并调用 `uploadScreenshot`。类型固定映射：立案成功=`success`、强执成功=`enforcement_success`、驳回=`reject`；截图上传成功后事件才可标记 sent。上传失败必须保留事件供既有有界重试/人工接管，不得把案件 ACK 误当作截图 ACK。
 - 只接受规格枚举；未知平台文本必须由插件上传为 `UNKNOWN + needsHuman=true`。原始异常只归一为稳定 `errorCode`，不上传可能含业务明文的错误栈。
 - `kind=li` 不接受 `强执成功`，`kind=qz` 不接受 `立案成功`；状态与类型不一致按逐项校验错误拒收，服务器不自动改写。

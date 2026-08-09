@@ -200,6 +200,7 @@ test('sync cases removes PostgreSQL-incompatible NUL characters from database te
   try {
     const token = await loginExtension(app);
     const response = await sync(app, token, [caseItem({
+      clientUid: 'client\u0000uid',
       plaintiff: 'synthetic\u0000 plaintiff\nline two',
       defendant: 'synthetic\tdefendant\u0000',
       caseNumber: 'SYNTHETIC\u0000-001',
@@ -210,6 +211,7 @@ test('sync cases removes PostgreSQL-incompatible NUL characters from database te
     assert.equal(response.statusCode, 200);
     assert.equal(response.json().accepted.length, 1);
     const stored = (await caseRepository.list())[0];
+    assert.equal(stored.clientUid, 'client%00uid');
     assert.equal(stored.plaintiff, 'synthetic plaintiff\nline two');
     assert.equal(stored.defendant, 'synthetic\tdefendant');
     assert.equal(stored.caseNumber, 'SYNTHETIC-001');
