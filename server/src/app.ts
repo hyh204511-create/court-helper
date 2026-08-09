@@ -142,7 +142,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     const normalized = errorFromFastify(error);
     if (normalized.code === 'INTERNAL_ERROR' && options.unexpectedErrorLogger) {
       const candidate = error as { code?: unknown; name?: unknown };
-      const errorCode = typeof candidate.code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(candidate.code)
+      const errorCode = typeof candidate.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(candidate.code)
         ? candidate.code
         : 'UNEXPECTED_ERROR';
       const errorName = typeof candidate.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(candidate.name)

@@ -59,7 +59,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_account_uidx
 - 请求幂等性只由 `(sha256, created_by, platform_account_id)` 定义；不接受、存储或透传无独立服务端语义的 `clientExportId`，也不以 `Idempotency-Key` 改变该规则。
 - 文件名净化：仅取 basename；剥离控制字符；长度 ≤ 200；保留 CJK、字母数字、`- _ . （）`；空/异常 → 服务端生成 `report-<日期>.xlsx`。服务端存储/下载均用净化名。
 - 错误模型、请求 ID、脱敏日志规则同 server-module §6；文件名现含账号标签，日志不得记录文件名或 multipart 正文。
-- 未预期异常归一化为 `500 INTERNAL_ERROR` 前必须调用可注入的安全诊断记录器；字段白名单固定为 `requestId / method / route / errorName / errorCode`。`route` 只取 Fastify 路由模板（例如 `/api/v1/report-exports`、`/api/v1/sync/cases`），不得回退到含查询参数的原始 URL；无稳定异常码时写 `UNEXPECTED_ERROR`。诊断记录器自身失败不得改变原始 HTTP 回执。
+- 未预期异常归一化为 `500 INTERNAL_ERROR` 前必须调用可注入的安全诊断记录器；字段白名单固定为 `requestId / method / route / errorName / errorCode`。`route` 只取 Fastify 路由模板（例如 `/api/v1/report-exports`、`/api/v1/sync/cases`），不得回退到含查询参数的原始 URL；稳定错误码允许大写字母、数字和下划线（含 PostgreSQL SQLSTATE），无稳定异常码时写 `UNEXPECTED_ERROR`。诊断记录器自身失败不得改变原始 HTTP 回执。
 - **ID/UUID 校验**：路径 `:id` 与游标 `cursor.id` 必须在路由边界校验为 UUID 格式，非法值返回稳定的 `400/404`（禁止落库后由数据库 cast 报错）。
 
 ## 4. 权限矩阵
