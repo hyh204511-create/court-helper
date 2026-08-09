@@ -153,3 +153,9 @@ content 需真实点击（登录按钮/验证码刷新/passwordTab 切换）→ 
 - 地址变更必须清除旧设备 token、待兑换 pairing 和设备标识，再按新地址重新经管理员批准；保存地址本身不得自动新建 pairing，避免与用户点击请求产生并发重复。
 - 地址切换必须使旧地址的在途创建/兑换响应失效，禁止旧 token 或 pairing 在新地址配置后回写；Options/Setup 查询授权状态时必须从持久化设备状态恢复，不能依赖 MV3 Service Worker 尚未休眠。
 - Popup 必须删除；Options/Setup 只保留授权状态和降级提示，不得展示或传递服务器密码，也不得承载登录、导入、查询或导出按钮。
+
+## 12. 云端生产地址（v1.2）
+
+- 正式交付包的配对地址由非敏感发布配置固定为 `https://court.hyhbrand.xyz`；只接受 HTTPS 精确根 Origin，禁止凭据、路径、query、fragment、其他端口与通配地址。
+- 开发构建可继续使用 `http://127.0.0.1:3000`，但生产 Manifest 不得保留该 host permission。
+- 本地 OCR 始终为 `http://127.0.0.1:8765`，云端后台不得尝试启动客户电脑的 OCR 进程。

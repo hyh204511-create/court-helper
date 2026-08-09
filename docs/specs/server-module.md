@@ -136,3 +136,10 @@ needsHuman, errorCode, sourceUpdatedAt
 - 不做 Redis、消息队列、后台 worker 集群、SSE/WebSocket、长连接、微服务或多实例高可用。
 - 不做离线继续采集、静默本地降级、自动无限重试；outbox 只用于在线失败后的明确重试与幂等保护。
 - 不做审计系统重设计、统计报表、通知中心、截图 OCR、案件人工编辑或超过 30 天的历史迁移；报表文件一律由插件本地生成后上传，服务器不生成报表内容。
+
+## 9. 腾讯云生产交付（v0.2.0）
+
+- 唯一生产后台 Origin 为 `https://court.hyhbrand.xyz`；后台和固定扩展 Origin 均精确配置，禁止 `*`。
+- 生产使用 Ubuntu 24.04、Docker Compose、PostgreSQL 16、Nginx TLS 和本地私有存储卷；COS 仅作为加密备份目的地，不启用占位 CloudStorageBackend。
+- Nginx 对 20 MiB 上传契约保留 multipart 余量，关闭包含查询 URL 的访问日志，并仅把业务流量代理到容器内 `127.0.0.1:3000`。
+- 发布、备份、恢复与回滚验收以 `deployment-delivery-module` 为准。
