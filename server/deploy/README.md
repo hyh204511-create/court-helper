@@ -10,10 +10,10 @@
 2. 进入仓库的 `server/` 目录，复制环境模板：
 
    ```bash
-   cp .env.example .env
+   cp .env.production.example .env
    ```
 
-   Windows PowerShell 可使用 `Copy-Item .env.example .env`。
+   Windows PowerShell 可使用 `Copy-Item .env.production.example .env`。
 
 3. 编辑 `.env`，至少填写 `CREDENTIAL_MASTER_KEY`、`ADMIN_INITIAL_PASSWORD` 和 `CORS_EXTENSION_ORIGINS`。生产环境同时应把 `POSTGRES_PASSWORD` 替换为强密码；`CREDENTIAL_MASTER_KEY` 必须是解码后 32 字节的 Base64，可用 `openssl rand -base64 32` 生成。
 4. 启动内置服务：
@@ -45,7 +45,7 @@ Compose 只使用下面的规范名称。真实 `.env` 只放部署主机或受�
 |---|---|---|
 | `POSTGRES_DB` | `courthelper` | 内置 PostgreSQL 的数据库名；只在 `pg-data` 首次初始化时生效。 |
 | `POSTGRES_USER` | `courthelper` | 内置 PostgreSQL 的用户；只在 `pg-data` 首次初始化时生效。 |
-| `POSTGRES_PASSWORD` | `.env.example` 为占位文本 | 内置 PostgreSQL 的密码；生产必须替换为强密码。 |
+| `POSTGRES_PASSWORD` | `.env.production.example` 为占位文本 | 内置 PostgreSQL 的密码；生产必须替换为强密码。 |
 | `DATABASE_URL` | 留空时默认指向内置 `db:5432` | 可选升级为外部 PostgreSQL；填写外部连接串即可覆盖内置默认。 |
 | `LOCAL_STORAGE_DIR` | 示例默认 `/var/lib/court-helper/storage` | 默认本地磁盘存储，数据落在 `storage-data` 卷；留空或不设置时改用外部对象存储。 |
 | `OBJECT_STORAGE_ENDPOINT` | 本地模式可选 | 外部 COS/OSS endpoint；启用外部对象存储时必填。 |
@@ -81,7 +81,7 @@ DATABASE_URL=postgres://USER:PASSWORD@external-host:5432/DB
 
 `nginx` 服务使用 `tls` profile，并共享 app 的网络命名空间。当前 `server/src/main.ts` 固定监听容器内 `127.0.0.1`，所以 nginx 代理到 `127.0.0.1:3000`；app 服务负责发布宿主机 80/443。
 
-1. 将 `server/deploy/nginx.conf.example` 中的 `server_name example.com` 改为实际域名；证书路径保持 `/etc/nginx/certs/fullchain.pem` 和 `/etc/nginx/certs/privkey.pem`，或同步修改挂载路径。
+1. 生产配置 `server/deploy/nginx.production.conf` 已固定为 `court.hyhbrand.xyz`；证书路径为 `/etc/nginx/certs/fullchain.pem` 和 `/etc/nginx/certs/privkey.pem`。
 2. 在部署主机的 `server/deploy/certs/` 放置证书文件。该目录只存在于部署主机，不要提交私钥。
 3. 测试环境可使用自签名证书（客户端需要显式信任，不能用于公网生产）：
 
@@ -99,7 +99,7 @@ DATABASE_URL=postgres://USER:PASSWORD@external-host:5432/DB
    docker compose --profile tls restart nginx
    ```
 
-`nginx.conf.example` 已配置 HTTP→HTTPS 跳转、安全响应头和 10 MiB 上传上限。项目没有 WebSocket/SSE，因此没有长连接升级配置。
+`nginx.production.conf` 已配置 HTTP→HTTPS 跳转、安全响应头、关闭访问日志，并以 25 MiB 代理限制承载 20 MiB Excel 及 multipart 开销。项目没有 WebSocket/SSE，因此没有长连接升级配置。
 
 ## 云服务器部署要点
 

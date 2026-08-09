@@ -1,3 +1,5 @@
+name: "${COMPOSE_PROJECT_NAME:-court-helper}"
+
 services:
   db:
     image: postgres:16-alpine
@@ -53,8 +55,8 @@ services:
     # therefore published here for the optional nginx service below, which
     # shares this network namespace.
     ports:
-      - "80:80"
-      - "443:443"
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
     expose:
       - "3000"
     volumes:
@@ -92,7 +94,7 @@ services:
     security_opt:
       - no-new-privileges:true
     volumes:
-      - ./deploy/nginx.conf.example:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx.production.conf:/etc/nginx/conf.d/default.conf:ro
       - ./deploy/certs:/etc/nginx/certs:ro
       - nginx-logs:/var/log/nginx
 
