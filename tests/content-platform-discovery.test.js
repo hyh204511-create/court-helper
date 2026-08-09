@@ -749,9 +749,15 @@ test("强执 DOM fixture 的截图失败保留具体错误而不是误报执行 
 test("强执平台发现通过 layy 与 ajlist 在网上立案页直接补全 F/G", async () => {
   await db.resetDb();
   const calls = [];
+  const throttleDelays = [];
   const nativeSetTimeout = globalThis.setTimeout;
+  const nativeRandom = Math.random;
   const nativeWarn = console.warn;
-  globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, delay >= 250 ? 0 : delay, ...args);
+  Math.random = () => 0;
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    if (delay === 3000) throttleDelays.push(delay);
+    return nativeSetTimeout(callback, delay >= 250 ? 0 : delay, ...args);
+  };
   console.warn = (...args) => {
     if (args[0] === "[court-helper] 行截图失败") return;
     nativeWarn(...args);
@@ -812,9 +818,11 @@ test("强执平台发现通过 layy 与 ajlist 在网上立案页直接补全 F/
     assert.equal(syncEvents.length, 1, "each finalized case must receive a server ACK");
     assert.equal(syncEvents[0].event.payload.clientUid, record.uid);
     assert.equal(syncEvents[0].event.payload.caseNumber, "SYNTHETIC-QZ-API-001");
+    assert.equal(throttleDelays.length, 0, "single case and single evidence candidate must not add trailing delays");
     assert.equal(dom.window.location.hash, "#/pagesWsla/pc/list/index");
   } finally {
     globalThis.setTimeout = nativeSetTimeout;
+    Math.random = nativeRandom;
     console.warn = nativeWarn;
     cleanup(dom);
     await db.resetDb();

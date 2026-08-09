@@ -243,6 +243,30 @@ test("空案件列表 → 空统计不报错", async () => {
   assert.deepEqual(stats, { total: 0, success: 0, unknown: 0, needsHuman: 0 });
 });
 
+test("案件节流只发生在相邻案件之间，单案和末案之后不等待", async () => {
+  for (const count of [0, 1, 3]) {
+    let delays = 0;
+    await runBatch({
+      cases: Array.from({ length: count }, (_, index) => ({ uid: `between-${index}` })),
+      pageOps: makePageOps(),
+      timing: { delay: async () => { delays += 1; } },
+    });
+    assert.equal(delays, Math.max(0, count - 1), `${count} cases`);
+  }
+});
+
+test("失败后的唯一重试保留独立节流，但重试成功的末案不增加尾部等待", async () => {
+  let delays = 0;
+  const ops = makePageOps({ failTimes: { "retry-last": 1 } });
+  await runBatch({
+    cases: [{ uid: "retry-last" }],
+    pageOps: ops,
+    timing: { delay: async () => { delays += 1; } },
+  });
+  assert.equal(delays, 1);
+  assert.equal(ops.calls.filter((call) => call[0] === "query").length, 2);
+});
+
 test("syncing an evidence update preserves the original client UID", async () => {
   const records = new Map();
   const uid = "platform-account-id\u0000plaintiff\u0000defendant";

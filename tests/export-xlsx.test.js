@@ -110,6 +110,38 @@ test("浏览器无 Node Buffer 全局时仍可构建带图工作簿", async () =
   }
 });
 
+test("证据图片并行读取但仍按原任务顺序添加到工作簿", async () => {
+  const starts = [];
+  const pending = [];
+  const controlledImage = (id) => {
+    const blob = IMG(id);
+    blob.arrayBuffer = () => new Promise((resolve) => {
+      starts.push(id);
+      pending.push(() => resolve(Uint8Array.from([id, id + 1, id + 2]).buffer));
+    });
+    return blob;
+  };
+  const building = buildExportWorkbook({
+    cases: [rec({ status: "立案成功", successImage: controlledImage(11) })],
+    enforcementCases: [rec({ status: "强执成功", successImage: controlledImage(21) })],
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  const startsBeforeRelease = [...starts];
+  let released = 0;
+  while (released < 2) {
+    while (released < pending.length) pending[released++]();
+    if (released < 2) await new Promise((resolve) => setImmediate(resolve));
+  }
+  const wb = await building;
+
+  assert.deepEqual(startsBeforeRelease, [11, 21]);
+  assert.deepEqual(
+    wb.getWorksheet("Sheet1").getImages().map(({ range }) => ({ col: range.tl.nativeCol, row: range.tl.nativeRow })),
+    [{ col: 7, row: 1 }, { col: 15, row: 1 }],
+  );
+});
+
 test("UNKNOWN 状态：单元格留空 + 浅红填充 + 深红字体（ExcelJS 读回）", async () => {
   const wb = await buildExportWorkbook({ cases: [rec({ status: "UNKNOWN" })] });
   const ws = wb.getWorksheet("Sheet1");

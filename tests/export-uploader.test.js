@@ -83,6 +83,27 @@ test("base64 缂栫爜鎸夊潡澶勭悊澶у瓧鑺傚簭鍒楄€屼笉鎶涚�
   assert.deepEqual(Uint8Array.from(Buffer.from(chromeApi.messages[0].base64, "base64")), bytes);
 });
 
+test("同时提供 ExcelJS buffer 和下载 Blob 时摘要与上传复用原始 buffer", async () => {
+  const cryptoImpl = makeCrypto();
+  const chromeApi = makeChrome({ ok: true });
+  const buffer = Uint8Array.from([1, 2, 3, 4]).buffer;
+
+  await exportWorkbookToServer({
+    buffer,
+    blob: new Blob([Uint8Array.from([9, 9, 9])]),
+    fileName: "same-bytes.xlsx",
+    chromeApi,
+    cryptoImpl,
+    btoaImpl: (binary) => Buffer.from(binary, "binary").toString("base64"),
+  });
+
+  assert.deepEqual(cryptoImpl.calls[0].data, Uint8Array.from([1, 2, 3, 4]));
+  assert.deepEqual(
+    Uint8Array.from(Buffer.from(chromeApi.messages[0].base64, "base64")),
+    Uint8Array.from([1, 2, 3, 4]),
+  );
+});
+
 test("未配置服务器回执归一化为 not_configured", async () => {
   const result = await exportWorkbookToServer({
     blob: new Blob(["xlsx"]),
