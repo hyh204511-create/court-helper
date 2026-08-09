@@ -26,6 +26,9 @@ const MANUAL_CODES = new Set([
   "ONLINE_FILING_PAGE_REQUIRED",
   "CASE_MATCH_AMBIGUOUS",
   "ACCOUNT_MISMATCH",
+  "ACCOUNT_DISABLED",
+  "ACCOUNT_LABEL_UNAVAILABLE",
+  "CREDENTIAL_UNAVAILABLE",
   "TEMPLATE_NOT_EMPTY",
   "PLATFORM_ACCOUNT_UNAVAILABLE",
   "DISCOVERY_BASELINE_MISSING",
@@ -88,6 +91,48 @@ function trim(value) {
 
 function path(value) {
   return encodeURIComponent(String(value));
+}
+
+function exportCredentialErrorCode(error) {
+  if (error?.status === 401 || error?.code === "AUTH_REQUIRED") throw error;
+  if (error?.status === 404 || error?.code === "NOT_FOUND") return "PLATFORM_ACCOUNT_UNAVAILABLE";
+  if (error?.code === "ACCOUNT_DISABLED") return "ACCOUNT_DISABLED";
+  if (error?.code === "CREDENTIAL_UNAVAILABLE") return "CREDENTIAL_UNAVAILABLE";
+  return "CREDENTIAL_FETCH_FAILED";
+}
+
+async function resolveExportIdentity(client, platformAccountId, signal) {
+  let credential;
+  try {
+    credential = await client.request(`/platform-accounts/${path(platformAccountId)}/credential`, { method: "POST", signal });
+  } catch (error) {
+    return { ok: false, error: exportCredentialErrorCode(error) };
+  }
+  if (typeof credential?.account !== "string" || credential.account.length === 0
+    || typeof credential?.password !== "string" || credential.password.length === 0) {
+    return { ok: false, error: "CREDENTIAL_FETCH_FAILED" };
+  }
+
+  let accountLabel = trim(credential.label);
+  if (!accountLabel) {
+    let accountList;
+    try {
+      accountList = await client.request("/platform-accounts", { signal });
+    } catch (error) {
+      if (error?.status === 401 || error?.code === "AUTH_REQUIRED") throw error;
+      return { ok: false, error: "ACCOUNT_LABEL_UNAVAILABLE" };
+    }
+    const matches = (Array.isArray(accountList?.platformAccounts) ? accountList.platformAccounts : [])
+      .filter((account) => account?.id === platformAccountId && trim(account?.label));
+    if (matches.length !== 1) return { ok: false, error: "ACCOUNT_LABEL_UNAVAILABLE" };
+    accountLabel = trim(matches[0].label);
+  }
+
+  return {
+    ok: true,
+    accountLabel,
+    exportCredential: { account: credential.account, password: credential.password },
+  };
 }
 
 function selectCourtTab(tabs, predicate) {
@@ -405,20 +450,13 @@ export function createBrowserCommandPoller({
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
     }
     if (command.type === "QUERY_ALL_EXPORT" || command.type === "EXPORT_REPORT") {
-      let credential;
-      try {
-        credential = await client.request(`/platform-accounts/${path(command.platformAccountId)}/credential`, { method: "POST", signal });
-      } catch {
-        return { ok: false, error: "CREDENTIAL_FETCH_FAILED" };
-      }
+      const exportIdentity = await resolveExportIdentity(client, command.platformAccountId, signal);
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
-      if (!credential?.account || !credential?.password || !credential?.label) {
-        return { ok: false, error: "CREDENTIAL_FETCH_FAILED" };
-      }
+      if (!exportIdentity.ok) return exportIdentity;
       message = {
         ...message,
-        accountLabel: credential.label,
-        exportCredential: { account: credential.account, password: credential.password },
+        accountLabel: exportIdentity.accountLabel,
+        exportCredential: exportIdentity.exportCredential,
       };
     }
     try {

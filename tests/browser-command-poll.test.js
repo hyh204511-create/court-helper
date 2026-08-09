@@ -745,6 +745,140 @@ test("报表命令在 Worker 冷启动后仍使用命令绑定的账号执行导
   });
 });
 
+test("报表命令兼容旧服务凭据响应并按 UUID 精确补取非敏感账号标签", async () => {
+  const platformAccountId = "00000000-0000-4000-8000-000000000417";
+  const command = {
+    id: "00000000-0000-4000-8000-000000000416",
+    type: "QUERY_ALL_EXPORT",
+    platformAccountId,
+    clientBatchId: "00000000-0000-4000-8000-000000000422",
+  };
+  let accountListReads = 0;
+  let dispatched;
+  const chromeApi = chromeMock(async (_tabId, message) => {
+    if (message.type === "PING") {
+      return { ok: true, route: "#/pagesWsla/pc/list/index", ready: true };
+    }
+    dispatched = message;
+    return { status: "uploaded", exportId: "synthetic-export" };
+  });
+  const fetchImpl = async (url, init = {}) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command });
+    if (value.endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim-old-service" });
+    if (value.endsWith(`/import-batches/${command.clientBatchId}/extension-data`)) {
+      return response({ queryMode: "platform_discovery", rows: [] });
+    }
+    if (value.endsWith(`/platform-accounts/${platformAccountId}/credential`)) {
+      return response({ account: "synthetic-account", password: "synthetic-password" });
+    }
+    if (value.endsWith("/platform-accounts")) {
+      accountListReads += 1;
+      return response({
+        platformAccounts: [
+          { id: "00000000-0000-4000-8000-000000000999", label: "其他账号" },
+          { id: platformAccountId, label: "旧服务兼容标签" },
+        ],
+      });
+    }
+    if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+      return response({ command: { status: JSON.parse(init.body).status } });
+    }
+    throw new Error(`unexpected ${value}`);
+  };
+
+  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl }).pollOnce();
+
+  assert.equal(result.status, "uploaded");
+  assert.equal(accountListReads, 1);
+  assert.deepEqual(dispatched, {
+    type: "BROWSER_COMMAND_EXECUTE",
+    commandType: "QUERY_ALL_EXPORT",
+    queryMode: "platform_discovery",
+    platformAccountId,
+    accountLabel: "旧服务兼容标签",
+    exportCredential: { account: "synthetic-account", password: "synthetic-password" },
+  });
+});
+
+test("旧服务缺少可精确匹配的账号标签时拒绝导出且不使用真实账号命名", async () => {
+  const platformAccountId = "00000000-0000-4000-8000-000000000419";
+  const command = {
+    id: "00000000-0000-4000-8000-000000000418",
+    type: "EXPORT_REPORT",
+    platformAccountId,
+  };
+  let resultBody;
+  const chromeApi = chromeMock(async () => assert.fail("标签不可用时不得调用 content 下载或上传"));
+  const fetchImpl = async (url, init = {}) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command });
+    if (value.endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim-label-missing" });
+    if (value.endsWith(`/platform-accounts/${platformAccountId}/credential`)) {
+      return response({ account: "must-not-be-a-file-name", password: "synthetic-password" });
+    }
+    if (value.endsWith("/platform-accounts")) return response({ platformAccounts: [] });
+    if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+      resultBody = JSON.parse(init.body);
+      return response({ command: { status: resultBody.status } });
+    }
+    throw new Error(`unexpected ${value}`);
+  };
+
+  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl }).pollOnce();
+
+  assert.equal(result.error, "ACCOUNT_LABEL_UNAVAILABLE");
+  assert.equal(resultBody.status, "manual_required");
+  assert.equal(resultBody.resultCode, "ACCOUNT_LABEL_UNAVAILABLE");
+  assert.equal(JSON.stringify(resultBody).includes("must-not-be-a-file-name"), false);
+  assert.equal(JSON.stringify(resultBody).includes("synthetic-password"), false);
+});
+
+test("报表凭据请求保留授权失效及账号不可用的稳定错误语义", async () => {
+  const scenarios = [
+    { status: 401, code: "AUTH_REQUIRED", expectedReason: "AUTH_REQUIRED", writesResult: false },
+    { status: 404, code: "NOT_FOUND", expectedCode: "PLATFORM_ACCOUNT_UNAVAILABLE", writesResult: true },
+    { status: 409, code: "ACCOUNT_DISABLED", expectedCode: "ACCOUNT_DISABLED", writesResult: true },
+    { status: 503, code: "CREDENTIAL_UNAVAILABLE", expectedCode: "CREDENTIAL_UNAVAILABLE", writesResult: true },
+  ];
+
+  for (const scenario of scenarios) {
+    const platformAccountId = "00000000-0000-4000-8000-000000000421";
+    const command = {
+      id: "00000000-0000-4000-8000-000000000420",
+      type: "EXPORT_REPORT",
+      platformAccountId,
+    };
+    let resultBody;
+    const chromeApi = chromeMock(async () => assert.fail("凭据失败时不得调用 content"));
+    const fetchImpl = async (url, init = {}) => {
+      const value = String(url);
+      if (value.endsWith("/browser-commands/next")) return response({ command });
+      if (value.endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim-credential-error" });
+      if (value.endsWith(`/platform-accounts/${platformAccountId}/credential`)) {
+        return response({ error: { code: scenario.code, message: "safe" } }, scenario.status);
+      }
+      if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+        resultBody = JSON.parse(init.body);
+        return response({ command: { status: resultBody.status } });
+      }
+      throw new Error(`unexpected ${value}`);
+    };
+
+    const result = await createBrowserCommandPoller({ chromeApi, fetchImpl }).pollOnce();
+    if (scenario.writesResult) {
+      assert.equal(result.error, scenario.expectedCode);
+      assert.equal(resultBody.status, "manual_required");
+      assert.equal(resultBody.resultCode, scenario.expectedCode);
+    } else {
+      assert.deepEqual(result, { ok: false, reason: scenario.expectedReason });
+      assert.equal(resultBody, undefined);
+      const stored = await chromeApi.storage.local.get();
+      assert.equal(stored.token, undefined);
+    }
+  }
+});
+
 test("report command rejects detail and similarly named routes before content execution", async () => {
   const command = { id: "00000000-0000-4000-8000-000000000405", type: "EXPORT_REPORT" };
   const chromeApi = chromeMock(async () => assert.fail("content must not be called"));
