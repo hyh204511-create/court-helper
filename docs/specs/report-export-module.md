@@ -33,13 +33,13 @@ CREATE TABLE IF NOT EXISTS report_exports (
 );
 CREATE INDEX IF NOT EXISTS report_exports_created_by_idx ON report_exports (created_by, created_at);
 CREATE INDEX IF NOT EXISTS report_exports_created_at_idx ON report_exports (created_at);
-CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_uidx
-  ON report_exports (sha256, created_by);
+CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_account_uidx
+  ON report_exports (sha256, created_by, platform_account_id);
 ```
 
 `platform_account_id` 由新迁移追加为可空列以兼容既有历史记录；所有新上传必须提供有效值。元数据只保存 UUID，不保存账号或密码。
 
-- 幂等键：`(sha256, created_by)` 唯一；同一用户重复上传同一文件 → 返回既有记录（`created:false`），不重复写对象。
+- 幂等键：`(sha256, created_by, platform_account_id)` 唯一；同一用户为同一平台账号重复上传同一文件 → 返回既有记录（`created:false`），不同账号即使文件摘要相同也必须分别记录，避免台账关联错位。
 - 不建任务队列、不建导出模板/快照表（插件本地生成文件，服务器只存结果）。
 
 ## 3. REST 契约（前缀 `/api/v1`，均需有效会话）
@@ -53,7 +53,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_uidx
 | `DELETE /api/v1/report-exports/:id` | admin,user | 先删对象（成功或已不存在均继续删记录）再删记录；admin 任意、user 仅本人；越权 403 |
 
 - 上传校验失败 → `400 VALIDATION_ERROR`（`sha256_required` / `sha256_invalid` / `file_required` / `magic_not_allowed` / `mime_mismatch`）；超限 → `413 PAYLOAD_TOO_LARGE`。
-- 请求幂等性只由 `(sha256, created_by)` 定义；不接受、存储或透传无独立服务端语义的 `clientExportId`，也不以 `Idempotency-Key` 改变该规则。
+- 请求幂等性只由 `(sha256, created_by, platform_account_id)` 定义；不接受、存储或透传无独立服务端语义的 `clientExportId`，也不以 `Idempotency-Key` 改变该规则。
 - 文件名净化：仅取 basename；剥离控制字符；长度 ≤ 200；保留 CJK、字母数字、`- _ . （）`；空/异常 → 服务端生成 `report-<日期>.xlsx`。服务端存储/下载均用净化名。
 - 错误模型、请求 ID、脱敏日志规则同 server-module §6；文件名现含账号标签，日志不得记录文件名或 multipart 正文。
 - **ID/UUID 校验**：路径 `:id` 与游标 `cursor.id` 必须在路由边界校验为 UUID 格式，非法值返回稳定的 `400/404`（禁止落库后由数据库 cast 报错）。

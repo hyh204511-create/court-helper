@@ -24,7 +24,7 @@
 | `import_batches` | `id`，`file_name`（净化 basename），`object_key`（私有且不经普通响应返回），`sha256`，`byte_size`，`created_by`，`created_at`，`updated_at`，`expires_at`；保存后台上传 xlsx 与受控解析结果的批次基线，所有已登录后台用户可查看完整内容/下载 |
 | `cases` | `id`，`client_uid`（唯一，对应 IndexedDB `uid`），`platform_account_id`，`kind` ∈ `{li,qz}`，`plaintiff`，`defendant`，`status` ∈ `{立案成功,强执成功,已驳回,审核中,UNKNOWN}`，`filed_time`，`case_number`，`reject_time`，`reject_reason`，`query_time`，`needs_human`，`error_code`，`source_event_id`，`source_updated_at`，`revision`（全局单调递增），`created_at`，`updated_at` |
 | `screenshots` | `id`，`case_id`，`type` ∈ `{success,reject,enforcement_success}`，`object_key`（唯一且不经普通 API 返回），`content_type` ∈ `{image/jpeg,image/png}`，`byte_size`，`sha256`，`captured_at`，`created_at`；`(case_id,type)` 唯一，重传相同哈希为幂等，替换时清理旧对象 |
-| `report_exports` | `id`，`file_name`（净化名，仅 basename），`object_key`（唯一且不经普通 API 返回），`content_type`（固定 xlsx），`byte_size`，`sha256`，`platform_account_id`（历史可空，新上传必填），`created_by`，`created_at`，`updated_at`；`(sha256,created_by)` 唯一，同用户重传同文件幂等返回既有记录；详见 report-export-module 规格 |
+| `report_exports` | `id`，`file_name`（净化名，仅 basename），`object_key`（唯一且不经普通 API 返回），`content_type`（固定 xlsx），`byte_size`，`sha256`，`platform_account_id`（历史可空，新上传必填），`created_by`，`created_at`，`updated_at`；`(sha256,created_by,platform_account_id)` 唯一，同用户同账号重传同文件幂等返回既有记录；详见 report-export-module 规格 |
 
 - `cases.platform_account_id` 外键指向平台账号；平台账号“删除”为停用 + 软删除，已有案件不级联删除。
 - `report_exports.platform_account_id` 只记录不透明账号 UUID，用于后台按账号关联案件台账；真实账号密码只存在受保护的最终 xlsx，不进入元数据、普通 API、日志或后台 DOM。
@@ -57,7 +57,7 @@
 | `GET /screenshots/:id/content?download=0|1` | admin,user | 鉴权后由服务端从私有桶流式返回，设置 `Cache-Control: private, no-store`；私有桶不得公开读 |
 | `POST /sync/cases` | admin,user | 一批最多 50 条结果幂等 upsert，返回逐项 `accepted/conflicts` 和最新 `cursor` |
 | `GET /sync/changes?after=<revision>&limit=<n>` | admin,user | 返回保留期内、revision 更大的案件和截图元数据；不含图片二进制或任何凭据，`limit≤200` |
-| `POST /report-exports` | admin,user | multipart 上传报表 xlsx（`sha256` + `platformAccountId` + `file`，≤ 20 MiB，ZIP magic 校验），幂等按 `(sha256,created_by)`；返回元数据与 `created` |
+| `POST /report-exports` | admin,user | multipart 上传报表 xlsx（`sha256` + `platformAccountId` + `file`，≤ 20 MiB，ZIP magic 校验），幂等按 `(sha256,created_by,platform_account_id)`；返回元数据与 `created` |
 | `GET /report-exports` / `GET /report-exports/:id` | admin,user | 列表可按 `platformAccountId` 精确筛选（admin 全部 / user 本人）；仅返回含账号 UUID 的元数据，不返回 object_key、账号或密码 |
 | `GET /report-exports/:id/download` | admin,user | 服务端从存储流式返回 xlsx（`attachment` + 净化文件名 + `X-Content-SHA256` + `Cache-Control: private, no-store`） |
 | `DELETE /report-exports/:id` | admin,user | 先删对象再删记录；admin 任意、user 仅本人 |
