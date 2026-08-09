@@ -23,6 +23,8 @@ test('后台控制台用户可见文案全部使用中文', () => {
 
 test('左侧菜单使用浅蓝白背景、黑色大字号', () => {
   assert.match(ADMIN_STYLES, /\.sidebar\s*\{[^}]*color:\s*#111827;[^}]*background:\s*(?:linear-gradient\([^;]+\)|#(?:[0-9a-f]{3,8}))/is);
+  assert.match(ADMIN_STYLES, /background:\s*linear-gradient\(180deg, #d6ebff 0%, #e6f3ff 65%, #f1f8ff 100%\)/i);
+  assert.match(ADMIN_STYLES, /border-right:\s*1px solid #a7cdf0/i);
   assert.match(ADMIN_STYLES, /\.nav a\s*\{[^}]*color:\s*#111827;[^}]*font-size:\s*17px;/is);
 });
 

@@ -79,8 +79,8 @@ button:disabled { cursor: not-allowed; opacity: .48; box-shadow: none; }
   overflow-x: hidden;
   overflow-y: auto;
   color: #111827;
-  background: linear-gradient(180deg, #eaf4ff 0%, #f8fbff 58%, #ffffff 100%);
-  border-right: 1px solid #cfe2f5;
+  background: linear-gradient(180deg, #d6ebff 0%, #e6f3ff 65%, #f1f8ff 100%);
+  border-right: 1px solid #a7cdf0;
   box-shadow: 10px 0 28px rgba(78, 119, 155, .10);
   transition: transform .22s ease;
 }
