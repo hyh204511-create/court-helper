@@ -239,3 +239,11 @@ extension 生成稳定 deviceId + 随机 32-byte exchangeSecret
 - Service Worker 在同一已领取命令内，向精确“网上立案”标签发送有界 `PING`，必须确认 content script 已注册、面板已挂载、当前平台账号可识别且列表分类/查询控件唯一可用后，才下发唯一一次 `BROWSER_COMMAND_EXECUTE`。
 - 就绪探测默认最多 8 次、每次间隔 500ms、单次响应最多 2s；探测期间不得导航、刷新、创建标签或重复领取命令。超时回写 `CONTENT_UNAVAILABLE`，不得把未执行误报为成功。
 - content 的 `PING` 仅返回脱敏路由、登录状态和布尔 `ready`；不得返回账号明文、业务行、凭据或 DOM 内容。该闸门只解决 SPA/content script 初始化竞态，不改变查询分类切换、采集、导出和租约规则。
+
+### 导出凭据滚动升级兼容（v1.0）
+
+- 自动化凭据出口的稳定最小响应为 `{account,password}`；`label` 是可选的非敏感加法字段，不得作为凭据获取成功的硬门槛。
+- `QUERY_ALL_EXPORT` 与兼容 `EXPORT_REPORT` 优先使用凭据响应中的 `label`。旧服务未返回 `label` 时，Service Worker 必须调用现有平台账号列表接口，并按命令绑定的 `platformAccountId` 精确匹配唯一标签。
+- 标签无法精确取得时回写稳定码 `ACCOUNT_LABEL_UNAVAILABLE`，不得使用真实登录账号、UUID 或猜测值作为文件名，也不得继续下载或上传。
+- 凭据接口返回 `401/AUTH_REQUIRED` 时沿用轮询层授权失效处理；`404`、`409 ACCOUNT_DISABLED`、`503 CREDENTIAL_UNAVAILABLE` 映射为不含响应正文的稳定码。任何错误回执、日志、命令结果与存储均不得包含账号密码。
+- 发布顺序采用服务器先于扩展；自动测试必须覆盖“旧服务 `{account,password}` + 新扩展”和“新服务 `{label,account,password}` + 新扩展”两种组合。
