@@ -475,6 +475,14 @@ test('admins see disabled accounts, users do not, and deletion is soft', async (
     assert.equal(removed.json().enabled, false);
     const row = await platformAccountRepository.findById(created.json().id);
     assert.ok(row.deletedAt instanceof Date);
+
+    const adminListAfterDelete = await app.inject({
+      method: 'GET',
+      url: '/api/v1/platform-accounts',
+      headers: { cookie: admin.cookie },
+    });
+    assert.equal(adminListAfterDelete.statusCode, 200);
+    assert.deepEqual(adminListAfterDelete.json(), { platformAccounts: [] });
   } finally {
     await app.close();
   }

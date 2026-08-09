@@ -46,7 +46,7 @@ export class PlatformAccountService {
   }
 
   async list(role: 'admin' | 'user'): Promise<PlatformAccountRecord[]> {
-    return this.repository.list(role === 'admin' ? { includeDeleted: true } : { enabledOnly: true });
+    return this.repository.list(role === 'admin' ? {} : { enabledOnly: true });
   }
 
   async get(id: string): Promise<PlatformAccountRecord> {
