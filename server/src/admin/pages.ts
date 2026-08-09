@@ -43,7 +43,7 @@ function layout(page: AdminPage, role: AdminRole, title: string, main: string, c
     <div class="shell">
       <aside id="admin-sidebar" class="sidebar" aria-label="后台主导航">
         <div class="brand">
-          <div class="brand-mark">Court Helper / Registry</div>
+          <div class="brand-mark">法院案件台账</div>
           <h1>案件台账</h1>
           <p>保留期内的立案与强执结果，集中查看、核验与取证。</p>
         </div>
@@ -79,7 +79,7 @@ function loginPage(): string {
     <main class="login-page">
       <section class="login-card" aria-labelledby="login-title">
         <div class="login-art">
-          <div class="brand-mark">Court Helper / Registry</div>
+          <div class="brand-mark">法院案件台账</div>
           <h1>案件台账</h1>
           <p>面向内部工作人员的案件查询、状态核验与截图存证工作台。</p>
         </div>
@@ -106,7 +106,7 @@ function loginPage(): string {
 function usersPage(): string {
   return layout('users', 'admin', '系统用户', `
     <header class="page-head">
-      <div><p class="eyebrow">Access / People</p><h2>系统用户</h2><p>管理内部登录身份、角色与会话状态。密码只在创建或重置时输入。</p></div>
+      <div><p class="eyebrow">权限与用户</p><h2>系统用户</h2><p>管理内部登录身份、角色与会话状态。密码只在创建或重置时输入。</p></div>
     </header>
     <section class="panel" aria-labelledby="new-user-title">
       <div class="panel-head"><div><h3 id="new-user-title">新增用户</h3><p>提交成功后重新从服务器读取列表。</p></div></div>
@@ -131,7 +131,7 @@ function usersPage(): string {
 function platformAccountsPage(): string {
   return layout('platform-accounts', 'admin', '平台账号', `
     <header class="page-head">
-      <div><p class="eyebrow">Sources / Credentials</p><h2>平台账号</h2><p>维护扩展使用的平台账号标签与启停状态；登录和按需查看凭据统一在浏览器控制台完成。</p></div>
+      <div><p class="eyebrow">平台与凭据</p><h2>平台账号</h2><p>维护扩展使用的平台账号标签与启停状态；登录和按需查看凭据统一在浏览器控制台完成。</p></div>
     </header>
     <section class="panel" aria-labelledby="platform-form-title">
       <div class="panel-head"><div><h3 id="platform-form-title">新增平台账号</h3><p>编辑时只替换凭据，不会回显已有内容；已有记录仅显示“已设置”，新建表单显示“未设置”。</p></div><span class="subtle">凭据：<strong id="credential-state">未设置</strong></span></div>
@@ -157,7 +157,7 @@ function platformAccountsPage(): string {
 function casesPage(role: AdminRole): string {
   return layout('cases', role, '案件台账', `
     <header class="page-head">
-      <div><p class="eyebrow">Cases / Retained Window</p><h2>案件台账</h2><p>显示服务端当前保留期内的结果。页面可见时自动刷新，隐藏页面时暂停。</p></div>
+      <div><p class="eyebrow">案件与保留期限</p><h2>案件台账</h2><p>显示服务端当前保留期内的结果。页面可见时自动刷新，隐藏页面时暂停。</p></div>
     </header>
     <section class="panel" aria-labelledby="case-filter-title">
       <div class="panel-head"><div><h3 id="case-filter-title">筛选案件</h3><p>筛选条件和当前页由浏览器保留，轮询不会自动跳页。</p></div></div>
@@ -185,7 +185,7 @@ function casesPage(role: AdminRole): string {
 function caseDetailPage(role: AdminRole, caseId: string): string {
   return layout('case-detail', role, '案件详情', `
     <header class="page-head">
-      <div><p class="eyebrow">Case / Read Only</p><h2>案件详情</h2><p>只读查看案件字段与授权截图，状态不会由页面推断或改写。</p></div>
+      <div><p class="eyebrow">案件详情（只读）</p><h2>案件详情</h2><p>只读查看案件字段与授权截图，状态不会由页面推断或改写。</p></div>
       <a class="button secondary" href="/admin/cases">返回案件列表</a>
     </header>
     <section class="panel" aria-labelledby="detail-title">
@@ -202,7 +202,7 @@ function reportExportsPage(role: AdminRole): string {
   const exporterColumn = role === 'admin' ? '<th>导出人</th>' : '';
   return layout('report-exports', role, '报表导出', `
     <header class="page-head">
-      <div><p class="eyebrow">Exports / Retained Files</p><h2>报表导出</h2><p>查看保留期内的报表文件，按权限鉴权下载或删除。</p></div>
+      <div><p class="eyebrow">导出与保留文件</p><h2>报表导出</h2><p>查看保留期内的报表文件，按权限鉴权下载或删除。</p></div>
     </header>
     <section class="panel" aria-labelledby="report-export-list-title">
       <div class="panel-head"><div><h3 id="report-export-list-title">导出记录</h3><p>文件内容不在页面缓存；下载由当前会话直接鉴权。</p></div></div>
@@ -226,7 +226,7 @@ function browserControlPage(role: AdminRole): string {
       </div>
     </section>` : '';
   return layout('browser-control', role, '浏览器控制', `
-    <header class="page-head"><div><p class="eyebrow">Browser / Commands</p><h2>浏览器控制</h2><p>登录、导入、查询和导出的唯一业务入口。任务由扩展在已打开的法院标签页执行。</p></div><p class="subtle">当前后台用户：<strong id="current-backoffice-user">加载中…</strong></p></header>
+    <header class="page-head"><div><p class="eyebrow">浏览器任务</p><h2>浏览器控制</h2><p>登录、导入、查询和导出的唯一业务入口。任务由扩展在已打开的法院标签页执行。</p></div><p class="subtle">当前后台用户：<strong id="current-backoffice-user">加载中…</strong></p></header>
     <section class="panel" aria-labelledby="platform-login-title">
       <div class="panel-head"><div><h3 id="platform-login-title">平台账号与自动登录</h3><p>选择启用账号后创建统一 LOGIN 命令；完整凭据只在本页按需查看，不进入任务负载。</p></div></div>
       <div class="panel-body">
@@ -285,7 +285,7 @@ function forbiddenPage(): string {
   </head>
   <body data-page="forbidden" data-role="user">
     <main class="content forbidden panel">
-      <p class="eyebrow">Access / Restricted</p>
+      <p class="eyebrow">权限受限</p>
       <h2>403</h2>
       <p>无权访问该管理页面。请联系管理员获取必要的角色权限。</p>
       <a class="button primary" href="/admin/cases">返回案件台账</a>

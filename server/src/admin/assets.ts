@@ -931,6 +931,31 @@ function browserCommandStatusLabel(status) {
   return labels[status] || '未知状态';
 }
 
+function browserCommandTypeLabel(type) {
+  const labels = {
+    LOGIN: '统一登录',
+    QUERY_LI: '立案查询',
+    QUERY_QZ: '强执查询',
+    QUERY_ALL_EXPORT: '一键查询并导出',
+    EXPORT_REPORT: '报表导出',
+  };
+  return labels[type] || '未知任务';
+}
+
+function browserCommandResultLabel(code, summary) {
+  const labels = {
+    UNKNOWN: '未知结果',
+    NEEDS_HUMAN: '需要人工处理',
+    SESSION_EXPIRED: '会话已过期',
+    AUTH_REQUIRED: '需要重新登录',
+    LOGIN_REDIRECT: '已跳转登录页',
+    SELECTOR_CHANGED: '页面选择器已变化',
+    API_REQUEST_FAILED: '接口请求失败',
+  };
+  const translated = labels[code] || (code ? String(code) : '');
+  return [translated, summary].filter(Boolean).join(' / ') || '—';
+}
+
 function browserCommandProgressLabel(progress) {
   if (progress === null || progress === undefined) return '—';
   if (typeof progress === 'number') return String(Math.max(0, Math.min(100, progress))) + '%';
@@ -1185,7 +1210,7 @@ async function loadBrowserCommands() {
       const accountCell = element('td', accountLabel); accountCell.dataset.commandAccount = 'true';
       const creator = element('td', userNames.get(command.requestedBy) || '未知用户');
       creator.dataset.commandCreator = 'true';
-      row.append(accountCell, element('td', command.type), element('td', browserCommandStatusLabel(command.status), 'status-pill'), element('td', browserCommandProgressLabel(command.progress)), element('td', [command.resultCode, command.resultSummary].filter(Boolean).join(' / ') || '—'), creator, element('td', dateLabel(command.createdAt)));
+      row.append(accountCell, element('td', browserCommandTypeLabel(command.type)), element('td', browserCommandStatusLabel(command.status), 'status-pill'), element('td', browserCommandProgressLabel(command.progress)), element('td', browserCommandResultLabel(command.resultCode, command.resultSummary)), creator, element('td', dateLabel(command.createdAt)));
       const actions = element('td', null, 'row-actions');
       if (['pending', 'executing'].includes(command.status) && command.requestedBy === currentSessionUser?.id) actions.append(actionButton('取消', 'cancel-browser-command', command.id, 'small-button danger'));
       if (['failed', 'manual_required', 'expired'].includes(command.status)) actions.append(actionButton('重试', 'retry-browser-command', command.id));
