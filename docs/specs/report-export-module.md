@@ -1,12 +1,13 @@
 # 规格：report-export-module（报表导出记录与再下载）
 
-> 版本：0.7 ｜ 状态：已确认、待实现 ｜ 依据：Phase 11 后台控制台唯一入口决策、browser-command-module、server-module（存储/鉴权/错误模型复用）、用户提供的 21 列空模板
+> 版本：0.9 ｜ 状态：已确认、待实现 ｜ 依据：Phase 11 后台控制台唯一入口决策、browser-command-module、server-module（存储/鉴权/错误模型复用）、用户提供的 21 列空模板
 > v0.3 变更：导出任务必须绑定控制台显式选择的非敏感 `platformAccountId`。该 UUID 使用既有 `browser_commands.platform_account_id` 持久化，以抵御 MV3 Worker 回收；不写入 payload、扩展 storage、日志，也不包含账号明文或凭据。
 > v0.4 变更：控制台以单一 `QUERY_ALL_EXPORT` 命令先完成立案和强执采集再导出；旧 `EXPORT_REPORT` 仅保留兼容 API，不再作为控制台独立按钮。
 > v0.5 变更：新生成报表统一使用 20 列合并模板；旧 12 列双区块仅保留读取兼容。
 > v0.6 变更：报表使用账号标签命名，C/D 列由绑定账号的服务端真实凭据瞬时注入；导出记录绑定 `platformAccountId`，后台按账号筛选并跳转案件台账。
 > v0.7 变更：控制台自定义业务员随 `QUERY_ALL_EXPORT` 命令传递，新生成报表改为 21 列并在 U 列逐行写入业务员。
 > v0.8 变更：一键任务以同运行期成功 `LOGIN` 的不透明账号绑定作为身份依据；绑定缺失在采集前失败。绑定已确认后不再比较法院顶栏显示身份与登录用户名的字符串值，避免姓名/昵称与登录账号不同导致采集完成后误报。
+> v0.9 变更：报表上传或前置案件同步出现未预期 500 时，服务器输出仅含请求 ID、方法、路由模板、异常类型和稳定异常码的结构化诊断；禁止记录 URL 查询、请求体、文件名、案件字段、对象键、SQL 文本或异常 message。
 
 ## 1. 目标与边界
 
@@ -58,6 +59,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_account_uidx
 - 请求幂等性只由 `(sha256, created_by, platform_account_id)` 定义；不接受、存储或透传无独立服务端语义的 `clientExportId`，也不以 `Idempotency-Key` 改变该规则。
 - 文件名净化：仅取 basename；剥离控制字符；长度 ≤ 200；保留 CJK、字母数字、`- _ . （）`；空/异常 → 服务端生成 `report-<日期>.xlsx`。服务端存储/下载均用净化名。
 - 错误模型、请求 ID、脱敏日志规则同 server-module §6；文件名现含账号标签，日志不得记录文件名或 multipart 正文。
+- 未预期异常归一化为 `500 INTERNAL_ERROR` 前必须调用可注入的安全诊断记录器；字段白名单固定为 `requestId / method / route / errorName / errorCode`。`route` 只取 Fastify 路由模板（例如 `/api/v1/report-exports`、`/api/v1/sync/cases`），不得回退到含查询参数的原始 URL；无稳定异常码时写 `UNEXPECTED_ERROR`。诊断记录器自身失败不得改变原始 HTTP 回执。
 - **ID/UUID 校验**：路径 `:id` 与游标 `cursor.id` 必须在路由边界校验为 UUID 格式，非法值返回稳定的 `400/404`（禁止落库后由数据库 cast 报错）。
 
 ## 4. 权限矩阵
@@ -127,6 +129,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_account_uidx
   - 下载：流式内容一致、`Content-Disposition` 净化文件名、`X-Content-SHA256`、`no-store`；
   - 删除：对象先删、记录删除；重复删除 404；
   - 保留：`created_at` 早于截止线被清理（对象与记录），晚于截止线保留。
+  - 未预期异常：仍返回脱敏 `INTERNAL_ERROR`，同时安全诊断记录器只收到字段白名单；测试中的业务明文、文件名、SQL/message 不得出现在序列化日志中。
 - **extension 测试**：
 - `remote-client.test.js` 增补：`uploadReportExport` 仅构造 `sha256` 与文件的 FormData、错误映射；
   - `EXPORT_UPLOAD` 消息测试须经 JSON 序列化往返（模拟浏览器丢 Blob 类型）；覆盖：base64 解码正确、未配置后置写入配置再上传成功（懒初始化）、统一命令下发所选 kind、qz 门禁 `EXECUTION_TAB_REQUIRED`；
