@@ -194,6 +194,33 @@ test('sync cases performs idempotent upserts and preserves newer data on conflic
   }
 });
 
+test('sync cases removes PostgreSQL-incompatible NUL characters from database text', async () => {
+  const { app, caseRepository } = await makeApp();
+
+  try {
+    const token = await loginExtension(app);
+    const response = await sync(app, token, [caseItem({
+      plaintiff: 'synthetic\u0000 plaintiff\nline two',
+      defendant: 'synthetic\tdefendant\u0000',
+      caseNumber: 'SYNTHETIC\u0000-001',
+      rejectReason: 'reason\u0000 retained',
+      errorCode: 'QUERY\u0000_FAILED',
+    })]);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().accepted.length, 1);
+    const stored = (await caseRepository.list())[0];
+    assert.equal(stored.plaintiff, 'synthetic plaintiff\nline two');
+    assert.equal(stored.defendant, 'synthetic\tdefendant');
+    assert.equal(stored.caseNumber, 'SYNTHETIC-001');
+    assert.equal(stored.rejectReason, 'reason retained');
+    assert.equal(stored.errorCode, 'QUERY_FAILED');
+    assert.equal(JSON.stringify(stored).includes('\\u0000'), false);
+  } finally {
+    await app.close();
+  }
+});
+
 test('sync cases rejects invalid batches and enforces per-item account availability', async () => {
   const { app } = await makeApp();
 

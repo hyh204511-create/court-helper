@@ -79,7 +79,7 @@ function nullableString(value: unknown, field: string): string | null {
   if (typeof value !== 'string') {
     throw new ValidationError([{ field, code: 'string_required' }]);
   }
-  return value;
+  return value.replaceAll('\u0000', '');
 }
 
 function enumValue<T extends string>(value: unknown, field: string, values: readonly T[]): T {
