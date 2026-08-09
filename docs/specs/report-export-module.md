@@ -1,10 +1,11 @@
 # 规格：report-export-module（报表导出记录与再下载）
 
-> 版本：0.6 ｜ 状态：已确认、待实现 ｜ 依据：Phase 11 后台控制台唯一入口决策、browser-command-module、server-module（存储/鉴权/错误模型复用）
+> 版本：0.7 ｜ 状态：已确认、待实现 ｜ 依据：Phase 11 后台控制台唯一入口决策、browser-command-module、server-module（存储/鉴权/错误模型复用）、用户提供的 21 列空模板
 > v0.3 变更：导出任务必须绑定控制台显式选择的非敏感 `platformAccountId`。该 UUID 使用既有 `browser_commands.platform_account_id` 持久化，以抵御 MV3 Worker 回收；不写入 payload、扩展 storage、日志，也不包含账号明文或凭据。
 > v0.4 变更：控制台以单一 `QUERY_ALL_EXPORT` 命令先完成立案和强执采集再导出；旧 `EXPORT_REPORT` 仅保留兼容 API，不再作为控制台独立按钮。
 > v0.5 变更：新生成报表统一使用 20 列合并模板；旧 12 列双区块仅保留读取兼容。
 > v0.6 变更：报表使用账号标签命名，C/D 列由绑定账号的服务端真实凭据瞬时注入；导出记录绑定 `platformAccountId`，后台按账号筛选并跳转案件台账。
+> v0.7 变更：控制台自定义业务员随 `QUERY_ALL_EXPORT` 命令传递，新生成报表改为 21 列并在 U 列逐行写入业务员。
 
 ## 1. 目标与边界
 
@@ -12,7 +13,7 @@
 
 - 参考（san-ke-yi-wei）：服务端 `ExportJob` 记录 `file_name / file_sha256 / 导出人 / 创建时间`；`GET api/exports/<id>/download` 流式返回（`as_attachment` + 原文件名 + `Cache-Control: no-store` + `X-Content-SHA256` 响应头）；过期定期清理。
 - 本模块完全复用 `screenshots` 模块的既有模式：对象存储（本地磁盘 / COS/OSS）、鉴权（Bearer / Cookie）、错误信封、30 天保留。
-- 导出工作簿固定为 A–T 单表头：A–D 主体与账号，E–L 立案结果，M–T 强执结果；按 `账号 + 原告 + 被告` 将两类查询结果合并到同一行，单侧缺失时保留空白结果列。
+- 导出工作簿固定为 A–U 单表头：A–D 主体与账号，E–L 立案结果，M–T 强执结果，U 为本次任务输入的业务员；按 `账号 + 原告 + 被告` 将两类查询结果合并到同一行，单侧缺失时保留空白结果列。
 - **上传失败不阻塞**：本地下载先行，上传为尽力而为（best-effort），失败仅提示，不重试队列、不伪装成功。
 - 报表文件 = 业务数据（含当事人等），存储与截图同等级保护：对象键不出普通 API、日志不含业务明文、私有桶不可匿名读。
 
@@ -91,6 +92,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_account_uidx
 - **二进制交接用 base64**：Chromium 扩展消息为 JSON 序列化（官方 messaging 文档），Blob/ArrayBuffer 不保真；content 执行器把 xlsx 字节转 base64 字符串随消息发送，SW 侧 `atob` 解码为 Uint8Array 再构造 Blob 上传。base64 膨胀约 33%，单文件受服务器 20 MiB 上限约束（超出由服务器 413 拒绝）。测试必须模拟浏览器 JSON 序列化往返（`JSON.parse(JSON.stringify(message))`）。
 - 导出执行保持 single-flight；同一法院标签页不得并发生成两份报表。状态和安全摘要通过统一 browser command 回写，浮动面板只作状态提示。
 - SW 只在执行导出时按命令绑定 UUID 读取一次真实凭据与账号标签，并瞬时下发给受信 content；content 校验页面账号后统一覆盖工作簿 C/D 列。凭据不得进入 IndexedDB、上传消息、报表元数据、命令结果或日志。
+- `QUERY_ALL_EXPORT` 的非敏感 `payload.salesperson` 只在命令执行链路中传给 content，并统一写入工作簿 U 列；上传接口与报表记录不另存业务员元数据。兼容 `EXPORT_REPORT` 未携带该值时 U 列留空。
 - 后台“导出成功”以服务端创建记录或幂等命中为准；仅本地下载、未配置或上传失败不显示为后台成功记录。
 - `QUERY_ALL_EXPORT` 只有在每一类都完成安全处理后才进入导出：某类有记录时必须通过结构/会话/账号/选择器/API-DOM 校验；某类没有记录时必须取得结构化 `total=0` 且当前 DOM 无该类行的确认空结果。只要至少一类产生可导出记录，即可生成仅含该类数据的报表；确认为空的另一类不阻断。任一无法确认空结果或其他硬失败不得读取旧数据生成混合报表。案件级 `UNKNOWN/needsHuman` 不属于硬失败，仍按既有样式导出并保留待人工提示。
 - 导出前按当前页面账号和命令绑定的 `platformAccountId` 查询两张本地案件表；两表合计为 0 行时返回稳定错误 `REPORT_EMPTY`，不得创建 Blob、触发本地下载、上传服务器或回写 `SUCCESS`。非空记录即使为 `UNKNOWN` 或缺少部分证据，仍按既有红色待人工规则导出，不得猜测补齐。
