@@ -437,6 +437,8 @@ export function createBrowserCommandPoller({
       message = { ...message, platformAccountId: command.platformAccountId };
     }
     if (command.type === "QUERY_ALL_EXPORT") {
+      const salesperson = trim(command.payload?.salesperson);
+      if (salesperson) message = { ...message, salesperson };
       const attempts = retryAttempts(contentRouteRetryAttempts);
       const contentReady = await waitForQueryAllExportContent(
         chromeApi,

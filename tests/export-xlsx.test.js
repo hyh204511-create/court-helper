@@ -47,7 +47,7 @@ function verify(file, cells) {
   return JSON.parse(res.stdout);
 }
 
-test("导出 20 列合并表：布局/样式/日期格式/图片锚点", async () => {
+test("导出 21 列合并表：布局/业务员/日期格式/图片锚点", async () => {
   const wb = await buildExportWorkbook({
     cases: [
       rec({ status: "立案成功", filedTime: "2026-07-22", caseNumber: "（2026）京0000民初00001号", successImage: IMG(1) }),
@@ -56,12 +56,13 @@ test("导出 20 列合并表：布局/样式/日期格式/图片锚点", async (
     enforcementCases: [
       rec({ status: "强执成功", filedTime: "2026-06-03", caseNumber: "（2026）京0000执00001号", successImage: IMG(3) }),
     ],
+    salesperson: "测试业务员甲",
   });
   const { dir, file } = await writeToTemp(wb);
   try {
     const info = verify(file, [
       "A1", "E1", "G1", "E2", "F2", "G2", "I3", "J3",
-      "L1", "M1", "T1", "M2", "N2", "O2", "L2",
+      "L1", "M1", "T1", "U1", "M2", "N2", "O2", "L2", "U2", "U3",
     ]);
     // 单表头布局：同一账号与当事人的立案、强执结果合并到同一行。
     assert.deepEqual(info.sheets, ["Sheet1"]);
@@ -71,6 +72,7 @@ test("导出 20 列合并表：布局/样式/日期格式/图片锚点", async (
     assert.equal(info.cells.L1, "立案查询时间");
     assert.equal(info.cells.M1, "强执状态");
     assert.equal(info.cells.T1, "强执查询时间");
+    assert.equal(info.cells.U1, "业务员");
     // 数据值
     assert.equal(info.cells.E2, "立案成功");
     assert.equal(info.cells.F2, "2026-07-22");
@@ -81,6 +83,8 @@ test("导出 20 列合并表：布局/样式/日期格式/图片锚点", async (
     assert.equal(info.cells.N2, "2026-06-03");
     assert.equal(info.cells.O2, "（2026）京0000执00001号");
     assert.equal(info.cells.L2, "2026-08-03");
+    assert.equal(info.cells.U2, "测试业务员甲");
+    assert.equal(info.cells.U3, "测试业务员甲");
     // 图片锚点：立案成功 H2、驳回 K3、强执成功 P2（0 基）
     assert.equal(info.image_count, 3);
     assert.deepEqual(info.anchors, [
@@ -137,6 +141,7 @@ test("样式复刻：表头加粗/填充/行高、数据行高（ExcelJS 读回�
   assert.equal(ws.getRow(2).height, 28);
   assert.equal(ws.getColumn("J").width, 39.63);
   assert.equal(ws.getColumn("Q").width, 12.87);
+  assert.equal(ws.getColumn("U").width, 13);
   assert.equal(ws.getCell("F2").numFmt, "mm-dd-yy");
 });
 
@@ -157,7 +162,7 @@ test("模板保真：保留十行空白表格、细边框、宋体、垂直居�
     assert.equal(ws.getCell("Q11").numFmt, "mm-dd-yy");
     assert.equal(ws.getCell("T11").numFmt, "mm-dd-yy");
 
-    for (const cell of ["A1", "A11", "R10"]) {
+    for (const cell of ["A1", "A11", "R10", "U11"]) {
       assert.equal(ws.getCell(cell).font.name, "宋体");
       assert.equal(ws.getCell(cell).alignment.vertical, "middle");
       assert.equal(ws.getCell(cell).border.left.style, "thin");

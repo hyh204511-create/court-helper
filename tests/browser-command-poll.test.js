@@ -109,6 +109,7 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
     type: "QUERY_ALL_EXPORT",
     platformAccountId: "00000000-0000-4000-8000-000000000311",
     clientBatchId: "00000000-0000-4000-8000-000000000211",
+    payload: { salesperson: "测试业务员甲" },
   };
   let batchReads = 0;
   const messages = [];
@@ -143,6 +144,7 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
     platformAccountId: command.platformAccountId,
     accountLabel: "测试账号标签",
     exportCredential: { account: "synthetic-account", password: "synthetic-password" },
+    salesperson: "测试业务员甲",
   }]);
 });
 

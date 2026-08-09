@@ -123,11 +123,16 @@ async function makeService(
 
 function commandInput(type, overrides = {}) {
   const queryCommand = type === 'QUERY_LI' || type === 'QUERY_QZ' || type === 'QUERY_ALL_EXPORT';
+  const payload = type === 'LOGIN'
+    ? {}
+    : type === 'QUERY_ALL_EXPORT'
+      ? { salesperson: '测试业务员甲' }
+      : { batchId: 'batch-safe-1', kind: 'li' };
   return {
     type,
     platformAccountId: ACCOUNT_ID,
     ...(queryCommand ? { importBatchId: IMPORT_BATCH_ID } : {}),
-    payload: type === 'LOGIN' ? {} : { batchId: 'batch-safe-1', kind: 'li' },
+    payload,
     requestedBy: ADMIN_ID,
     ...overrides,
   };
@@ -408,7 +413,11 @@ test('browser command service accepts all five command types with safe payloads'
     }));
     assert.equal(command.type, type);
     assert.equal(command.status, 'pending');
-    assert.deepEqual(command.payload, type === 'LOGIN' ? {} : { batchId: 'batch-safe-1', kind: 'li' });
+    assert.deepEqual(command.payload, type === 'LOGIN'
+      ? {}
+      : type === 'QUERY_ALL_EXPORT'
+        ? { salesperson: '测试业务员甲' }
+        : { batchId: 'batch-safe-1', kind: 'li' });
     assert.equal(command.clientBatchId, type === 'QUERY_LI' || type === 'QUERY_QZ' || type === 'QUERY_ALL_EXPORT'
       ? IMPORT_BATCH_ID
       : null);
@@ -421,6 +430,20 @@ test('browser command service requires a platform account for report exports', a
     service.create(commandInput('EXPORT_REPORT', { platformAccountId: null })),
     (error) => error?.code === 'VALIDATION_ERROR' && error?.statusCode === 400,
   );
+});
+
+test('QUERY_ALL_EXPORT requires a trimmed salesperson of at most 100 characters', async () => {
+  const { service } = await makeService();
+  for (const salesperson of ['', '   ', '业'.repeat(101)]) {
+    await assert.rejects(
+      service.create(commandInput('QUERY_ALL_EXPORT', { payload: { salesperson } })),
+      (error) => error?.code === 'VALIDATION_ERROR' && error?.statusCode === 400,
+    );
+  }
+  const command = await service.create(commandInput('QUERY_ALL_EXPORT', {
+    payload: { salesperson: '  测试业务员甲  ' },
+  }));
+  assert.deepEqual(command.payload, { salesperson: '测试业务员甲' });
 });
 
 test('browser query commands bind only an existing, unexpired import batch', async () => {
@@ -812,10 +835,12 @@ test('QUERY_ALL_EXPORT requires one empty batch and persists it for the single c
       type: 'QUERY_ALL_EXPORT',
       platformAccountId: ACCOUNT_ID,
       importBatchId: IMPORT_BATCH_ID,
+      payload: { salesperson: '  测试业务员甲  ' },
     });
     assert.equal(created.statusCode, 201);
     assert.equal(created.json().command.type, 'QUERY_ALL_EXPORT');
     assert.equal(created.json().command.clientBatchId, IMPORT_BATCH_ID);
+    assert.deepEqual(created.json().command.payload, { salesperson: '测试业务员甲' });
   } finally {
     await app.close();
   }
@@ -965,6 +990,7 @@ test('browser command delete route physically removes terminal rows and rejects 
       type: 'QUERY_ALL_EXPORT',
       platformAccountId: randomUUID(),
       importBatchId: IMPORT_BATCH_ID,
+      payload: { salesperson: '测试业务员乙' },
     });
     const activeId = userCommand.json().command.id;
     const forbidden = await app.inject({

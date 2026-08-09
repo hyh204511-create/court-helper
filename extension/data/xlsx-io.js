@@ -1,6 +1,6 @@
 // xlsx-io.js — Excel 导出核心（ExcelJS）
 // 依据 docs/specs/excel-module.md：
-// - 新版 20 列合并表头（新导出唯一权威）；
+// - 新版 21 列合并表头（新导出唯一权威）；
 // - 样式复刻：表头加粗 11 + FF92D050 填充 + 行高 27；数据行高 28；列宽表；日期 mm-dd-yy；
 // - UNKNOWN 状态：单元格留空 + 浅红填充 + 深红字体（待人工提示）；
 // - 图片 OneCellAnchor 锚定 H/K/P/S 列单元格。
@@ -18,7 +18,7 @@ export const HEADER_QZ = [
 export const HEADER_COMBINED = [
   ...HEADER_LI.slice(0, 11), "立案查询时间",
   "强执状态", "强执成功时间", "强执案号", "成功图片",
-  "驳回时间", "驳回原因", "驳回图片", "强执查询时间",
+  "驳回时间", "驳回原因", "驳回图片", "强执查询时间", "业务员",
 ];
 
 export const STYLE = {
@@ -45,7 +45,7 @@ export const STYLE = {
   colWidths: {
     A: 15, B: 14, C: 20.37, D: 15.5, F: 13.25,
     G: 24.13, H: 12.87, I: 12.87, J: 39.63, K: 18, L: 10.75,
-    N: 12.13, Q: 12.87, T: 12.78,
+    N: 12.13, Q: 12.87, T: 12.78, U: 13,
   },
   dateFormat: "mm-dd-yy",
   unknown: {
@@ -139,7 +139,7 @@ function combinedRows(cases, enforcementCases) {
   return rows;
 }
 
-function writeCombinedRow(ws, row, pair, imageJobs, exportCredential = null) {
+function writeCombinedRow(ws, row, pair, imageJobs, exportCredential = null, salesperson = "") {
   formatDataRow(ws, row);
   const identity = pair.li ?? pair.qz ?? {};
   ws.getCell(row, 1).value = identity.plaintiff ?? "";
@@ -152,14 +152,17 @@ function writeCombinedRow(ws, row, pair, imageJobs, exportCredential = null) {
   writeResult(ws, row, pair.qz, 13, imageJobs, {
     success: STYLE.image.qzSuccess, reject: STYLE.image.qzReject,
   });
+  ws.getCell(row, 21).value = salesperson;
 }
 
 /**
- * 构建完整导出工作簿（20 列合并布局 + 样式复刻 + 图片嵌入）。
+ * 构建完整导出工作簿（21 列合并布局 + 样式复刻 + 图片嵌入）。
  * @param {{cases?: object[], enforcementCases?: object[]}} [data] db 记录（含 Blob 图片）
  * @returns {Promise<ExcelJS.Workbook>}
  */
-export async function buildExportWorkbook({ cases = [], enforcementCases = [], exportCredential = null } = {}) {
+export async function buildExportWorkbook({
+  cases = [], enforcementCases = [], exportCredential = null, salesperson = "",
+} = {}) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Sheet1");
   for (const [letter, width] of Object.entries(STYLE.colWidths)) {
@@ -170,7 +173,7 @@ export async function buildExportWorkbook({ cases = [], enforcementCases = [], e
   const imageJobs = [];
   let row = 2;
   for (const pair of combinedRows(cases, enforcementCases)) {
-    writeCombinedRow(ws, row, pair, imageJobs, exportCredential);
+    writeCombinedRow(ws, row, pair, imageJobs, exportCredential, salesperson);
     row += 1;
   }
   const reservedEnd = Math.max(row - 1, 11);

@@ -164,7 +164,19 @@ function safePayload(value: unknown, type: BrowserCommandType): BrowserCommandJs
   if (Buffer.byteLength(serialized, 'utf8') > BROWSER_COMMAND_PAYLOAD_BYTES_LIMIT) {
     throw new ValidationError([{ field: 'payload', code: 'maximum_exceeded' }]);
   }
-  return cloneJsonObject(value);
+  const payload = cloneJsonObject(value);
+  if (type !== 'QUERY_ALL_EXPORT') return payload;
+  if (Object.keys(payload).length !== 1 || typeof payload.salesperson !== 'string') {
+    throw new ValidationError([{ field: 'payload.salesperson', code: 'required' }]);
+  }
+  const salesperson = payload.salesperson.trim();
+  if (salesperson === '') {
+    throw new ValidationError([{ field: 'payload.salesperson', code: 'required' }]);
+  }
+  if (salesperson.length > 100) {
+    throw new ValidationError([{ field: 'payload.salesperson', code: 'maximum_exceeded' }]);
+  }
+  return { salesperson };
 }
 
 function normalizeCreate(input: BrowserCommandCreateInput): NormalizedBrowserCommandCreate {

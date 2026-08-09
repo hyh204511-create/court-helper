@@ -27,7 +27,7 @@ import {
 export const MAX_IMPORT_BATCH_BYTES = 20 * 1024 * 1024;
 export const MAX_IMPORT_BATCH_WORKSHEETS = 2;
 export const MAX_IMPORT_BATCH_ROWS = 5_000;
-export const MAX_IMPORT_BATCH_COLUMNS = 20;
+export const MAX_IMPORT_BATCH_COLUMNS = 21;
 export const IMPORT_BATCH_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const XLSX_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
@@ -40,6 +40,7 @@ const COMBINED_HEADERS = [
   '强执状态', '强执成功时间', '强执案号', '成功图片',
   '驳回时间', '驳回原因', '驳回图片', '强执查询时间',
 ] as const;
+const COMBINED_SALESPERSON_HEADER = '业务员';
 
 export interface ImportBatchUploadInput {
   fileName: string;
@@ -184,7 +185,12 @@ function hasLiHeader(sheet: ExcelJS.Worksheet): boolean {
 }
 
 function hasCombinedHeader(sheet: ExcelJS.Worksheet): boolean {
-  return COMBINED_HEADERS.every((header, index) => cellText(sheet.getCell(1, index + 1).value) === header);
+  if (!COMBINED_HEADERS.every((header, index) => cellText(sheet.getCell(1, index + 1).value) === header)) {
+    return false;
+  }
+  return sheet.columnCount === COMBINED_HEADERS.length
+    || (sheet.columnCount === COMBINED_HEADERS.length + 1
+      && cellText(sheet.getCell(1, COMBINED_HEADERS.length + 1).value) === COMBINED_SALESPERSON_HEADER);
 }
 
 function enforcementHeaderRow(sheet: ExcelJS.Worksheet): number | null {

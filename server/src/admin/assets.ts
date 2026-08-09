@@ -137,6 +137,7 @@ button:disabled { cursor: not-allowed; opacity: .48; box-shadow: none; }
 .panel-body > h4:first-of-type { margin-top: 14px; }
 
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.browser-command-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .field { display: grid; gap: 7px; }
 .field label { color: #425466; font-size: 13px; font-weight: 600; }
 .field input, .field select { width: 100%; min-height: 44px; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); background: var(--paper-bright); transition: border-color .18s ease, box-shadow .18s ease; }
@@ -235,6 +236,7 @@ button:disabled { cursor: not-allowed; opacity: .48; box-shadow: none; }
   .sidebar-scrim[hidden] { display: none; }
   body.sidebar-open .sidebar-scrim { opacity: 1; }
   .content { margin-left: 0; padding: 18px 24px 48px; }
+  .browser-command-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .topbar { justify-content: space-between; }
   .nav-toggle { display: inline-flex; }
   .sidebar-foot { position: relative; right: auto; bottom: auto; left: auto; margin: 38px 8px 0; }
@@ -361,10 +363,10 @@ function errorMessage(error) {
     if (error.code === 'DUPLICATE_PENDING') return '已有进行中的统一登录任务，请前往浏览器控制查看';
     if (error.code === 'TEMPLATE_NOT_EMPTY') return '当前查询表块必须为空，请上传仅含表头的模板';
     const detailCode = error.details[0]?.code;
-    if (detailCode === 'template_limit_exceeded') return '模板超过限制：最多 5,000 行、20 列';
-    if (detailCode === 'template_mismatch') return '模板不匹配，请使用新版 20 列立案与强执查询表';
+    if (detailCode === 'template_limit_exceeded') return '模板超过限制：最多 5,000 行、21 列';
+    if (detailCode === 'template_mismatch') return '模板不匹配，请使用新版 21 列立案与强执查询表';
     if (detailCode === 'sheet_required') return '模板缺少 Sheet1 工作表';
-    if (detailCode === 'enforcement_header_required') return '旧版模板缺少强执表头，请改用新版 20 列模板';
+    if (detailCode === 'enforcement_header_required') return '旧版模板缺少强执表头，请改用新版 21 列模板';
     if (detailCode === 'mime_mismatch' || detailCode === 'magic_not_allowed') return '文件不是有效的 xlsx 模板';
     if (error.requestId) return '请求失败，请提供请求编号 ' + error.requestId;
   }
@@ -1319,6 +1321,7 @@ function initBrowserControl() {
   const accountToggle = $('#browser-command-account-toggle');
   const accountMenu = $('#browser-command-account-menu');
   const batch = $('#browser-command-batch');
+  const salesperson = $('#browser-command-salesperson');
   const accountSearchForm = $('#browser-account-search-form');
   const accountSearch = $('#browser-account-search');
   let credentialRequestGeneration = 0;
@@ -1372,13 +1375,17 @@ function initBrowserControl() {
   });
   account.required = true;
   batch.required = true;
+  salesperson.required = true;
   commandForm?.addEventListener('submit', async (event) => {
-    event.preventDefault(); const selected = selectedEnabledBrowserAccount(account.value); const platformAccountId = selected?.id || null; const importBatchId = batch.value || null;
+    event.preventDefault(); const selected = selectedEnabledBrowserAccount(account.value); const platformAccountId = selected?.id || null; const importBatchId = batch.value || null; const salespersonName = salesperson.value.trim();
     if (!selected) { setMessage($('[data-browser-command-message]'), '请从启用平台账号标签提示中选择'); return; }
     if (!importBatchId) { setMessage($('[data-browser-command-message]'), '一键任务必须选择空白导入批次'); return; }
+    if (!salespersonName) { setMessage($('[data-browser-command-message]'), '请输入业务员'); return; }
+    if (salespersonName.length > 100) { setMessage($('[data-browser-command-message]'), '业务员最多 100 个字符'); return; }
     account.value = selected.label || '';
+    salesperson.value = salespersonName;
     setFormBusy(commandForm, true);
-    try { await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: 'QUERY_ALL_EXPORT', platformAccountId, importBatchId }) }); setMessage($('[data-browser-command-message]'), '一键查询导出任务已创建', 'success'); await loadBrowserCommands(); }
+    try { await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: 'QUERY_ALL_EXPORT', platformAccountId, importBatchId, payload: { salesperson: salespersonName } }) }); setMessage($('[data-browser-command-message]'), '一键查询导出任务已创建', 'success'); await loadBrowserCommands(); }
     catch (error) { setMessage($('[data-browser-command-message]'), errorMessage(error)); } finally { setFormBusy(commandForm, false); }
   });
   importForm?.addEventListener('submit', async (event) => {

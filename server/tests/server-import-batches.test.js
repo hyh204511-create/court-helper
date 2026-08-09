@@ -34,6 +34,7 @@ const COMBINED_HEADERS = [
   '强执状态', '强执成功时间', '强执案号', '成功图片',
   '驳回时间', '驳回原因', '驳回图片', '强执查询时间',
 ];
+const COMBINED_HEADERS_21 = [...COMBINED_HEADERS, '业务员'];
 const FIXTURE_ACCOUNT = 'fixture-account';
 const FIXTURE_PASSWORD = 'fixture-password';
 
@@ -318,17 +319,17 @@ test('admin_ui Cookie upload creates a safe global import batch and any signed-i
   }
 });
 
-test('combined 20-column templates upload with independent layout validation and safe summaries', async () => {
+test('combined 21-column templates accept salesperson header and retain 20-column upload compatibility', async () => {
   const { app } = await makeApp();
   try {
     const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
-    const blank = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer()));
+    const blank = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer({ headers: COMBINED_HEADERS_21 })));
     assert.equal(blank.statusCode, 201);
     assert.equal(blank.json().liRows, 0);
     assert.equal(blank.json().qzRows, 0);
     assert.equal(blank.json().skippedRows, 0);
 
-    const populated = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer({ withRows: true })));
+    const populated = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer({ headers: COMBINED_HEADERS_21, withRows: true })));
     assert.equal(populated.statusCode, 201);
     assert.equal(populated.json().liRows, 1);
     assert.equal(populated.json().qzRows, 1);
@@ -336,8 +337,11 @@ test('combined 20-column templates upload with independent layout validation and
     assert.equal(populated.body.includes(FIXTURE_ACCOUNT), false);
     assert.equal(populated.body.includes(FIXTURE_PASSWORD), false);
 
-    const invalidHeader = [...COMBINED_HEADERS];
-    invalidHeader[19] = '自定义扩展列';
+    const legacy = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer()));
+    assert.equal(legacy.statusCode, 201);
+
+    const invalidHeader = [...COMBINED_HEADERS_21];
+    invalidHeader[20] = '自定义扩展列';
     const invalid = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer({ headers: invalidHeader })));
     assert.equal(invalid.statusCode, 400);
     assert.equal(errorDetailCode(invalid), 'template_mismatch');
@@ -519,7 +523,7 @@ test('import batch upload rejects multipart, MIME, magic, template, and dimensio
     assert.equal(tooManyRows.statusCode, 400);
     assert.equal(errorDetailCode(tooManyRows), 'template_limit_exceeded');
 
-    const tooManyColumns = await upload(app, admin, uploadPayload(await workbookBuffer({ columnCount: 21 })));
+    const tooManyColumns = await upload(app, admin, uploadPayload(await workbookBuffer({ columnCount: 22 })));
     assert.equal(tooManyColumns.statusCode, 400);
     assert.equal(errorDetailCode(tooManyColumns), 'template_limit_exceeded');
 

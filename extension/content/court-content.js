@@ -307,7 +307,9 @@ async function handlePanelImport(file) {
 }
 
 /** 面板导出：只导出当前平台账号绑定的 IndexedDB 记录。 */
-function handlePanelExport({ platformAccountId = null, accountLabel = "", exportCredential = null } = {}) {
+function handlePanelExport({
+  platformAccountId = null, accountLabel = "", exportCredential = null, salesperson = "",
+} = {}) {
   if (_exportInFlight) return _exportInFlight;
   const current = (async () => {
     ensureListReady();
@@ -321,7 +323,7 @@ function handlePanelExport({ platformAccountId = null, accountLabel = "", export
     const cases = await db.query(db.STORE_CASES, filter);
     const enforcementCases = await db.query(db.STORE_ENFORCEMENT, filter);
     if (cases.length + enforcementCases.length === 0) throw new Error("REPORT_EMPTY");
-    const wb = await buildExportWorkbook({ cases, enforcementCases, exportCredential });
+    const wb = await buildExportWorkbook({ cases, enforcementCases, exportCredential, salesperson });
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     const fileName = sanitizeReportFileName(accountLabel);
@@ -868,6 +870,7 @@ async function executeBrowserCommand(message) {
       platformAccountId: message.platformAccountId,
       accountLabel: message.accountLabel,
       exportCredential: message.exportCredential,
+      salesperson: message.salesperson,
     });
   }
   if (message.commandType === "QUERY_ALL_EXPORT") {
@@ -879,6 +882,7 @@ async function executeBrowserCommand(message) {
         platformAccountId: message.platformAccountId,
         accountLabel: message.accountLabel,
         exportCredential: message.exportCredential,
+        salesperson: message.salesperson,
       }),
     });
   }

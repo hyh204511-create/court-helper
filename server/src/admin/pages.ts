@@ -242,9 +242,10 @@ function browserControlPage(role: AdminRole): string {
       <div class="panel-head"><div><h3 id="browser-command-title">一键查询并导出</h3><p>依次查询立案和强执，全部采集完成后生成并上传报表；登录请使用上方独立入口。</p></div></div>
       <div class="panel-body">
         <form id="browser-command-form">
-          <div class="field-grid">
+          <div class="field-grid browser-command-fields">
             <div class="field"><label for="browser-command-account">平台账号（必选）</label><div class="account-picker" id="browser-command-account-picker"><input id="browser-command-account" type="search" autocomplete="off" placeholder="输入账号标签或关键词" role="combobox" aria-autocomplete="list" aria-controls="browser-command-account-menu" aria-expanded="false" required><button id="browser-command-account-toggle" class="account-picker-toggle" type="button" aria-label="展开平台账号列表" aria-controls="browser-command-account-menu" aria-expanded="false">▼</button><div id="browser-command-account-menu" class="account-picker-menu" role="listbox" hidden></div></div></div>
             <div class="field"><label for="browser-command-batch">空白导入批次（必选）</label><select id="browser-command-batch"><option value="">不选择</option></select></div>
+            <div class="field"><label for="browser-command-salesperson">业务员（必填）</label><input id="browser-command-salesperson" type="text" maxlength="100" autocomplete="off" placeholder="输入业务员姓名" required></div>
           </div>
           <div class="form-actions"><button class="primary" type="submit">一键查询并导出</button><button class="secondary" id="browser-command-refresh" type="button">立即刷新</button></div>
         </form><p class="message" data-browser-command-message aria-live="polite"></p>
@@ -252,7 +253,7 @@ function browserControlPage(role: AdminRole): string {
     </section>
     <section class="panel" aria-labelledby="import-batch-title">
       <div class="panel-head"><div><h3 id="import-batch-title">导入查询批次</h3><p>上传 xlsx 后选择批次绑定查询任务。服务端仅返回批次摘要。</p></div></div>
-      <div class="panel-body"><form id="import-batch-form" enctype="multipart/form-data"><div class="field"><label for="import-batch-file">Excel 模板（新版 20 列）</label><input id="import-batch-file" name="file" type="file" accept=".xlsx" required></div><div class="form-actions"><button class="primary" type="submit">上传批次</button></div></form><p class="message" data-import-batch-message aria-live="polite"></p><div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>立案行</th><th>强执行</th><th>跳过</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="import-batch-rows"></tbody></table></div></div>
+      <div class="panel-body"><form id="import-batch-form" enctype="multipart/form-data"><div class="field"><label for="import-batch-file">Excel 模板（新版 21 列）</label><input id="import-batch-file" name="file" type="file" accept=".xlsx" required></div><div class="form-actions"><button class="primary" type="submit">上传批次</button></div></form><p class="message" data-import-batch-message aria-live="polite"></p><div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>立案行</th><th>强执行</th><th>跳过</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="import-batch-rows"></tbody></table></div></div>
     </section>
     <section class="panel" aria-labelledby="browser-account-search-title">
       <div class="panel-head"><div><h3 id="browser-account-search-title">账号查询与案件状态</h3><p>按平台账号标签搜索定位，可再按原告、被告或案号关键词筛选；关键词只在本次页面内存中使用，案件状态来自台账精确结果。</p></div></div>
