@@ -1,6 +1,7 @@
 # 规格：server-module（服务器核心与插件同步）
 
-> 版本：0.1 ｜ 状态：已确认、待实现 ｜ 依据：2026-08-04 已确认服务器决策（覆盖实施计划 §6，ponytail 轻便模式）
+> 版本：0.2 ｜ 状态：已确认、待实现 ｜ 依据：2026-08-04 已确认服务器决策（覆盖实施计划 §6，ponytail 轻便模式）
+> v0.2 变更：案件同步边界必须移除平台/API 文本中的 Unicode `NUL`（U+0000），避免 PostgreSQL `22021` 导致整批 500；正常中文、空格、制表与换行保持不变。
 
 ## 1. 目标与运行形态
 
@@ -74,6 +75,7 @@ needsHuman, errorCode, sourceUpdatedAt
 
 - `clientUid` 沿用 `db.js` 的唯一键语义；服务器不得重新猜测合并键。
 - `batch-runner.js` 的 `filedDate` 在同步边界明确映射为 `filedTime`，IndexedDB 数字型 `updatedAt` 转为 ISO 8601 `sourceUpdatedAt`；`image` 不进 JSON，由状态映射到独立截图类型后上传。
+- `plaintiff / defendant / caseNumber / rejectReason / errorCode` 是可能来自平台或采集链路的数据库文本；路由解析时统一移除 U+0000 后再进入幂等比较和写库。不得因单个不可存储空字符返回 `INTERNAL_ERROR`，也不得删除正常中文、空格、制表或换行。`eventId / clientUid / platformAccountId` 等标识符仍严格校验，不做静默改写。
 - 带本地 `blobRef` 的 outbox 事件只有在案件同步响应 `accepted[]` 返回对应服务器案件 `id` 后，才读取 IndexedDB 中指定的 `successImage` / `rejectImage` Blob，计算 SHA-256 并调用 `uploadScreenshot`。类型固定映射：立案成功=`success`、强执成功=`enforcement_success`、驳回=`reject`；截图上传成功后事件才可标记 sent。上传失败必须保留事件供既有有界重试/人工接管，不得把案件 ACK 误当作截图 ACK。
 - 只接受规格枚举；未知平台文本必须由插件上传为 `UNKNOWN + needsHuman=true`。原始异常只归一为稳定 `errorCode`，不上传可能含业务明文的错误栈。
 - `kind=li` 不接受 `强执成功`，`kind=qz` 不接受 `立案成功`；状态与类型不一致按逐项校验错误拒收，服务器不自动改写。
@@ -125,7 +127,7 @@ needsHuman, errorCode, sourceUpdatedAt
 2. Compose 单实例经 TLS 可启动（内置 PostgreSQL + 本地磁盘存储，开箱即用，不依赖客户任何基础设施）；依赖故障时 `/health` 返回 503，插件暂停并提示重试。
 3. 认证覆盖登录/登出、禁用、重置撤销会话、最后一个 admin 保护；所有越权 API 返回 403，不能只靠页面隐藏。
 4. AES-GCM 随机 IV、AAD、防篡改失败、密钥缺失启动失败均有测试；日志及普通 API 自动扫描不出现测试凭据。
-5. 同一同步事件重复提交不重复写；旧版本不覆盖新版本；50 条边界、字段映射、UNKNOWN、截图幂等和轮询游标测试通过。
+5. 同一同步事件重复提交不重复写；旧版本不覆盖新版本；50 条边界、字段映射、UNKNOWN、U+0000 文本净化、截图幂等和轮询游标测试通过。
 6. 私有桶不能匿名读，未登录不能上传/读取；user 管理系统用户或平台账号必须返回 403；授权截图经服务端流式查看和下载，响应不得暴露对象键。
 7. 用脱敏数据验证 30 天边界、对象先删、失败重试、过期数据拒收；迁移只覆盖近 30 天且可按批回退本地读取。
 8. 报表导出：上传幂等（同 sha256 不重复写）、越权（user 看他人/下载/删除 403）、下载流式与 SHA256 头、30 天清理均按 report-export-module 测试通过。
