@@ -181,10 +181,13 @@ export async function buildExportWorkbook({
     formatDataRow(ws, reservedRow);
   }
 
-  for (const job of imageJobs) {
-    const buffer = new Uint8Array(await job.blob.arrayBuffer());
-    const extension = (job.blob.type || "").includes("png") ? "png" : "jpeg";
-    const imageId = wb.addImage({ buffer, extension });
+  const preparedImages = await Promise.all(imageJobs.map(async (job) => ({
+    ...job,
+    buffer: new Uint8Array(await job.blob.arrayBuffer()),
+    extension: (job.blob.type || "").includes("png") ? "png" : "jpeg",
+  })));
+  for (const job of preparedImages) {
+    const imageId = wb.addImage({ buffer: job.buffer, extension: job.extension });
     ws.addImage(imageId, {
       tl: { col: job.col, row: job.row },
       ext: { width: job.width, height: STYLE.image.height },

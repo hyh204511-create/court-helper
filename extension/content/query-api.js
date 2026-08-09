@@ -211,6 +211,22 @@ function myCaseResponseTotal(data) {
 }
 
 /** Fetch the documented 我的立案列表/count pair page by page. */
+export function memoizeAsync(fn, keyOf = (...args) => JSON.stringify(args)) {
+  const cache = new Map();
+  return async (...args) => {
+    const key = keyOf(...args);
+    if (cache.has(key)) return cache.get(key);
+    const pending = Promise.resolve().then(() => fn(...args));
+    cache.set(key, pending);
+    try {
+      return await pending;
+    } catch (error) {
+      cache.delete(key);
+      throw error;
+    }
+  };
+}
+
 export async function fetchLayyDataset({ params = {}, limit = 50, fetchImpl } = {}) {
   const query = new URLSearchParams({ ...params, ajlb: params.ajlb ?? "sp", limit: String(limit) });
   const countResult = await fetchStructuredJson(`/yzw/yzw-zxfw-lafw/api/v3/layy/count?${query}`, { fetchImpl });
@@ -218,6 +234,7 @@ export async function fetchLayyDataset({ params = {}, limit = 50, fetchImpl } = 
   const total = responseTotal(countResult.data);
   if (!Number.isInteger(total) || total < 0) return MANUAL("PAGINATION_INVALID");
   if (total > 50) return MANUAL("BATCH_LIMIT_EXCEEDED");
+  if (total === 0) return { ok: true, total: 0, rows: [], pages: [] };
   const pages = [];
   const pageCount = Math.max(1, Math.ceil(total / limit));
   for (let page = 1; page <= pageCount; page += 1) {

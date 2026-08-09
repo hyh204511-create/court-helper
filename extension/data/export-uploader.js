@@ -65,19 +65,26 @@ export async function exportWorkbookToServer({
     if (blob == null && buffer == null) {
       throw Object.assign(new TypeError("export buffer required"), { code: "EXPORT_BUFFER_REQUIRED" });
     }
-    const payload = blob ?? new Blob([buffer], { type: XLSX_MIME });
-    const data = await bytesOf(payload);
-    const mime = payload?.type || XLSX_MIME;
+    const data = await bytesOf(buffer ?? blob);
+    const mime = blob?.type || XLSX_MIME;
     const subtle = cryptoImpl?.subtle ?? cryptoImpl;
     if (typeof subtle?.digest !== "function") {
       throw Object.assign(new Error("crypto unavailable"), { code: "CRYPTO_UNAVAILABLE" });
     }
-    const digest = await subtle.digest("SHA-256", data);
+    const digestPromise = subtle.digest("SHA-256", data);
+    let base64;
+    try {
+      base64 = toBase64(data, btoaImpl);
+    } catch (error) {
+      await Promise.resolve(digestPromise).catch(() => undefined);
+      throw error;
+    }
+    const digest = await digestPromise;
     const response = await chromeApi?.runtime?.sendMessage?.({
       type: "EXPORT_UPLOAD",
       fileName: String(fileName || "report.xlsx"),
       sha256: toHex(digest),
-      base64: toBase64(data, btoaImpl),
+      base64,
       mime,
       platformAccountId: String(platformAccountId || ""),
     });

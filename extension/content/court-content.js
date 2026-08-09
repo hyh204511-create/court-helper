@@ -39,7 +39,7 @@ import {
   selectMyCaseApiEvidence,
   selectSourceApiRow,
 } from "../data/platform-evidence.js";
-import { createMainWorldFetch, fetchLayyPages, fetchMyCases, reconcileApiDomRows } from "./query-api.js";
+import { createMainWorldFetch, fetchLayyPages, fetchMyCases, memoizeAsync, reconcileApiDomRows } from "./query-api.js";
 import { isQueryControlsReady, runQueryAllExport, switchQueryCategory, waitForListQuiet } from "./query-all-export.js";
 import * as db from "../data/db.js";
 import { sanitizeReportFileName } from "../data/report-file-name.js";
@@ -323,8 +323,10 @@ function handlePanelExport({
       throw new Error("ACCOUNT_MISMATCH");
     }
     const filter = { account, platformAccountId };
-    const cases = await db.query(db.STORE_CASES, filter);
-    const enforcementCases = await db.query(db.STORE_ENFORCEMENT, filter);
+    const [cases, enforcementCases] = await Promise.all([
+      db.query(db.STORE_CASES, filter),
+      db.query(db.STORE_ENFORCEMENT, filter),
+    ]);
     if (cases.length + enforcementCases.length === 0) throw new Error("REPORT_EMPTY");
     const wb = await buildExportWorkbook({ cases, enforcementCases, exportCredential, salesperson });
     const buf = await wb.xlsx.writeBuffer();
@@ -336,7 +338,7 @@ function handlePanelExport({
     a.download = fileName;
     a.click();
     URL.revokeObjectURL(objectUrl);
-    const result = await exportWorkbookToServer({ blob, fileName, platformAccountId, chromeApi: chrome });
+    const result = await exportWorkbookToServer({ buffer: buf, fileName, platformAccountId, chromeApi: chrome });
     showToast(exportUploadMessage(result), 6000);
     return result;
   })();
@@ -724,16 +726,23 @@ async function completeMyCaseEvidenceFromApi({ kind = "li", account, platformAcc
   let completed = 0;
   let needsHuman = 0;
   let firstError = null;
-  for (const record of candidates) {
+  const fetchEvidence = memoizeAsync(
+    async ({ body }) => {
+      const result = await fetchMyCases({ fetchImpl, pageSize: 50, body });
+      if (!result.ok) throw result;
+      return result;
+    },
+    ({ body }) => JSON.stringify({ kind, body }),
+  );
+  for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+    const record = candidates[candidateIndex];
     const sourceSelection = selectSourceApiRow(record, sourceApiRows);
     const sourceApiRow = sourceSelection.ok ? sourceSelection.row : null;
     let selection = sourceSelection.ok
       ? { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" }
       : sourceSelection;
     if (sourceApiRow && record.plaintiff) {
-      const result = await fetchMyCases({
-        fetchImpl,
-        pageSize: 50,
+      const result = await fetchEvidence({
         body: {
           ajlb: kind === "qz" ? EXECUTION_CASE_CATEGORIES : CIVIL_CASE_CATEGORIES,
           searchtext: record.plaintiff,
@@ -741,7 +750,7 @@ async function completeMyCaseEvidenceFromApi({ kind = "li", account, platformAcc
           sfid: "",
           sort: "",
         },
-      });
+      }).catch((error) => error?.ok === false ? error : { ok: false, code: "MYCASE_EVIDENCE_UNAVAILABLE" });
       selection = result.ok
         ? selectMyCaseApiEvidence({ kind, record, sourceApiRow, rows: result.rows })
         : { ok: false, error: result.code ?? "MYCASE_EVIDENCE_UNAVAILABLE" };
@@ -752,7 +761,7 @@ async function completeMyCaseEvidenceFromApi({ kind = "li", account, platformAcc
       needsHuman += 1;
       firstError = preferEvidenceError(firstError, evidenceFailureCode({ selection, updated }));
     }
-    await delayWithPause();
+    if (candidateIndex + 1 < candidates.length) await delayWithPause();
   }
   return { total: candidates.length, completed, needsHuman, error: firstError };
 }

@@ -127,7 +127,8 @@ export async function runBatch({ cases = [], pageOps, onUpdate, timing = {}, per
     ? { db: defaultDb, outbox: defaultOutbox }
     : null);
 
-  for (const c of queue) {
+  for (let caseIndex = 0; caseIndex < queue.length; caseIndex += 1) {
+    const c = queue[caseIndex];
     let raw = null;
     let partialRaw = null;
     let error = null;
@@ -206,7 +207,7 @@ export async function runBatch({ cases = [], pageOps, onUpdate, timing = {}, per
 
     if (syncPersistence) await persistSyncRecord(record, syncPersistence);
     await onUpdate?.(record);
-    await delay();
+    if (caseIndex + 1 < queue.length) await delay();
   }
 
   return stats;
