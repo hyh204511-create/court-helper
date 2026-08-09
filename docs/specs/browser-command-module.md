@@ -1,11 +1,12 @@
 # 规格：browser-command-module（后台唯一业务入口与扩展执行代理）
 
-> 版本：0.6 ｜ 状态：已确认、待实现 ｜ 依据：用户明确要求“popup 全部功能转到后台并移除”；Phase 11 控制台唯一入口决策；现有 login-command-bridge、server-module、app-module、panel-module、report-export-module
+> 版本：0.7 ｜ 状态：已确认、待实现 ｜ 依据：用户明确要求“popup 全部功能转到后台并移除”；Phase 11 控制台唯一入口决策；现有 login-command-bridge、server-module、app-module、panel-module、report-export-module
 > v0.2 变更：固定 `/admin/browser-control` 为唯一业务入口；拆分控制台“一键登录”与通用任务区；补充完整名称/凭据查看权限；定义扩展 action 与独立 Options/Setup 路由；要求删除 Popup 源码、产物和测试。
 > v0.3 变更：补充已授权 MV3 Service Worker 冷启动时的命令轮询恢复契约，避免后台命令在扩展重载或 Worker 回收后无限停留 `pending`。
 > v0.4 变更：真实验收确认 MV3 Worker 回收会丢失仅内存的登录绑定。`EXPORT_REPORT` 因此必须绑定控制台显式选择的非敏感 `platformAccountId`，以便冷启动后仍可按同一账号隔离导出；不持久化平台账号明文、密码或任何业务行。
 > v0.5 变更：`LOGIN` 命令在用户已打开的法院标签正跳转到精确登录路由、或新 content script 尚未就绪时，必须在同一已领取命令内有界等待并重连；不得因该瞬态竞态提前回写终态。
 > v0.6 变更：新增 `QUERY_ALL_EXPORT` 单一持久化命令，在真实网上立案页内依次切换审判/执行分类、完成两类查询，再生成、下载并上传报表；控制台不再分别创建三种任务。
+> v0.7 变更：导出阶段按绑定账号 UUID 临时取得账号标签与真实凭据，校验页面账号后生成账号命名报表；凭据仍不进入持久命令或回执。
 
 ## 1. 目标与最终职责
 
@@ -76,6 +77,9 @@
 **查询执行租约**：`QUERY_LI` / `QUERY_QZ` 的单次 claim 固定 20 分钟，无心跳续租。该期限覆盖单批最多 50 条、每案 3–8 秒的采集、结构化分页补证及回写余量。租约到期前未回写的命令由服务端标记为 `expired`，不得用新 claim 或无限重试掩盖。
 
 ### `EXPORT_REPORT`
+
+- `EXPORT_REPORT` 与 `QUERY_ALL_EXPORT` 进入导出阶段前，SW 必须按 `platformAccountId` 从扩展专用出口临时读取 `{label,account,password}`；只向本次受信 content 消息传递，执行结束即释放。任何命令 payload、持久 storage、任务结果、进度、错误摘要和日志均不得包含这些明文。
+- content 必须精确校验页面顶栏账号等于凭据账号，随后用凭据统一覆盖工作簿 C/D 列，并以净化后的标签命名文件；校验或取凭据失败不得下载、上传或回写伪成功。
 
 - 控制台创建导出任务时必须显式选择平台账号；服务端将其不透明 UUID 写入既有 `browser_commands.platform_account_id`。该 UUID 不是账号明文或凭据，禁止写入 payload、扩展 storage、日志或任务摘要。
 - Service Worker 以命令携带的 `platformAccountId` 执行导出，不依赖本运行期内存中的最近登录绑定；因此 Worker 冷启动、回收或扩展重载后仍可恢复已配对设备的导出任务。
