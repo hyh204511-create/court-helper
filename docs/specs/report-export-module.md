@@ -6,6 +6,7 @@
 > v0.5 变更：新生成报表统一使用 20 列合并模板；旧 12 列双区块仅保留读取兼容。
 > v0.6 变更：报表使用账号标签命名，C/D 列由绑定账号的服务端真实凭据瞬时注入；导出记录绑定 `platformAccountId`，后台按账号筛选并跳转案件台账。
 > v0.7 变更：控制台自定义业务员随 `QUERY_ALL_EXPORT` 命令传递，新生成报表改为 21 列并在 U 列逐行写入业务员。
+> v0.8 变更：一键任务以同运行期成功 `LOGIN` 的不透明账号绑定作为身份依据；绑定缺失在采集前失败。绑定已确认后不再比较法院顶栏显示身份与登录用户名的字符串值，避免姓名/昵称与登录账号不同导致采集完成后误报。
 
 ## 1. 目标与边界
 
@@ -91,7 +92,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_account_uidx
 - 统一命令回写必须保留上传结果：`uploaded` → `succeeded/SUCCESS`；`not_configured` → `manual_required/NOT_CONFIGURED`；`failed` → `manual_required/<稳定上传错误码>`。后两者的安全摘要明确“本地文件已保存”，不得伪装成 `SUCCESS`，也不得触发自动重试。
 - **二进制交接用 base64**：Chromium 扩展消息为 JSON 序列化（官方 messaging 文档），Blob/ArrayBuffer 不保真；content 执行器把 xlsx 字节转 base64 字符串随消息发送，SW 侧 `atob` 解码为 Uint8Array 再构造 Blob 上传。base64 膨胀约 33%，单文件受服务器 20 MiB 上限约束（超出由服务器 413 拒绝）。测试必须模拟浏览器 JSON 序列化往返（`JSON.parse(JSON.stringify(message))`）。
 - 导出执行保持 single-flight；同一法院标签页不得并发生成两份报表。状态和安全摘要通过统一 browser command 回写，浮动面板只作状态提示。
-- SW 只在执行导出时按命令绑定 UUID 读取一次真实凭据与账号标签，并瞬时下发给受信 content；content 校验页面账号后统一覆盖工作簿 C/D 列。凭据不得进入 IndexedDB、上传消息、报表元数据、命令结果或日志。
+- SW 只在同运行期 `LOGIN` UUID 与命令绑定 UUID 一致后，按该 UUID 读取一次真实凭据与账号标签，并瞬时下发给受信 content；`QUERY_ALL_EXPORT` 必须同时下发仅表示该绑定已匹配的布尔证明。证明成立时，content 以页面顶栏身份和 `platformAccountId` 查询本次采集记录，并用临时凭据统一覆盖工作簿 C/D 列，不再将顶栏显示身份与凭据 `account` 做字符串全等比较。证明缺失时不得读取凭据、进入采集或触发导出；凭据不得进入 IndexedDB、上传消息、报表元数据、命令结果或日志。
 - `QUERY_ALL_EXPORT` 的非敏感 `payload.salesperson` 只在命令执行链路中传给 content，并统一写入工作簿 U 列；上传接口与报表记录不另存业务员元数据。兼容 `EXPORT_REPORT` 未携带该值时 U 列留空。
 - 后台“导出成功”以服务端创建记录或幂等命中为准；仅本地下载、未配置或上传失败不显示为后台成功记录。
 - `QUERY_ALL_EXPORT` 只有在每一类都完成安全处理后才进入导出：某类有记录时必须通过结构/会话/账号/选择器/API-DOM 校验；某类没有记录时必须取得结构化 `total=0` 且当前 DOM 无该类行的确认空结果。只要至少一类产生可导出记录，即可生成仅含该类数据的报表；确认为空的另一类不阻断。任一无法确认空结果或其他硬失败不得读取旧数据生成混合报表。案件级 `UNKNOWN/needsHuman` 不属于硬失败，仍按既有样式导出并保留待人工提示。

@@ -92,7 +92,7 @@
    - 日期列：JS Date 写入 + numberFormat `mm-dd-yy`；
    - 强执驳回时间 Q 列必须显式设置宽度 `12.87`，与旧版驳回时间 I 列保持一致；日期值在默认显示比例下不得因列宽缺失而显示为 `########`；
    - 账号/密码列：由 Service Worker 按本次命令绑定的 `platformAccountId` 从服务端专用凭据出口临时读取；C/D 对本次导出的全部行统一写入该真实平台账号和密码，必须覆盖本地记录或旧模板中的值。凭据不得写入 IndexedDB、extension storage、命令 payload/result、日志或后台元数据。
-   - 导出前必须确认页面顶栏账号与临时凭据中的 `account` 精确一致；不一致或凭据不可用时拒绝下载与上传，返回稳定待人工码，禁止猜测。
+   - `QUERY_ALL_EXPORT` 导出前必须已由 Service Worker 证明同运行期成功 `LOGIN` 绑定的 `platformAccountId` 与命令一致；绑定缺失在采集前返回 `ACCOUNT_BINDING_REQUIRED`，绑定冲突返回 `ACCOUNT_MISMATCH`。绑定已确认时，不比较页面顶栏显示身份与临时凭据 `account` 的字符串值；两者可能分别是姓名/昵称与登录用户名。凭据不可用仍拒绝下载与上传。兼容 `EXPORT_REPORT` 未携带绑定证明时继续失败关闭。
    - 业务员列：控制台本次“一键查询并导出”任务的自由文本输入经首尾空白清理后写入 U 列；同一工作簿所有业务数据行使用同一个值。业务员不从导入模板、平台页面或案件记录推断，不写入 IndexedDB；空白预留行的 U 列保持空白。
 4. 图片嵌入：立案成功/驳回图锚定 H/K，强执成功/驳回图锚定 P/S；使用 OneCellAnchor，尺寸沿用对应模板列宽与数据行高度。
    - content script 运行在真实 Chromium 页面，图片 Blob 转换必须使用浏览器原生 `ArrayBuffer` / `Uint8Array`；禁止依赖 Node 全局 `Buffer`。自动测试必须覆盖 `globalThis.Buffer` 不存在时仍可构建带图工作簿。

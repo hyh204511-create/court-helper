@@ -264,6 +264,67 @@ test("EXPORT_REPORT 页面账号与服务端凭据不一致时拒绝下载上传
   }
 });
 
+test("已验证同一登录绑定时，导出不把法院顶栏显示身份与登录用户名做字符串全等", async () => {
+  await db.resetDb();
+  const platformAccountId = "00000000-0000-4000-8000-000000000498";
+  await db.upsert(db.STORE_CASES, {
+    account: "demo-account",
+    platformAccountId,
+    plaintiff: "SYNTHETIC PLAINTIFF",
+    defendant: "SYNTHETIC DEFENDANT",
+    kind: "li",
+    status: "审核中",
+  });
+  const { dom, chrome, listener } = await loadContent({
+    hash: "#/pagesWsla/pc/list/index",
+    html: batchListHtml(),
+  });
+  const anchorClick = dom.window.HTMLAnchorElement.prototype.click;
+  dom.window.HTMLAnchorElement.prototype.click = () => undefined;
+  let uploads = 0;
+  chrome.runtime.sendMessage = async (message) => {
+    if (message?.type === "EXPORT_UPLOAD") uploads += 1;
+    return { ok: true, exportId: "synthetic-export" };
+  };
+  try {
+    const result = await dispatch(listener, {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "EXPORT_REPORT",
+      platformAccountId,
+      accountLabel: "SYNTHETIC LABEL",
+      accountBindingVerified: true,
+      exportCredential: { account: "different-login-identifier", password: "synthetic-password" },
+    });
+    assert.deepEqual(result.response, { status: "uploaded", exportId: "synthetic-export" });
+    assert.equal(uploads, 1);
+  } finally {
+    dom.window.HTMLAnchorElement.prototype.click = anchorClick;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("QUERY_ALL_EXPORT 缺少同运行期登录绑定时在页面查询前拒绝", async () => {
+  const { dom, listener } = await loadContent({
+    hash: "#/pagesWsla/pc/list/index",
+    html: batchListHtml(),
+  });
+  try {
+    const result = await dispatch(listener, {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_ALL_EXPORT",
+      queryMode: "platform_discovery",
+      platformAccountId: "00000000-0000-4000-8000-000000000497",
+      accountBindingVerified: false,
+      accountLabel: "SYNTHETIC LABEL",
+      exportCredential: { account: "different-login-identifier", password: "synthetic-password" },
+    });
+    assert.deepEqual(result.response, { ok: false, error: "ACCOUNT_BINDING_REQUIRED" });
+  } finally {
+    cleanup(dom);
+  }
+});
+
 test("AUTO_LOGIN 登录路由异步响应成功，并只执行页面表单操作", async () => {
   const { dom, chrome, listener } = await loadContent({
     hash: "#/pagesGrxx/pc/login/index",

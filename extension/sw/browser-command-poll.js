@@ -25,6 +25,7 @@ const MANUAL_CODES = new Set([
   "MYCASE_PAGE_TIMEOUT",
   "ONLINE_FILING_PAGE_REQUIRED",
   "CASE_MATCH_AMBIGUOUS",
+  "ACCOUNT_BINDING_REQUIRED",
   "ACCOUNT_MISMATCH",
   "ACCOUNT_DISABLED",
   "ACCOUNT_LABEL_UNAVAILABLE",
@@ -298,6 +299,13 @@ function resultFor(response) {
     return { status: "succeeded", resultCode: "SUCCESS", resultSummary: "任务已完成" };
   }
   const code = /^[A-Z][A-Z0-9_]{0,63}$/.test(response?.error ?? "") ? response.error : "NEEDS_HUMAN";
+  if (code === "ACCOUNT_BINDING_REQUIRED") {
+    return {
+      status: "manual_required",
+      resultCode: code,
+      resultSummary: "请先对同一平台账号执行一键登录",
+    };
+  }
   return {
     status: MANUAL_CODES.has(code) ? "manual_required" : "failed",
     resultCode: code,
@@ -314,12 +322,13 @@ export function createBrowserCommandPoller({
   contentRouteRetryDelayMs = 500,
   contentRouteRetryAttempts = 8,
   contentRoutePingTimeoutMs = CONTENT_ROUTE_PING_TIMEOUT_MS,
+  initialActivePlatformAccountId = null,
 } = {}) {
   let intervalId = null;
   let inFlight = false;
   let configurationGeneration = 0;
   let activeRequestController = null;
-  let activePlatformAccountId = null;
+  let activePlatformAccountId = trim(initialActivePlatformAccountId) || null;
 
   function isCurrentGeneration(generation) {
     return generation === configurationGeneration;
@@ -406,6 +415,9 @@ export function createBrowserCommandPoller({
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
       message = { ...message, account: credential?.account, password: credential?.password, serviceUrl: "http://127.0.0.1:8765" };
     } else if (command.type === "QUERY_LI" || command.type === "QUERY_QZ" || command.type === "QUERY_ALL_EXPORT") {
+      if (command.type === "QUERY_ALL_EXPORT" && activePlatformAccountId === null) {
+        return { ok: false, error: "ACCOUNT_BINDING_REQUIRED" };
+      }
       if (activePlatformAccountId !== null && activePlatformAccountId !== command.platformAccountId) {
         return { ok: false, error: "ACCOUNT_MISMATCH" };
       }
@@ -437,6 +449,10 @@ export function createBrowserCommandPoller({
       message = { ...message, platformAccountId: command.platformAccountId };
     }
     if (command.type === "QUERY_ALL_EXPORT") {
+      message = {
+        ...message,
+        accountBindingVerified: true,
+      };
       const salesperson = trim(command.payload?.salesperson);
       if (salesperson) message = { ...message, salesperson };
       const attempts = retryAttempts(contentRouteRetryAttempts);

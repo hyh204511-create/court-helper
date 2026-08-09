@@ -8,6 +8,7 @@
 > v0.6 变更：新增 `QUERY_ALL_EXPORT` 单一持久化命令，在真实网上立案页内依次切换审判/执行分类、完成两类查询，再生成、下载并上传报表；控制台不再分别创建三种任务。
 > v0.7 变更：导出阶段按绑定账号 UUID 临时取得账号标签与真实凭据，校验页面账号后生成账号命名报表；凭据仍不进入持久命令或回执。
 > v0.8 变更：`QUERY_ALL_EXPORT` payload 允许且仅使用非敏感 `salesperson` 自由文本，把本次控制台输入传递给报表 U 列；不写入案件库或报表元数据。
+> v0.9 变更：`QUERY_ALL_EXPORT` 必须在查询开始前确认本运行期最近一次成功 `LOGIN` 绑定的是同一 `platformAccountId`；未建立绑定返回 `ACCOUNT_BINDING_REQUIRED`，绑定到其他账号返回 `ACCOUNT_MISMATCH`。绑定已确认时，导出不得再把法院页顶栏显示身份与登录用户名做字符串全等比较，因为两者可能分别是姓名/昵称与登录账号。
 
 ## 1. 目标与最终职责
 
@@ -59,7 +60,7 @@
 - 扩展领取后：检查用户已打开的法院标签 → 有界等待同一标签进入精确登录路由 → 取平台凭据 → 有界确认新 content script 就绪并执行既有 `AUTO_LOGIN` → OCR/可信点击链路不变 → 回写成功或稳定失败码。
 - 页面路由或 content script 的就绪等待仅允许复用同一已打开法院标签、同一 claim 和有界重试（默认最多 8 次、每次间隔 500ms）；扩展不得自行导航、刷新页面、创建标签页或无限重试。等待超时回写 `LOGIN_PAGE_TIMEOUT` 或 `LOGIN_CONTENT_UNAVAILABLE`，均为待人工；不得取凭据、记录凭据或伪造成功。
 - 密码只在服务器凭据出口到扩展运行时内存链路流转，不进入 command payload、storage、日志或后台 HTML。
-- Service Worker 仅在同一运行期内保存最近一次成功 `LOGIN` 的不透明 `platformAccountId`，不持久化、不记录真实账号或密码。该绑定存在时，后续 `QUERY_LI` / `QUERY_QZ` 的目标 ID 不一致必须在读取批次数据前回写 `ACCOUNT_MISMATCH` 并转人工；尚无该运行期自动登录绑定的手工登录兼容流程不据此猜测账号归属。
+- Service Worker 仅在同一运行期内保存最近一次成功 `LOGIN` 的不透明 `platformAccountId`，不持久化、不记录真实账号或密码。`QUERY_ALL_EXPORT` 在读取导入批次、临时凭据、查询页面或采集凭证前必须校验该绑定：绑定缺失返回 `ACCOUNT_BINDING_REQUIRED`，绑定到其他账号返回 `ACCOUNT_MISMATCH`；两者均不得读取上述数据或开始查询。单独 `QUERY_LI` / `QUERY_QZ` 保留手工登录兼容，但已有绑定且目标 ID 不一致时仍返回 `ACCOUNT_MISMATCH`。
 
 ### `QUERY_LI` / `QUERY_QZ`
 
@@ -80,10 +81,10 @@
 ### `EXPORT_REPORT`
 
 - `EXPORT_REPORT` 与 `QUERY_ALL_EXPORT` 进入导出阶段前，SW 必须按 `platformAccountId` 从扩展专用出口临时读取 `{label,account,password}`；只向本次受信 content 消息传递，执行结束即释放。任何命令 payload、持久 storage、任务结果、进度、错误摘要和日志均不得包含这些明文。
-- content 必须精确校验页面顶栏账号等于凭据账号，随后用凭据统一覆盖工作簿 C/D 列，并以净化后的标签命名文件；校验或取凭据失败不得下载、上传或回写伪成功。
+- 兼容 `EXPORT_REPORT` 未携带绑定证明时仍须精确校验页面顶栏账号等于凭据账号；`QUERY_ALL_EXPORT` 已通过同运行期 `LOGIN` UUID 绑定证明时不得重复比较这两段语义不同的文本。两条路径都只用临时凭据覆盖工作簿 C/D 列并以净化后的标签命名文件；校验或取凭据失败不得下载、上传或回写伪成功。
 
 - 控制台创建导出任务时必须显式选择平台账号；服务端将其不透明 UUID 写入既有 `browser_commands.platform_account_id`。该 UUID 不是账号明文或凭据，禁止写入 payload、扩展 storage、日志或任务摘要。
-- Service Worker 以命令携带的 `platformAccountId` 执行导出，不依赖本运行期内存中的最近登录绑定；因此 Worker 冷启动、回收或扩展重载后仍可恢复已配对设备的导出任务。
+- `QUERY_ALL_EXPORT` 以命令携带的 `platformAccountId` 执行并依赖本运行期成功 `LOGIN` 绑定；Worker 冷启动、扩展重载或配置重建导致绑定丢失时，必须在采集前返回 `ACCOUNT_BINDING_REQUIRED`，由用户先对同一后台账号执行一次一键登录再重试。不得在身份未确认时恢复查询并把错误拖到导出阶段。
 - content 必须同时使用当前真实页面顶栏账号和命令的 `platformAccountId` 过滤两张本地案件表；账户不一致或没有该账号隔离的数据时按既有稳定错误码失败，禁止混入其他账号 UUID 的记录。
 - content 必须同时按真实页面顶栏账号和该 `platformAccountId` 查询两张本地案件表；相同页面账号名但不同后台账号 UUID 的记录绝不能混入同一份报表。
 - 扩展从 IndexedDB 读取既有 `cases`/`enforcementCases`，复用 `xlsx-io.js` 生成工作簿。

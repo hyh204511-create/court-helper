@@ -309,6 +309,7 @@ async function handlePanelImport(file) {
 /** 面板导出：只导出当前平台账号绑定的 IndexedDB 记录。 */
 function handlePanelExport({
   platformAccountId = null, accountLabel = "", exportCredential = null, salesperson = "",
+  accountBindingVerified = false,
 } = {}) {
   if (_exportInFlight) return _exportInFlight;
   const current = (async () => {
@@ -316,7 +317,8 @@ function handlePanelExport({
     const account = getCurrentAccount(document);
     if (!account) throw new Error("ACCOUNT_UNDETECTED");
     if (typeof platformAccountId !== "string" || !platformAccountId) throw new Error("PLATFORM_ACCOUNT_UNAVAILABLE");
-    if (!exportCredential?.account || !exportCredential?.password || exportCredential.account !== account) {
+    if (!exportCredential?.account || !exportCredential?.password
+      || (!accountBindingVerified && exportCredential.account !== account)) {
       throw new Error("ACCOUNT_MISMATCH");
     }
     const filter = { account, platformAccountId };
@@ -874,10 +876,12 @@ async function executeBrowserCommand(message) {
       accountLabel: message.accountLabel,
       exportCredential: message.exportCredential,
       salesperson: message.salesperson,
+      accountBindingVerified: message.accountBindingVerified === true,
     });
   }
   if (message.commandType === "QUERY_ALL_EXPORT") {
     if (message.queryMode !== "platform_discovery") return { ok: false, error: "TEMPLATE_NOT_EMPTY" };
+    if (message.accountBindingVerified !== true) return { ok: false, error: "ACCOUNT_BINDING_REQUIRED" };
     return runQueryAllExport({
       switchCategory: (kind) => switchQueryCategory(document, kind),
       queryKind: (kind) => startPlatformDiscovery(kind, { platformAccountId: message.platformAccountId, allowEmpty: true }),
@@ -886,6 +890,7 @@ async function executeBrowserCommand(message) {
         accountLabel: message.accountLabel,
         exportCredential: message.exportCredential,
         salesperson: message.salesperson,
+        accountBindingVerified: true,
       }),
     });
   }

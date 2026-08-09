@@ -133,7 +133,11 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
     throw new Error(`unexpected ${value}`);
   };
 
-  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl }).pollOnce();
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl,
+    initialActivePlatformAccountId: command.platformAccountId,
+  }).pollOnce();
 
   assert.equal(result.ok, true);
   assert.equal(batchReads, 1);
@@ -142,10 +146,102 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
     commandType: "QUERY_ALL_EXPORT",
     queryMode: "platform_discovery",
     platformAccountId: command.platformAccountId,
+    accountBindingVerified: true,
     accountLabel: "测试账号标签",
     exportCredential: { account: "synthetic-account", password: "synthetic-password" },
     salesperson: "测试业务员甲",
   }]);
+});
+
+test("QUERY_ALL_EXPORT 未建立同运行期登录绑定时不读取批次、凭据或执行页面", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000116",
+    type: "QUERY_ALL_EXPORT",
+    platformAccountId: "00000000-0000-4000-8000-000000000316",
+    clientBatchId: "00000000-0000-4000-8000-000000000216",
+  };
+  let contentCalls = 0;
+  let protectedReads = 0;
+  let resultBody;
+  const chromeApi = chromeMock(async () => {
+    contentCalls += 1;
+    return { ok: true };
+  });
+  const fetchImpl = async (url, init = {}) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command });
+    if (value.endsWith(`/browser-commands/${command.id}/claim`)) {
+      return response({ command, claimToken: "claim-binding-required" });
+    }
+    if (value.includes("/extension-data") || value.includes("/credential")) {
+      protectedReads += 1;
+      throw new Error("protected data must not be read");
+    }
+    if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+      resultBody = JSON.parse(init.body);
+      return response({ command: { status: resultBody.status } });
+    }
+    throw new Error(`unexpected ${value}`);
+  };
+  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl }).pollOnce();
+  assert.equal(result.error, "ACCOUNT_BINDING_REQUIRED");
+  assert.equal(contentCalls, 0);
+  assert.equal(protectedReads, 0);
+  assert.equal(resultBody.status, "manual_required");
+  assert.equal(resultBody.resultCode, "ACCOUNT_BINDING_REQUIRED");
+  assert.equal(resultBody.resultSummary, "请先对同一平台账号执行一键登录");
+});
+
+test("同运行期 LOGIN 绑定与一键任务账号一致时下发已验证绑定证明", async () => {
+  const platformAccountId = "00000000-0000-4000-8000-000000000318";
+  const loginCommand = {
+    id: "00000000-0000-4000-8000-000000000118",
+    type: "LOGIN",
+    platformAccountId,
+  };
+  const queryCommand = {
+    id: "00000000-0000-4000-8000-000000000119",
+    type: "QUERY_ALL_EXPORT",
+    platformAccountId,
+    clientBatchId: "00000000-0000-4000-8000-000000000219",
+  };
+  const commands = [loginCommand, queryCommand];
+  let currentHash = "#/pagesGrxx/pc/login/index";
+  let dispatchedQuery;
+  const chromeApi = chromeMock(async (_tabId, message) => {
+    if (message.type === "PING") return {
+      ok: true,
+      route: currentHash,
+      ready: currentHash === "#/pagesWsla/pc/list/index",
+    };
+    if (message.commandType === "LOGIN") {
+      currentHash = "#/pagesWsla/pc/list/index";
+      return { ok: true };
+    }
+    dispatchedQuery = message;
+    return { ok: true };
+  });
+  chromeApi.tabs.query = async () => [{ id: 7, url: `https://zxfw.court.gov.cn/${currentHash}` }];
+  const fetchImpl = async (url, init = {}) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command: commands.shift() ?? null });
+    const command = [loginCommand, queryCommand].find((item) => value.endsWith(`/browser-commands/${item.id}/claim`));
+    if (command) return response({ command, claimToken: `claim-${command.id}` });
+    if (value.endsWith(`/platform-accounts/${platformAccountId}/credential`)) {
+      return response({ label: "SYNTHETIC LABEL", account: "synthetic-account", password: "synthetic-password" });
+    }
+    if (value.endsWith(`/import-batches/${queryCommand.clientBatchId}/extension-data`)) {
+      return response({ queryMode: "platform_discovery", rows: [] });
+    }
+    if (value.includes("/browser-commands/") && value.endsWith("/result")) {
+      return response({ command: { status: JSON.parse(init.body).status } });
+    }
+    throw new Error(`unexpected ${value}`);
+  };
+  const poller = createBrowserCommandPoller({ chromeApi, fetchImpl });
+  assert.equal((await poller.pollOnce()).ok, true);
+  await poller.pollOnce();
+  assert.equal(dispatchedQuery.accountBindingVerified, true);
 });
 
 test("QUERY_ALL_EXPORT waits for the list content to become ready before dispatching", async () => {
@@ -177,6 +273,7 @@ test("QUERY_ALL_EXPORT waits for the list content to become ready before dispatc
     contentRouteRetryDelayMs: 0,
     contentRouteRetryAttempts: 2,
     contentRoutePingTimeoutMs: 10,
+    initialActivePlatformAccountId: command.platformAccountId,
   }).pollOnce();
 
   assert.equal(result.ok, true);
@@ -198,7 +295,11 @@ test("QUERY_ALL_EXPORT 分类切换超时按待人工回写", async () => {
       : { ok: false, error: "QUERY_TAB_TIMEOUT" }
   ));
 
-  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl: harness.fetchImpl }).pollOnce();
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl: harness.fetchImpl,
+    initialActivePlatformAccountId: command.platformAccountId,
+  }).pollOnce();
 
   assert.equal(result.error, "QUERY_TAB_TIMEOUT");
   assert.equal(harness.resultBody().status, "manual_required");
@@ -789,7 +890,11 @@ test("报表命令兼容旧服务凭据响应并按 UUID 精确补取非敏感�
     throw new Error(`unexpected ${value}`);
   };
 
-  const result = await createBrowserCommandPoller({ chromeApi, fetchImpl }).pollOnce();
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl,
+    initialActivePlatformAccountId: platformAccountId,
+  }).pollOnce();
 
   assert.equal(result.status, "uploaded");
   assert.equal(accountListReads, 1);
@@ -798,6 +903,7 @@ test("报表命令兼容旧服务凭据响应并按 UUID 精确补取非敏感�
     commandType: "QUERY_ALL_EXPORT",
     queryMode: "platform_discovery",
     platformAccountId,
+    accountBindingVerified: true,
     accountLabel: "旧服务兼容标签",
     exportCredential: { account: "synthetic-account", password: "synthetic-password" },
   });
