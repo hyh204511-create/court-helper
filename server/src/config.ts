@@ -21,6 +21,11 @@ export interface ServerConfig {
   };
   localLoginHelper: {
     autoStart: boolean;
+    command?: string;
+  };
+  localWindowsDelivery?: {
+    enabled: boolean;
+    extensionDir?: string;
   };
 }
 
@@ -158,6 +163,11 @@ export function loadConfig(env: Environment = process.env): ServerConfig {
     },
     localLoginHelper: {
       autoStart: optionalBoolean(env, 'LOCAL_LOGIN_HELPER_AUTOSTART', false),
+      command: optional(env, ['LOCAL_LOGIN_HELPER_COMMAND']),
+    },
+    localWindowsDelivery: {
+      enabled: optionalBoolean(env, 'LOCAL_WINDOWS_DELIVERY', false),
+      extensionDir: optional(env, ['LOCAL_EXTENSION_DIR']),
     },
   };
 }

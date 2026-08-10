@@ -185,7 +185,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       service: authService,
       onAdminUiLogin: options.localLoginHelper ? () => options.localLoginHelper!.ensureRunning() : undefined,
     });
-    registerAdminRoutes(app, { authService });
+    registerAdminRoutes(app, { authService, localWindowsDelivery: config.localWindowsDelivery });
     registerAuthRoutes(app, {
       config,
       prefix: '/api/v1',

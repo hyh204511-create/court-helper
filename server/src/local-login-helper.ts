@@ -22,6 +22,8 @@ export async function startBoundLocalLoginHelper(helper: LocalLoginHelper | unde
 interface LocalLoginHelperOptions {
   helperPath?: string;
   pythonCommand?: string;
+  command?: string;
+  commandArgs?: string[];
   fetchImpl?: typeof fetch;
   spawnImpl?: typeof spawn;
   environment?: NodeJS.ProcessEnv;
@@ -73,6 +75,8 @@ function waitForExit(child: ChildProcess, timeoutMs = 2_000): Promise<boolean> {
 export function createLocalLoginHelper(options: LocalLoginHelperOptions = {}): LocalLoginHelper {
   const helperPath = options.helperPath ?? DEFAULT_HELPER_PATH;
   const pythonCommand = options.pythonCommand ?? 'python';
+  const command = options.command;
+  const commandArgs = options.commandArgs ?? ['--ocr-only'];
   const fetchImpl = options.fetchImpl ?? fetch;
   const spawnImpl = options.spawnImpl ?? spawn;
   const environment = helperEnvironment(options.environment ?? process.env);
@@ -88,7 +92,7 @@ export function createLocalLoginHelper(options: LocalLoginHelperOptions = {}): L
       if (closing || running(child)) return;
       let launched: ChildProcess;
       try {
-        launched = spawnImpl(pythonCommand, [helperPath, '--ocr-only'], {
+        launched = spawnImpl(command ?? pythonCommand, command ? commandArgs : [helperPath, '--ocr-only'], {
           stdio: 'ignore',
           windowsHide: true,
           env: environment,

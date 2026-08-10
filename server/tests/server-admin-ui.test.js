@@ -23,7 +23,7 @@ const SECOND_ACCOUNT_ID = '00000000-0000-0000-0000-000000000012';
 const CASE_ID = '00000000-0000-0000-0000-000000000100';
 const NOW = new Date('2026-08-31T12:00:00.000Z');
 
-function config() {
+function config(overrides = {}) {
   return loadConfig({
     PORT: '3111',
     DATABASE_URL: 'postgres://test:secret@localhost:5432/court_helper',
@@ -33,6 +33,7 @@ function config() {
     OBJECT_STORAGE_ENDPOINT: 'https://cos.example.test',
     OBJECT_STORAGE_BUCKET: 'private-test-bucket',
     ADMIN_INITIAL_PASSWORD: ADMIN_PASSWORD,
+    ...overrides,
   });
 }
 
@@ -114,7 +115,7 @@ function cookieHeader(response) {
   return first.split(';', 1)[0];
 }
 
-async function makeApp(reportExports = []) {
+async function makeApp(reportExports = [], configOverrides = {}) {
   const adminHash = await hashPassword(ADMIN_PASSWORD);
   const workerHash = await hashPassword(WORKER_PASSWORD);
   const authRepository = new MemoryAuthRepository([
@@ -124,7 +125,7 @@ async function makeApp(reportExports = []) {
   const storageBackend = new MemoryStorageBackend();
   const reportExportRepository = new MemoryReportExportRepository(reportExports);
   const app = buildApp({
-    config: config(),
+    config: config(configOverrides),
     clock: () => new Date(NOW),
     retention: { scheduleDaily: () => () => {} },
     dependencies: {
@@ -141,6 +142,22 @@ async function makeApp(reportExports = []) {
   await app.ready();
   return { app, authRepository, reportExportRepository, storageBackend };
 }
+
+test('Windows local delivery exposes a safe loopback onboarding page only when enabled', async () => {
+  const { app } = await makeApp([], {
+    LOCAL_WINDOWS_DELIVERY: 'true',
+    LOCAL_EXTENSION_DIR: 'C:\\Program Files\\CourtHelper\\extension',
+  });
+  try {
+    const page = await app.inject({ method: 'GET', url: '/local-setup' });
+    assert.equal(page.statusCode, 200);
+    assert.match(page.body, /Edge/);
+    assert.match(page.body, /CourtHelper\\extension/);
+    assert.equal(page.body.includes('DATABASE_URL'), false);
+  } finally {
+    await app.close();
+  }
+});
 
 async function login(app, username, password) {
   const response = await app.inject({

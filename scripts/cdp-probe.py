@@ -35,9 +35,9 @@ async def cdp_call(ws_url, method, params=None, timeout=20):
                 pass  # 继续等待 id=1 的响应
 
 
-async def evaluate(ws_url, expression, timeout=20):
+async def evaluate(ws_url, expression, timeout=20, await_promise=False):
     res = await cdp_call(ws_url, "Runtime.evaluate",
-                         {"expression": expression, "returnByValue": True}, timeout)
+                         {"expression": expression, "returnByValue": True, "awaitPromise": await_promise}, timeout)
     return res.get("result", {}).get("value")
 
 
@@ -124,7 +124,7 @@ async def do_eval(tab_id, expression):
     """执行任意表达式（联调用）。"""
     tabs = http_json("/json")
     target = next(t for t in tabs if t.get("id") == tab_id)
-    value = await evaluate(target["webSocketDebuggerUrl"], expression)
+    value = await evaluate(target["webSocketDebuggerUrl"], expression, await_promise=True)
     print(json.dumps(value, ensure_ascii=False, indent=1))
 
 

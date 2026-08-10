@@ -18,7 +18,9 @@ import { startBoundBackend } from './backend-startup.ts';
 const config = loadConfig();
 const pool = new Pool({ connectionString: config.databaseUrl });
 const storageBackend = createStorageBackend(config);
-const localLoginHelper = config.localLoginHelper.autoStart ? createLocalLoginHelper() : undefined;
+const localLoginHelper = config.localLoginHelper.autoStart
+  ? createLocalLoginHelper(config.localLoginHelper.command ? { command: config.localLoginHelper.command } : {})
+  : undefined;
 const app = buildApp({
   config,
   unexpectedErrorLogger: {

@@ -11,13 +11,14 @@
     "server:start": "node server/dist/main.js",
     "fixture": "python scripts/generate-fixtures.py",
     "build": "node ./scripts/build-extension.mjs",
-    "release": "node ./scripts/release-package.mjs"
+    "release": "node ./scripts/release-package.mjs",
+    "release:windows-local": "node ./scripts/windows-local-release.mjs",
+    "release:windows-local:staging": "node ./scripts/windows-local-release.mjs --staging-only"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
     "@types/pg": "^8.20.3",
     "esbuild": "^0.28.1",
-    "exceljs": "^4.4.0",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^29.1.1",
     "typescript": "^7.0.2"
@@ -29,6 +30,7 @@
     "argon2": "^0.45.1",
     "fastify": "^5.11.2",
     "html2canvas": "^1.4.1",
+    "exceljs": "^4.4.0",
     "pg": "^8.22.0",
     "pg-mem": "^3.0.14"
   }

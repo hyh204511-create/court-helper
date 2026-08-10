@@ -20,6 +20,15 @@ const CONTENT_SECURITY_POLICY = [
 
 interface RegisterAdminOptions {
   authService: AuthService;
+  localWindowsDelivery?: { enabled: boolean; extensionDir?: string };
+}
+
+function escapeHtml(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+}
+
+function renderLocalSetup(ocrReady: boolean, extensionDir?: string): string {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>法院查询助手安装向导</title><link rel="stylesheet" href="/admin/assets/admin.css"></head><body><main class="auth-shell"><section class="auth-card"><h1>法院查询助手已安装</h1><p>后台状态：正常</p><p>OCR 状态：${ocrReady ? '正常' : '正在启动，请稍后运行“诊断与修复”'}</p><ol><li>打开 Edge，在地址栏输入 <code>edge://extensions</code>。</li><li>打开“开发人员模式”，点击“加载解压缩的扩展”。</li><li>选择 <code>${escapeHtml(extensionDir ?? 'C:\\Program Files\\CourtHelper\\extension')}</code>。</li><li>返回本页，登录后台并按页面提示完成设备配对。</li></ol><p><a class="primary-link" href="/admin/login">进入后台登录</a></p></section></main></body></html>`;
 }
 
 function secureHeaders(reply: FastifyReply): void {
@@ -92,6 +101,16 @@ export function registerAdminRoutes(app: FastifyInstance, options: RegisterAdmin
   app.get('/', async (_request, reply) => reply.redirect('/admin/browser-control'));
   app.get('/admin/login', async (_request, reply) => sendHtml(reply, renderAdminPage('login', 'user')));
   app.get('/admin', async (_request, reply) => reply.redirect('/admin/browser-control'));
+  if (options.localWindowsDelivery?.enabled) {
+    app.get('/local-setup', async (_request, reply) => {
+      let ocrReady = false;
+      try {
+        const response = await fetch('http://127.0.0.1:8765/health', { signal: AbortSignal.timeout(1_000) });
+        ocrReady = response.ok && (await response.json() as { ok?: unknown }).ok === true;
+      } catch { /* OCR failure must not block the local onboarding page. */ }
+      return sendHtml(reply, renderLocalSetup(ocrReady, options.localWindowsDelivery?.extensionDir));
+    });
+  }
 
   app.get('/admin/users', async (request, reply) => renderProtectedPage('users', request, reply, authService, 'admin'));
   app.get('/admin/platform-accounts', async (request, reply) => renderProtectedPage('platform-accounts', request, reply, authService, 'admin'));

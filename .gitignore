@@ -1,13 +1,16 @@
 # 敏感数据与产物
 accounts.txt
-.release-secrets/
-release/
 *.xlsx
 !tests/fixtures/*.xlsx
 *.png
 !tests/fixtures/*.png
 *.jpg
 !tests/fixtures/*.jpg
+.env
+server/.env
+.release-secrets/
+release/
+build/
 
 # 本地工具目录
 .obsidian/
@@ -21,3 +24,4 @@ extension/lib/
 .DS_Store
 Thumbs.db
 __pycache__/
+scripts/acceptance-*.py
