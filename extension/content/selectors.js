@@ -38,6 +38,9 @@ export const SELECTORS = {
   },
   // 案件详情页（案件空间 pagesWsla/common/wsla/detail）
   detail: {
+    page: ".fd-com-page",
+    header: ".fd-com-header",
+    content: ".fd-content-container",
     section: ".uni-section, uni-section[title]",
     sectionTitle: ".uni-section__content-title",
     formItem: ".uni-forms-item",

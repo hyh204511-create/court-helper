@@ -451,21 +451,20 @@ function detailItemPair(item) {
   return parts.length ? { label: parts[0], value: parts.slice(1).join(" ") } : null;
 }
 
-function uniqueDetailSection(title) {
-  const matches = [...document.querySelectorAll(SELECTORS.detail.section)]
-    .filter((section) => {
-      const attributeTitle = section.getAttribute("title")?.trim();
-      if (attributeTitle) return attributeTitle === title;
-      const headings = [...section.querySelectorAll(SELECTORS.detail.sectionTitle)]
-        .filter((heading) => textOf(heading) === title);
-      return headings.length === 1;
-    });
-  return matches.length === 1 ? matches[0] : null;
+function detailSectionTitle(section) {
+  const attributeTitle = section.getAttribute("title")?.trim();
+  if (attributeTitle) return attributeTitle;
+  const headings = [...section.querySelectorAll(SELECTORS.detail.sectionTitle)]
+    .map(textOf)
+    .filter(Boolean);
+  return headings.length === 1 ? headings[0] : null;
 }
 
-function uniquePartyItem(section, expectedValue) {
-  const matches = [...section.querySelectorAll(SELECTORS.detail.formItem)]
-    .filter((item) => detailItemPair(item)?.value === expectedValue);
+function uniqueDetailSection(title, root = document) {
+  const matches = [...root.querySelectorAll(SELECTORS.detail.section)]
+    .filter((section) => {
+      return detailSectionTitle(section) === title;
+    });
   return matches.length === 1 ? matches[0] : null;
 }
 
@@ -493,51 +492,65 @@ function latestAuditItems(section, latest) {
   return matches.length === 1 ? matches[0].items : null;
 }
 
-function appendEvidenceBlock(target, title, items) {
-  const block = document.createElement("section");
-  block.setAttribute("data-court-helper-evidence-block", "");
-  block.style.cssText = "box-sizing:border-box;width:100%;margin:0 0 12px;padding:12px;border:1px solid #d8e2ef;border-radius:4px;background:#fff;";
-  const heading = document.createElement("div");
-  heading.textContent = title;
-  heading.style.cssText = "margin:0 0 8px;font-weight:600;color:#26384a;";
-  block.append(heading, ...items.map((item) => item.cloneNode(true)));
-  target.append(block);
-}
-
 /**
- * 由同一详情页中精确核对的双方名称项与最新审核记录构造临时截图目标。
- * 业务文字只来自页面源 DOM；record 值仅用于全等校验，不写入证据容器。
+ * 定位同一详情页的原生页头、可选重新提交信息与最新审核记录。
+ * record 只用于核对原生案件标题归属，不向截图绘制任何本地业务文字。
  */
-function findDetailEvidenceSources({ record, kind, latest }) {
-  const roles = kind === "qz"
-    ? [["申请执行人信息", record.plaintiff], ["被执行人信息", record.defendant]]
-    : [["原告信息", record.plaintiff], ["被告信息", record.defendant]];
-  if (roles.some(([, expected]) => typeof expected !== "string" || !expected.trim())) return null;
-  const partyEvidence = [];
-  for (const [title, expected] of roles) {
-    const section = uniqueDetailSection(title);
-    if (!section) return null;
-    const item = uniquePartyItem(section, expected.trim());
-    if (!item) return null;
-    partyEvidence.push({ title, item });
-  }
-  const auditSection = uniqueDetailSection("审核结果");
+function findDetailEvidenceSources({ record, latest }) {
+  const pages = [...document.querySelectorAll(SELECTORS.detail.page)];
+  if (pages.length !== 1) return null;
+  const page = pages[0];
+  const headers = [...page.querySelectorAll(SELECTORS.detail.header)];
+  const contents = [...page.querySelectorAll(SELECTORS.detail.content)];
+  if (headers.length !== 1 || contents.length !== 1) return null;
+  const expectedParties = [record?.plaintiff, record?.defendant]
+    .map((value) => typeof value === "string" ? value.trim() : "");
+  const headerText = textOf(headers[0]);
+  if (expectedParties.some((value) => !value || !headerText.includes(value))) return null;
+  const content = contents[0];
+  const resubmitSections = [...content.querySelectorAll(SELECTORS.detail.section)]
+    .filter((section) => detailSectionTitle(section) === "重新提交信息");
+  if (resubmitSections.length > 1) return null;
+  const auditSection = uniqueDetailSection("审核结果", content);
   if (!auditSection) return null;
   const auditItems = latestAuditItems(auditSection, latest);
   if (!auditItems) return null;
 
-  return { partyEvidence, auditItems };
+  return { page, content, resubmitSection: resubmitSections[0] ?? null, auditSection, auditItems };
 }
 
 function buildDetailEvidenceTarget(input) {
   const sources = findDetailEvidenceSources(input);
   if (!sources) return null;
 
-  const target = document.createElement("div");
+  const target = sources.page.cloneNode(true);
   target.setAttribute("data-court-helper-detail-evidence", "");
-  target.style.cssText = "position:absolute;left:-100000px;top:0;box-sizing:border-box;width:1200px;padding:16px;background:#fff;color:#1f2937;";
-  for (const party of sources.partyEvidence) appendEvidenceBlock(target, party.title, [party.item]);
-  appendEvidenceBlock(target, "审核结果", sources.auditItems);
+  const width = Math.ceil(sources.page.getBoundingClientRect?.().width || sources.page.scrollWidth || 1200);
+  target.style.setProperty("position", "absolute", "important");
+  target.style.setProperty("left", "-100000px", "important");
+  target.style.setProperty("top", "0", "important");
+  target.style.setProperty("width", `${width}px`, "important");
+  target.style.setProperty("height", "auto", "important");
+  target.style.setProperty("min-height", "0", "important");
+  const targetContents = [...target.querySelectorAll(SELECTORS.detail.content)];
+  if (targetContents.length !== 1) return null;
+  const targetContent = targetContents[0];
+  for (const section of [...targetContent.querySelectorAll(SELECTORS.detail.section)]) {
+    const title = detailSectionTitle(section);
+    if (title !== "重新提交信息" && title !== "审核结果") section.remove();
+  }
+  const targetAudit = uniqueDetailSection("审核结果", targetContent);
+  if (!targetAudit) return null;
+  const targetAuditItems = latestAuditItems(targetAudit, input.latest);
+  if (!targetAuditItems) return null;
+  const keptAuditItems = new Set(targetAuditItems);
+  for (const item of targetAudit.querySelectorAll(SELECTORS.detail.formItem)) {
+    if (!keptAuditItems.has(item)) item.remove();
+  }
+  for (const node of target.querySelectorAll(`${SELECTORS.detail.page}, .fd-com-main-container, ${SELECTORS.detail.content}`)) {
+    node.style?.setProperty("height", "auto", "important");
+    node.style?.setProperty("min-height", "0", "important");
+  }
   document.body.append(target);
   return { target, cleanup: () => target.remove() };
 }
@@ -588,7 +601,7 @@ export async function runDetailCapture({
   let evidenceError = null;
   const evidenceTarget = buildDetailEvidenceTarget({ record: rec, kind, latest });
   if (!evidenceTarget) {
-    evidenceError = "PARTY_EVIDENCE_INCOMPLETE";
+    evidenceError = "DETAIL_SCREENSHOT_TARGET_INCOMPLETE";
   } else {
     try {
       image = await capture(evidenceTarget.target);
@@ -601,7 +614,11 @@ export async function runDetailCapture({
     }
   }
   const rejectReason = latest.opinion ?? rec.rejectReason ?? null;
-  const recoveredCapture = Boolean(image) && rec.errorCode === "SCREENSHOT_CAPTURE_FAILED";
+  const recoveredCapture = Boolean(image) && [
+    "SCREENSHOT_CAPTURE_FAILED",
+    "PARTY_EVIDENCE_INCOMPLETE",
+    "DETAIL_SCREENSHOT_TARGET_INCOMPLETE",
+  ].includes(rec.errorCode);
   await db.upsertByUid(store, uid, {
     ...rec,
     status: rec.status === "UNKNOWN"

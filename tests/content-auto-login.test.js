@@ -735,7 +735,7 @@ test("驳回截图保留原生案件空间页头、重新提交和最新审核�
   }
 });
 
-test("详情页等待延迟渲染的双方当事人信息后再生成驳回截图", async () => {
+test("详情页等待延迟渲染的原生页头后再生成驳回截图", async () => {
   await db.resetDb();
   const uid = "synthetic-delayed-party-evidence";
   await db.upsertByUid(db.STORE_CASES, uid, {
@@ -750,11 +750,15 @@ test("详情页等待延迟渲染的双方当事人信息后再生成驳回截�
     hash: "#/pagesWsla/common/wsla/detail/index",
     html: `
       <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
-      <uni-section title="审核结果">
-        <div class="uni-forms-item"><span>审核结果</span><span>审核不通过</span></div>
-        <div class="uni-forms-item"><span>审核时间</span><span>2026-08-11 12:00:00</span></div>
-        <div class="uni-forms-item"><span>审核意见</span><span>SYNTHETIC DELAYED OPINION</span></div>
-      </uni-section>`,
+      <uni-view class="fd-com-page">
+        <main class="fd-com-main-container"><uni-view class="fd-content-container">
+          <uni-section title="审核结果">
+            <div class="uni-forms-item"><span>审核结果</span><span>审核不通过</span></div>
+            <div class="uni-forms-item"><span>审核时间</span><span>2026-08-11 12:00:00</span></div>
+            <div class="uni-forms-item"><span>审核意见</span><span>SYNTHETIC DELAYED OPINION</span></div>
+          </uni-section>
+        </uni-view></main>
+      </uni-view>`,
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   chrome.setPendingDetail({ uid, kind: "li" });
@@ -765,12 +769,11 @@ test("详情页等待延迟渲染的双方当事人信息后再生成驳回截�
       waitForEvidence: async (predicate) => {
         waitCalls += 1;
         assert.equal(Boolean(predicate()), false);
-        dom.window.document.body.insertAdjacentHTML("beforeend", `
-          <uni-section title="原告信息">
-            <div class="uni-forms-item"><span>名称</span><span>SYNTHETIC DELAYED PLAINTIFF</span></div>
-          </uni-section>
-          <uni-section title="被告信息">
-            <div class="uni-forms-item"><span>名称</span><span>SYNTHETIC DELAYED DEFENDANT</span></div>
+        dom.window.document.querySelector(".fd-com-page").insertAdjacentHTML("afterbegin", `
+          <uni-view class="fd-com-header"><span>案件空间</span><span>SYNTHETIC DELAYED PLAINTIFF 与 SYNTHETIC DELAYED DEFENDANT 一案</span></uni-view>`);
+        dom.window.document.querySelector(".fd-content-container").insertAdjacentHTML("afterbegin", `
+          <uni-section title="重新提交信息">
+            <div class="uni-forms-item"><span>重新提交时间</span><span>2026-08-10 12:00:00</span></div>
           </uni-section>`);
         return Boolean(predicate());
       },
@@ -791,7 +794,7 @@ test("详情页等待延迟渲染的双方当事人信息后再生成驳回截�
   }
 });
 
-test("详情页当事人身份与待办记录不一致时保留审核文字但禁止降级截图", async () => {
+test("详情页原生案件标题与待办身份不一致时保留审核文字但禁止截图", async () => {
   await db.resetDb();
   const uid = "synthetic-party-evidence-mismatch";
   await db.upsertByUid(db.STORE_ENFORCEMENT, uid, {
@@ -806,17 +809,16 @@ test("详情页当事人身份与待办记录不一致时保留审核文字但�
     hash: "#/pagesWsla/common/wsla/detail/index",
     html: `
       <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
-      <uni-section title="审核结果">
-        <div class="uni-forms-item"><span>审核结果</span><span>退回补充材料</span></div>
-        <div class="uni-forms-item"><span>审核时间</span><span>2026-08-11 11:19:04</span></div>
-        <div class="uni-forms-item"><span>审核意见</span><span>SYNTHETIC QZ OPINION</span></div>
-      </uni-section>
-      <uni-section title="申请执行人信息">
-        <div class="uni-forms-item"><span>名称</span><span>DIFFERENT APPLICANT</span></div>
-      </uni-section>
-      <uni-section title="被执行人信息">
-        <div class="uni-forms-item"><span>名称</span><span>SYNTHETIC RESPONDENT</span></div>
-      </uni-section>`,
+      <uni-view class="fd-com-page">
+        <uni-view class="fd-com-header"><span>案件空间</span><span>DIFFERENT APPLICANT 与 SYNTHETIC RESPONDENT 一案</span></uni-view>
+        <main class="fd-com-main-container"><uni-view class="fd-content-container">
+          <uni-section title="审核结果">
+            <div class="uni-forms-item"><span>审核结果</span><span>退回补充材料</span></div>
+            <div class="uni-forms-item"><span>审核时间</span><span>2026-08-11 11:19:04</span></div>
+            <div class="uni-forms-item"><span>审核意见</span><span>SYNTHETIC QZ OPINION</span></div>
+          </uni-section>
+        </uni-view></main>
+      </uni-view>`,
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   chrome.setPendingDetail({ uid, kind: "qz" });
@@ -832,7 +834,7 @@ test("详情页当事人身份与待办记录不一致时保留审核文字但�
     assert.equal(stored.rejectReason, "SYNTHETIC QZ OPINION");
     assert.equal(stored.rejectImage, undefined);
     assert.equal(stored.needsHuman, true);
-    assert.equal(stored.errorCode, "PARTY_EVIDENCE_INCOMPLETE");
+    assert.equal(stored.errorCode, "DETAIL_SCREENSHOT_TARGET_INCOMPLETE");
   } finally {
     cleanup(dom);
     await db.resetDb();
