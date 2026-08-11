@@ -11,6 +11,8 @@ import { MemoryReportExportRepository } from '../src/report-exports/memory-repos
 import { REPORT_EXPORT_CONTENT_TYPE } from '../src/report-exports/types.ts';
 import { MemoryScreenshotRepository } from '../src/screenshots/memory-repository.ts';
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
+import { renderAdminPage } from '../src/admin/pages.ts';
+import { ADMIN_SCRIPT } from '../src/admin/assets.ts';
 
 const TEST_KEY = Buffer.alloc(32, 37).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
@@ -22,6 +24,182 @@ const ARCHIVED_ACCOUNT_ID = '00000000-0000-0000-0000-000000000011';
 const SECOND_ACCOUNT_ID = '00000000-0000-0000-0000-000000000012';
 const CASE_ID = '00000000-0000-0000-0000-000000000100';
 const NOW = new Date('2026-08-31T12:00:00.000Z');
+
+test('account filters support manual label input and an explicit dropdown', () => {
+  const cases = renderAdminPage('cases', 'user');
+  assert.match(cases, /id="case-account"[^>]*type="search"[^>]*role="combobox"/);
+  assert.match(cases, /id="case-account-toggle"[^>]*aria-controls="case-account-menu"/);
+  assert.match(cases, /id="case-account-menu"[^>]*role="listbox"/);
+
+  const reports = renderAdminPage('report-exports', 'user');
+  assert.match(reports, /id="report-export-account"[^>]*type="search"[^>]*role="combobox"/);
+  assert.match(reports, /id="report-export-account-toggle"[^>]*aria-controls="report-export-account-menu"/);
+  assert.match(reports, /id="report-export-account-menu"[^>]*role="listbox"/);
+
+  const accounts = renderAdminPage('platform-accounts', 'admin');
+  assert.match(accounts, /id="platform-list-account"[^>]*type="search"[^>]*role="combobox"/);
+  assert.match(accounts, /id="platform-list-account-toggle"[^>]*aria-controls="platform-list-account-menu"/);
+  assert.match(accounts, /id="platform-list-account-menu"[^>]*role="listbox"/);
+});
+
+test('case account filter resolves manual labels once and polling keeps the applied UUID', async () => {
+  const dom = new JSDOM(renderAdminPage('cases', 'user'), {
+    runScripts: 'outside-only',
+    url: 'https://admin.example.test/admin/cases',
+  });
+  const requests = [];
+  const jsonResponse = (body, status = 200) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get() { return null; } },
+    async json() { return body; },
+  });
+  Object.defineProperty(dom.window.document, 'visibilityState', { configurable: true, value: 'visible' });
+  dom.window.Headers = Headers;
+  dom.window.fetch = async (input) => {
+    const requestUrl = new URL(String(input), dom.window.location.href);
+    requests.push(requestUrl.pathname + requestUrl.search);
+    if (requestUrl.pathname === '/api/v1/auth/me') return jsonResponse({ csrfToken: 'ui-csrf' });
+    if (requestUrl.pathname === '/api/v1/platform-accounts') {
+      return jsonResponse({ platformAccounts: [
+        { id: ACCOUNT_ID, label: 'first-account', enabled: true },
+        { id: SECOND_ACCOUNT_ID, label: 'second-account', enabled: true },
+      ] });
+    }
+    if (requestUrl.pathname === '/api/v1/cases') return jsonResponse({ cases: [], nextCursor: null });
+    throw new Error(`unexpected request ${requestUrl.pathname}`);
+  };
+  dom.window.eval(ADMIN_SCRIPT);
+  dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'));
+
+  const waitFor = async (predicate) => {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    assert.fail('timed out waiting for case account filter UI');
+  };
+
+  try {
+    await waitFor(() => dom.window.document.querySelectorAll('#case-account-menu [role="option"]').length === 2);
+    const input = dom.window.document.querySelector('#case-account');
+    const form = dom.window.document.querySelector('#case-filters');
+    input.value = 'first';
+    form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+    await waitFor(() => requests.some((path) => path.includes(`platformAccountId=${ACCOUNT_ID}`)));
+
+    input.value = 'second';
+    const requestsBeforeRetry = requests.length;
+    dom.window.document.querySelector('#case-retry').click();
+    await waitFor(() => requests.length > requestsBeforeRetry);
+    assert.match(requests.at(-1), new RegExp(`platformAccountId=${ACCOUNT_ID}`));
+
+    input.value = 'account';
+    const requestsBeforeAmbiguousSubmit = requests.length;
+    form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(requests.length, requestsBeforeAmbiguousSubmit);
+    assert.match(dom.window.document.querySelector('[data-case-status]').textContent, /未找到唯一账号/);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('account picker preserves manual input and synchronizes expanded state when options arrive late', async () => {
+  const dom = new JSDOM(renderAdminPage('cases', 'user'), {
+    runScripts: 'outside-only',
+    url: 'https://admin.example.test/admin/cases',
+  });
+  let resolveAccounts;
+  const accountsResponse = new Promise((resolve) => { resolveAccounts = resolve; });
+  dom.window.Headers = Headers;
+  dom.window.fetch = async (input) => {
+    const requestUrl = new URL(String(input), dom.window.location.href);
+    if (requestUrl.pathname === '/api/v1/auth/me') return { ok: true, status: 200, headers: { get() { return null; } }, async json() { return { csrfToken: 'ui-csrf' }; } };
+    if (requestUrl.pathname === '/api/v1/platform-accounts') return accountsResponse;
+    if (requestUrl.pathname === '/api/v1/cases') return { ok: true, status: 200, headers: { get() { return null; } }, async json() { return { cases: [], nextCursor: null }; } };
+    throw new Error(`unexpected request ${requestUrl.pathname}`);
+  };
+  dom.window.eval(ADMIN_SCRIPT);
+  dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  try {
+    const input = dom.window.document.querySelector('#case-account');
+    const toggle = dom.window.document.querySelector('#case-account-toggle');
+    const menu = dom.window.document.querySelector('#case-account-menu');
+    input.value = 'first';
+    input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    assert.equal(menu.hidden, false);
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+
+    resolveAccounts({
+      ok: true,
+      status: 200,
+      headers: { get() { return null; } },
+      async json() { return { platformAccounts: [{ id: ACCOUNT_ID, label: 'first-account', enabled: true }] }; },
+    });
+    for (let attempt = 0; attempt < 20 && menu.querySelectorAll('[role="option"]').length !== 1; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    assert.equal(input.value, 'first');
+    assert.equal(menu.hidden, true);
+    assert.equal(input.getAttribute('aria-expanded'), 'false');
+    assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('platform account management filters rows locally without extra API requests', async () => {
+  const dom = new JSDOM(renderAdminPage('platform-accounts', 'admin'), {
+    runScripts: 'outside-only',
+    url: 'https://admin.example.test/admin/platform-accounts',
+  });
+  const requests = [];
+  const jsonResponse = (body) => ({ ok: true, status: 200, headers: { get() { return null; } }, async json() { return body; } });
+  dom.window.Headers = Headers;
+  dom.window.fetch = async (input) => {
+    const requestUrl = new URL(String(input), dom.window.location.href);
+    requests.push(requestUrl.pathname + requestUrl.search);
+    if (requestUrl.pathname === '/api/v1/auth/me') return jsonResponse({ csrfToken: 'ui-csrf' });
+    if (requestUrl.pathname === '/api/v1/platform-accounts') return jsonResponse({ platformAccounts: [
+      { id: ACCOUNT_ID, label: 'first-account', enabled: true, updatedAt: NOW.toISOString() },
+      { id: SECOND_ACCOUNT_ID, label: 'second-account', enabled: false, updatedAt: NOW.toISOString() },
+    ] });
+    throw new Error(`unexpected request ${requestUrl.pathname}`);
+  };
+  dom.window.eval(ADMIN_SCRIPT);
+  dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'));
+
+  try {
+    for (let attempt = 0; attempt < 20 && dom.window.document.querySelectorAll('#platform-rows tr').length !== 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    const input = dom.window.document.querySelector('#platform-list-account');
+    const toggle = dom.window.document.querySelector('#platform-list-account-toggle');
+    const menu = dom.window.document.querySelector('#platform-list-account-menu');
+    const requestsBeforeFilter = requests.length;
+    input.value = 'second';
+    input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    const rows = dom.window.document.querySelectorAll('#platform-rows tr');
+    assert.equal(rows[0].hidden, true);
+    assert.equal(rows[1].hidden, false);
+    assert.equal(requests.length, requestsBeforeFilter);
+
+    toggle.click();
+    toggle.click();
+    assert.equal(menu.hidden, false);
+    assert.ok([...menu.querySelectorAll('[role="option"]')].every((option) => option.hidden === false));
+    menu.querySelector('[data-platform-account-label="first-account"]').click();
+    assert.equal(input.value, 'first-account');
+    assert.equal(rows[0].hidden, false);
+    assert.equal(rows[1].hidden, true);
+    assert.equal(requests.length, requestsBeforeFilter);
+  } finally {
+    dom.window.close();
+  }
+});
 
 function config(overrides = {}) {
   return loadConfig({
@@ -825,7 +1003,10 @@ test('report export page is available to both roles and supports filtered listin
       const method = String(options.method || 'GET').toUpperCase();
       requests.push({ method, path: requestUrl.pathname + requestUrl.search });
       if (requestUrl.pathname === '/api/v1/auth/me') return jsonResponse({ csrfToken: 'ui-csrf' });
-      if (requestUrl.pathname === '/api/v1/platform-accounts') return jsonResponse({ platformAccounts: [{ id: ACCOUNT_ID, label: '账号标签甲', enabled: true }] });
+      if (requestUrl.pathname === '/api/v1/platform-accounts') return jsonResponse({ platformAccounts: [
+        { id: ACCOUNT_ID, label: '账号标签甲', enabled: true },
+        { id: SECOND_ACCOUNT_ID, label: '账号标签乙', enabled: true },
+      ] });
       if (requestUrl.pathname === '/api/v1/users') {
         return jsonResponse({ users: [
           { id: ADMIN_ID, username: 'admin-user-3', role: 'admin', enabled: true },
@@ -870,6 +1051,27 @@ test('report export page is available to both roles and supports filtered listin
       assert.fail('timed out waiting for report export UI');
     };
     await waitFor(() => dom.window.document.querySelectorAll('#report-export-rows tr').length === 2);
+    const accountFilter = dom.window.document.querySelector('#report-export-account');
+    const accountMenu = dom.window.document.querySelector('#report-export-account-menu');
+    assert.equal(accountFilter.type, 'search');
+    assert.equal(accountFilter.getAttribute('role'), 'combobox');
+    assert.equal(accountMenu.querySelectorAll('[role="option"]').length, 2);
+    accountFilter.value = '甲';
+    const filteredRequestsBefore = requests.length;
+    dom.window.document.querySelector('#report-export-filters').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+    await waitFor(() => requests.length > filteredRequestsBefore);
+    assert.ok(requests.some((request) => request.path === `/api/v1/report-exports?limit=200&platformAccountId=${ACCOUNT_ID}`));
+    accountFilter.value = '账号标签';
+    const requestsBeforeAmbiguousFilter = requests.length;
+    dom.window.document.querySelector('#report-export-filters').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(requests.length, requestsBeforeAmbiguousFilter);
+    assert.match(dom.window.document.querySelector('[data-report-export-message]').textContent, /未找到唯一账号/);
+    accountFilter.value = '';
+    const requestsBeforeClearingFilter = requests.length;
+    dom.window.document.querySelector('#report-export-filters').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+    await waitFor(() => requests.length > requestsBeforeClearingFilter);
+    assert.ok(requests.slice(requestsBeforeClearingFilter).some((request) => request.path === '/api/v1/report-exports?limit=200'));
     const rows = dom.window.document.querySelectorAll('#report-export-rows tr');
     assert.equal(rows[0].children[0].textContent, '账号标签甲');
     assert.match(rows[0].children[0].querySelector('a').href, /\/admin\/cases\?platformAccountId=/);
@@ -985,11 +1187,18 @@ test('report export page appends cursor pages and hides the load-more button at 
     assert.equal(next.textContent, '加载更多');
     assert.equal(next.style.display, 'inline-flex');
 
+    const accountFilter = dom.window.document.querySelector('#report-export-account');
+    await waitFor(() => dom.window.document.querySelectorAll('#report-export-account-menu [role="option"]').length === 1);
+    accountFilter.value = '甲';
+    dom.window.document.querySelector('#report-export-filters').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+    await waitFor(() => requests.some((request) => request.path === `/api/v1/report-exports?limit=200&platformAccountId=${ACCOUNT_ID}`));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    accountFilter.value = 'unsubmitted-edit';
     next.click();
     await waitFor(() => dom.window.document.querySelectorAll('#report-export-rows tr').length === 2);
     assert.equal(dom.window.document.querySelectorAll('#report-export-rows tr')[1].children[1].textContent, secondExport.fileName);
     assert.equal(next.style.display, 'none');
-    assert.ok(requests.some((request) => request.path.includes('cursor=page-two-cursor')));
+    assert.ok(requests.some((request) => request.path === `/api/v1/report-exports?limit=200&cursor=page-two-cursor&platformAccountId=${ACCOUNT_ID}`));
     dom.window.close();
   } finally {
     await app.close();

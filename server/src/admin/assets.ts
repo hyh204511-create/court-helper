@@ -281,6 +281,10 @@ let casePollTimer = null;
 let caseCursor = null;
 let nextCaseCursor = null;
 let nextReportExportCursor = null;
+let appliedCasePlatformAccountId = null;
+let appliedReportPlatformAccountId = null;
+let caseAccountValidationMessage = null;
+let reportAccountValidationMessage = null;
 let browserControlImportBatches = [];
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -500,23 +504,22 @@ function renderStatus(value) {
 }
 
 let platformLabels = new Map();
+let platformAccountOptions = [];
 
 async function loadPlatformLabels() {
   try {
     const result = await api('/platform-accounts');
     const accounts = result.platformAccounts || [];
+    platformAccountOptions = accounts;
     platformLabels = new Map(accounts.map((account) => [account.id, account.label]));
-    for (const select of [$('#case-account'), $('#report-export-account')].filter(Boolean)) {
-      const selected = select.value;
-      while (select.options.length > 1) select.remove(1);
-      accounts.forEach((account) => {
-        const option = element('option', account.label);
-        option.value = account.id;
-        option.selected = account.id === selected;
-        select.appendChild(option);
-      });
+    for (const [input, menu] of [
+      [$('#case-account'), $('#case-account-menu')],
+      [$('#report-export-account'), $('#report-export-account-menu')],
+    ]) {
+      fillPlatformAccountLabelList(input, menu, accounts, false, true);
     }
   } catch {
+    platformAccountOptions = [];
     platformLabels = new Map();
   }
 }
@@ -555,12 +558,13 @@ function renderCaseRows(items) {
 
 function caseQuery() {
   const params = new URLSearchParams();
-  const fields = ['case-kind', 'case-status', 'case-account', 'case-human', 'case-from', 'case-to'];
-  const names = ['kind', 'status', 'platformAccountId', 'needsHuman', 'from', 'to'];
+  const fields = ['case-kind', 'case-status', 'case-human', 'case-from', 'case-to'];
+  const names = ['kind', 'status', 'needsHuman', 'from', 'to'];
   fields.forEach((field, index) => {
     const input = $('#' + field);
     if (input && input.value) params.set(names[index], input.value);
   });
+  if (appliedCasePlatformAccountId) params.set('platformAccountId', appliedCasePlatformAccountId);
   if (caseCursor !== null) params.set('cursor', caseCursor);
   params.set('limit', '50');
   return params.toString();
@@ -575,7 +579,10 @@ async function loadCases() {
     nextCaseCursor = result.nextCursor || null;
     const next = $('#case-next');
     if (next) next.style.display = nextCaseCursor === null ? 'none' : 'inline-flex';
-    if (status) setMessage(status, '已更新 · ' + dateLabel(new Date().toISOString()), 'muted');
+    if (status) {
+      if (caseAccountValidationMessage) setMessage(status, caseAccountValidationMessage);
+      else setMessage(status, '已更新 · ' + dateLabel(new Date().toISOString()), 'muted');
+    }
     if (retry) retry.style.display = 'none';
   } catch (error) {
     const rows = $('#case-rows');
@@ -599,6 +606,10 @@ function stopCasePolling() {
 
 function initCases() {
   const filter = $('#case-filters');
+  const account = $('#case-account');
+  const accountPicker = $('#case-account-picker');
+  const accountToggle = $('#case-account-toggle');
+  const accountMenu = $('#case-account-menu');
   const retry = $('#case-retry');
   const next = $('#case-next');
   if (retry) retry.textContent = '手动重试';
@@ -609,7 +620,23 @@ function initCases() {
   const toField = $('#case-to');
   if (fromField) fromField.value = from.toISOString().slice(0, 10);
   if (toField) toField.value = today.toISOString().slice(0, 10);
-  if (filter) filter.addEventListener('submit', (event) => { event.preventDefault(); caseCursor = null; nextCaseCursor = null; void loadCases(); });
+  bindAccountPicker(account, accountPicker, accountToggle, accountMenu);
+  account?.addEventListener('input', () => { caseAccountValidationMessage = null; });
+  if (filter) filter.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const selected = resolveOptionalPlatformAccount(account?.value);
+    if (selected === undefined) {
+      caseAccountValidationMessage = '未找到唯一账号，请从平台账号列表中选择';
+      setMessage($('[data-case-status]'), caseAccountValidationMessage);
+      return;
+    }
+    caseAccountValidationMessage = null;
+    appliedCasePlatformAccountId = selected?.id || null;
+    if (selected) account.value = selected.label || '';
+    caseCursor = null;
+    nextCaseCursor = null;
+    void loadCases();
+  });
   if (retry) retry.addEventListener('click', () => { void loadCases(); });
   if (next) next.addEventListener('click', () => {
     if (nextCaseCursor === null) return;
@@ -618,9 +645,10 @@ function initCases() {
   });
   const requestedAccount = new URLSearchParams(window.location.search).get('platformAccountId');
   void loadPlatformLabels().then(() => {
-    const account = $('#case-account');
-    if (account && requestedAccount && [...account.options].some((option) => option.value === requestedAccount)) {
-      account.value = requestedAccount;
+    const requested = platformAccountOptions.find((option) => option.id === requestedAccount);
+    if (account && requested) {
+      account.value = requested.label || '';
+      appliedCasePlatformAccountId = requested.id;
       caseCursor = null;
       nextCaseCursor = null;
       void loadCases();
@@ -752,11 +780,14 @@ async function loadPlatformAccounts() {
   const message = $('[data-platform-message]');
   try {
     const result = await api('/platform-accounts');
+    const accounts = result.platformAccounts || [];
+    fillPlatformAccountLabelList($('#platform-list-account'), $('#platform-list-account-menu'), accounts, false, true);
     clear(target);
-    (result.platformAccounts || []).forEach((account) => {
+    accounts.forEach((account) => {
       const row = element('tr');
       row.dataset.id = account.id;
       row.dataset.enabled = String(account.enabled);
+      row.dataset.accountLabel = account.label || '';
       row.appendChild(element('td', account.label));
       row.appendChild(element('td', account.enabled ? '启用' : '停用'));
       row.appendChild(element('td', dateLabel(account.updatedAt)));
@@ -769,6 +800,7 @@ async function loadPlatformAccounts() {
       row.appendChild(actions);
       target.appendChild(row);
     });
+    filterPlatformAccountRows();
     setMessage(message, '已更新', 'success');
   } catch (error) {
     setMessage(message, errorMessage(error));
@@ -779,6 +811,11 @@ function initPlatformAccounts() {
   const form = $('#platform-form');
   const list = $('#platform-rows');
   const cancel = $('#platform-cancel');
+  const listFilter = $('#platform-list-filters');
+  const listAccount = $('#platform-list-account');
+  bindAccountPicker(listAccount, $('#platform-list-account-picker'), $('#platform-list-account-toggle'), $('#platform-list-account-menu'));
+  listAccount?.addEventListener('input', filterPlatformAccountRows);
+  listFilter?.addEventListener('submit', (event) => { event.preventDefault(); filterPlatformAccountRows(); });
   if (cancel) cancel.addEventListener('click', resetPlatformForm);
   if (form) form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -869,8 +906,7 @@ async function loadReportExportUsers() {
 function reportExportListPath(cursor) {
   const params = new URLSearchParams({ limit: '200' });
   if (cursor) params.set('cursor', cursor);
-  const account = $('#report-export-account');
-  if (account?.value) params.set('platformAccountId', account.value);
+  if (appliedReportPlatformAccountId) params.set('platformAccountId', appliedReportPlatformAccountId);
   return '/report-exports?' + params.toString();
 }
 
@@ -933,9 +969,11 @@ async function loadReportExports(append = false) {
     nextReportExportCursor = result.nextCursor || null;
     const next = $('#report-export-next');
     if (next) next.style.display = nextReportExportCursor === null ? 'none' : 'inline-flex';
-    setMessage(message, '已更新', 'success');
+    if (reportAccountValidationMessage) setMessage(message, reportAccountValidationMessage);
+    else setMessage(message, '已更新', 'success');
   } catch (error) {
-    setMessage(message, errorMessage(error));
+    if (reportAccountValidationMessage) setMessage(message, reportAccountValidationMessage);
+    else setMessage(message, errorMessage(error));
   }
 }
 
@@ -998,7 +1036,7 @@ function clearPlatformCredential() {
   if (view) view.hidden = true;
 }
 
-function fillPlatformAccountLabelList(input, list, accounts, selectFirst = false) {
+function fillPlatformAccountLabelList(input, list, accounts, selectFirst = false, preserveQuery = false) {
   if (!input || !list) return;
   const selected = input.value;
   const normalizedSelected = String(selected || '').trim().toLocaleLowerCase('zh-CN');
@@ -1010,11 +1048,14 @@ function fillPlatformAccountLabelList(input, list, accounts, selectFirst = false
     option.dataset.platformAccountLabel = account.label || '';
     list.appendChild(option);
   });
-  if (!accounts.some((account) => String(account.label || '').trim().toLocaleLowerCase('zh-CN') === normalizedSelected)) {
+  if (!preserveQuery && !accounts.some((account) => String(account.label || '').trim().toLocaleLowerCase('zh-CN') === normalizedSelected)) {
     input.value = selectFirst ? accounts[0]?.label || '' : '';
   }
   list.hidden = true;
   input.setAttribute('aria-expanded', 'false');
+  document.querySelectorAll('[aria-controls="' + list.id + '"]').forEach((control) => {
+    control.setAttribute('aria-expanded', 'false');
+  });
 }
 
 async function loadBrowserControlAccounts() {
@@ -1053,6 +1094,18 @@ function selectedBrowserAccount(query, accounts = browserControlAccounts) {
   if (exact) return exact;
   const matches = accounts.filter((account) => String(account.label || '').toLocaleLowerCase('zh-CN').includes(normalized));
   return matches.length === 1 ? matches[0] : null;
+}
+
+function resolveOptionalPlatformAccount(query) {
+  if (!String(query || '').trim()) return null;
+  return selectedBrowserAccount(query, platformAccountOptions) || undefined;
+}
+
+function filterPlatformAccountRows() {
+  const query = String($('#platform-list-account')?.value || '').trim().toLocaleLowerCase('zh-CN');
+  document.querySelectorAll('#platform-rows tr[data-account-label]').forEach((row) => {
+    row.hidden = Boolean(query) && !String(row.dataset.accountLabel || '').toLocaleLowerCase('zh-CN').includes(query);
+  });
 }
 
 function selectedEnabledBrowserAccount(query) {
@@ -1516,6 +1569,9 @@ function initReportExports() {
   const message = $('[data-report-export-message]');
   const next = ensureReportExportNextButton(message);
   const filters = $('#report-export-filters');
+  const account = $('#report-export-account');
+  bindAccountPicker(account, $('#report-export-account-picker'), $('#report-export-account-toggle'), $('#report-export-account-menu'));
+  account?.addEventListener('input', () => { reportAccountValidationMessage = null; });
   if (list) list.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-action]');
     if (!button) return;
@@ -1550,6 +1606,15 @@ function initReportExports() {
   });
   if (filters) filters.addEventListener('submit', (event) => {
     event.preventDefault();
+    const selected = resolveOptionalPlatformAccount(account?.value);
+    if (selected === undefined) {
+      reportAccountValidationMessage = '未找到唯一账号，请从平台账号列表中选择';
+      setMessage(message, reportAccountValidationMessage);
+      return;
+    }
+    reportAccountValidationMessage = null;
+    appliedReportPlatformAccountId = selected?.id || null;
+    if (selected) account.value = selected.label || '';
     nextReportExportCursor = null;
     void loadReportExports();
   });

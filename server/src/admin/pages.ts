@@ -148,7 +148,10 @@ function platformAccountsPage(): string {
     </section>
     <section class="panel" aria-labelledby="platform-list-title">
       <div class="panel-head"><div><h3 id="platform-list-title">账号列表</h3><p>列表和普通响应只返回标签、状态与更新时间。</p></div></div>
-      <div class="panel-body table-wrap"><table class="data-table"><thead><tr><th>标签</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="platform-rows"></tbody></table></div>
+      <div class="panel-body">
+        <form id="platform-list-filters" class="filters"><div class="field"><label for="platform-list-account">账号标签</label><div class="account-picker" id="platform-list-account-picker"><input id="platform-list-account" type="search" autocomplete="off" placeholder="手动输入标签或从列表选择" role="combobox" aria-autocomplete="list" aria-controls="platform-list-account-menu" aria-expanded="false"><button id="platform-list-account-toggle" class="account-picker-toggle" type="button" aria-label="展开平台账号列表" aria-controls="platform-list-account-menu" aria-expanded="false">▼</button><div id="platform-list-account-menu" class="account-picker-menu" role="listbox" hidden></div></div></div><div class="filter-actions"><button class="primary" type="submit">应用筛选</button></div></form>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>标签</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="platform-rows"></tbody></table></div>
+      </div>
     </section>`);
 }
 
@@ -163,7 +166,7 @@ function casesPage(role: AdminRole): string {
         <form id="case-filters" class="filters">
           <div class="field"><label for="case-kind">类型</label><select id="case-kind"><option value="">全部</option><option value="li">立案</option><option value="qz">强执</option></select></div>
           <div class="field"><label for="case-status">状态</label><select id="case-status"><option value="">全部</option><option value="立案成功">立案成功</option><option value="强执成功">强执成功</option><option value="已驳回">已驳回</option><option value="审核中">审核中</option><option value="UNKNOWN">待人工</option></select></div>
-          <div class="field"><label for="case-account">平台账号</label><select id="case-account"><option value="">全部平台账号</option></select></div>
+          <div class="field"><label for="case-account">平台账号</label><div class="account-picker" id="case-account-picker"><input id="case-account" type="search" autocomplete="off" placeholder="全部账号；可手动输入标签" role="combobox" aria-autocomplete="list" aria-controls="case-account-menu" aria-expanded="false"><button id="case-account-toggle" class="account-picker-toggle" type="button" aria-label="展开平台账号列表" aria-controls="case-account-menu" aria-expanded="false">▼</button><div id="case-account-menu" class="account-picker-menu" role="listbox" hidden></div></div></div>
           <div class="field"><label for="case-human">待人工</label><select id="case-human"><option value="">全部</option><option value="true">是</option><option value="false">否</option></select></div>
           <div class="field"><label for="case-from">起始日期</label><input id="case-from" type="date"></div>
           <div class="field"><label for="case-to">结束日期</label><input id="case-to" type="date"></div>
@@ -205,7 +208,7 @@ function reportExportsPage(role: AdminRole): string {
     <section class="panel" aria-labelledby="report-export-list-title">
       <div class="panel-head"><div><h3 id="report-export-list-title">导出记录</h3><p>文件内容不在页面缓存；下载由当前会话直接鉴权。</p></div></div>
       <div class="panel-body">
-        <form id="report-export-filters" class="filters"><div class="field"><label for="report-export-account">平台账号</label><select id="report-export-account"><option value="">全部平台账号</option></select></div><div class="filter-actions"><button class="primary" type="submit">应用筛选</button></div></form>
+        <form id="report-export-filters" class="filters"><div class="field"><label for="report-export-account">平台账号</label><div class="account-picker" id="report-export-account-picker"><input id="report-export-account" type="search" autocomplete="off" placeholder="全部账号；可手动输入标签" role="combobox" aria-autocomplete="list" aria-controls="report-export-account-menu" aria-expanded="false"><button id="report-export-account-toggle" class="account-picker-toggle" type="button" aria-label="展开平台账号列表" aria-controls="report-export-account-menu" aria-expanded="false">▼</button><div id="report-export-account-menu" class="account-picker-menu" role="listbox" hidden></div></div></div><div class="filter-actions"><button class="primary" type="submit">应用筛选</button></div></form>
         <div class="case-status"><span data-report-export-message class="message muted" aria-live="polite">准备读取</span></div>
         <div class="table-wrap"><table class="data-table"><thead><tr><th>平台账号</th><th>文件名</th><th>大小</th><th>SHA256</th>${exporterColumn}<th>导出时间</th><th>操作</th></tr></thead><tbody id="report-export-rows"></tbody></table></div>
       </div>
