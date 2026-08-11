@@ -250,6 +250,69 @@ test("fetchLayyPages 强执模式使用执行类别并解析申请执行人和�
   assert.equal(calls.every((url) => url.searchParams.get("ajlb") === "zx"), true);
 });
 
+test("fetchLayyPages 跳过所有未批准状态且保留原始分页守恒", async () => {
+  const result = await fetchLayyPages({
+    fetchImpl: async (url) => String(url).includes("/count")
+      ? jsonResponse({ data: 2 })
+      : jsonResponse({ data: [
+        { zt: "11800007-999" },
+        {
+          id: "SYNTHETIC-APPROVED-ID",
+          zt: "11800007-1",
+          ajmc: "SYNTHETIC APPROVED CASE",
+          dsrMc: "原告：A；被告：B",
+          laay: "SYNTHETIC CAUSE",
+          tjsj: "2026-08-11",
+        },
+      ] }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.rawTotal, 2);
+  assert.equal(result.total, 1);
+  assert.equal(result.skipped, 1);
+  assert.deepEqual(result.reportableMask, [false, true]);
+  assert.deepEqual(result.rows.map((row) => row.statusText), ["待审核"]);
+});
+
+test("reconcileApiDomRows 要求 API 与非空 DOM 对未批准状态的逐行结论一致", async () => {
+  const approved = [{
+    caseName: "SYNTHETIC APPROVED CASE",
+    applicant: "A",
+    respondent: "B",
+    cause: "SYNTHETIC CAUSE",
+    applicationDate: "2026-08-11",
+  }];
+  const readApi = async () => ({
+    ok: true,
+    rawTotal: 2,
+    total: 1,
+    reportableMask: [false, true],
+    rows: approved,
+  });
+
+  const matched = await reconcileApiDomRows({
+    readApi,
+    readDom: async () => ({ rawTotal: 2, reportableMask: [false, true], rows: approved }),
+    waitForQuiet: async () => false,
+  });
+  assert.equal(matched.ok, true);
+
+  const mismatch = await reconcileApiDomRows({
+    readApi,
+    readDom: async () => ({ rawTotal: 2, reportableMask: [true, true], rows: approved }),
+    waitForQuiet: async () => false,
+  });
+  assert.equal(mismatch.code, "API_DOM_MISMATCH");
+
+  const emptyDomStatusFallsBackToApi = await reconcileApiDomRows({
+    readApi,
+    readDom: async () => ({ rawTotal: 2, reportableMask: [null, true], rows: approved }),
+    waitForQuiet: async () => false,
+  });
+  assert.equal(emptyDomStatusFallsBackToApi.ok, true);
+});
+
 test("fetchLayyPages 强执使用 createTime 作为缺失 tjsj 的申请日期", async () => {
   const fetchImpl = async (url) => {
     const parsed = new URL(url, "https://court.invalid");

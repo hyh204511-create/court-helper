@@ -65,8 +65,8 @@ function wslaPage(rows) {
   return `<div class="fd-header-operate"><div class="fd-user-name">PLATFORM-ACCOUNT</div></div><div class="fd-com-list-container">${rows}</div>`;
 }
 
-async function loadContent({ placeholderSearch = false, runtimeSendMessage } = {}) {
-  const initialRows = caseRow({
+async function loadContent({ placeholderSearch = false, runtimeSendMessage, initialRows: suppliedRows = null } = {}) {
+  const initialRows = suppliedRows ?? caseRow({
     status: "已立案",
     name: "SYNTHETIC SOURCE TITLE",
     type: "民事一审案件",
@@ -575,6 +575,66 @@ test("QUERY_LI 不以 DOM 同标题重传结果代替结构化接口", async () 
   } finally {
     globalThis.setTimeout = nativeSetTimeout;
     console.warn = nativeWarn;
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("QUERY_LI 混合列表跳过未批准状态且只建档批准状态行", async () => {
+  await db.resetDb();
+  const platformAccountId = "00000000-0000-4000-8000-000000000041";
+  const initialRows = [
+    caseRow({
+      status: "待提交",
+      name: "名称暂无",
+      type: "民事一审案件",
+      values: {},
+    }),
+    caseRow({
+      status: "待审核",
+      name: "SYNTHETIC APPROVED TITLE",
+      type: "民事一审案件",
+      values: {
+        参与人: "原告：SYNTHETIC PLAINTIFF；被告：SYNTHETIC DEFENDANT",
+        案由: "SYNTHETIC CAUSE",
+        申请日期: "2026-08-11",
+      },
+    }),
+  ].join("");
+  const { dom, chrome } = await loadContent({
+    initialRows,
+    runtimeSendMessage: async (message) => {
+      if (message?.type !== "QUERY_API_REQUEST") return undefined;
+      return message.path.includes("/count")
+        ? { ok: true, status: 200, data: { data: 2 } }
+        : { ok: true, status: 200, data: { data: [
+          { zt: "11800007-100" },
+          {
+            id: "SYNTHETIC-APPROVED-ID",
+            zt: "11800007-1",
+            ajmc: "SYNTHETIC APPROVED TITLE",
+            dsrMc: "原告：SYNTHETIC PLAINTIFF；被告：SYNTHETIC DEFENDANT",
+            laay: "SYNTHETIC CAUSE",
+            tjsj: "2026-08-11",
+          },
+        ] } };
+    },
+  });
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_LI",
+      queryMode: "platform_discovery",
+      platformAccountId,
+    });
+
+    assert.equal(response.ok, true);
+    assert.equal(response.stats.total, 1);
+    const records = await db.query(db.STORE_CASES, { account: "PLATFORM-ACCOUNT", platformAccountId });
+    assert.equal(records.length, 1);
+    assert.equal(records[0].sourceCaseName, "SYNTHETIC APPROVED TITLE");
+    assert.equal(records[0].status, "审核中");
+  } finally {
     cleanup(dom);
     await db.resetDb();
   }
