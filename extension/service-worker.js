@@ -361,11 +361,18 @@ function handleCaseDetailMessage(message, sender, sendResponse) {
   }
   (async () => {
     if (message.type === "CASE_DETAIL_PENDING_GET") {
-      const { pendingDetail } = await session.get("pendingDetail");
+      const { pendingDetail, caseSpaceHandoff } = await session.get(["pendingDetail", "caseSpaceHandoff"]);
       const value = pendingDetail?.uid
         ? { uid: pendingDetail.uid, kind: pendingDetail.kind === "qz" ? "qz" : "li" }
         : null;
-      sendResponse({ ok: true, pendingDetail: value });
+      const handoff = caseSpaceHandoff?.uid
+        ? {
+            uid: caseSpaceHandoff.uid,
+            kind: caseSpaceHandoff.kind === "qz" ? "qz" : "li",
+            phase: caseSpaceHandoff.phase === "adopted" ? "adopted" : "opening",
+          }
+        : null;
+      sendResponse({ ok: true, pendingDetail: value, handoff });
       return;
     }
     if (message.type === "CASE_DETAIL_PENDING_CLEAR") {

@@ -138,7 +138,24 @@ test("案件空间待办由 Worker 桥接 session storage，且只接受法院�
 
     const read = invoke(loaded.runtimeListener, { type: "CASE_DETAIL_PENDING_GET" }, courtSender);
     assert.equal(read.returned, true);
-    assert.deepEqual(await read.readResponse(), { ok: true, pendingDetail: { uid: "synthetic-uid", kind: "qz" } });
+    assert.deepEqual(await read.readResponse(), {
+      ok: true,
+      pendingDetail: { uid: "synthetic-uid", kind: "qz" },
+      handoff: { uid: "synthetic-uid", kind: "qz", phase: "opening" },
+    });
+
+    const adopted = invoke(
+      loaded.runtimeListener,
+      { type: "CASE_SPACE_ADOPTED", uid: "synthetic-uid", kind: "qz" },
+      { tab: { id: 18, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/common/wsla/detail/index" } },
+    );
+    assert.deepEqual(await adopted.readResponse(), { ok: true, phase: "adopted", tabId: 18 });
+    const adoptedRead = invoke(loaded.runtimeListener, { type: "CASE_DETAIL_PENDING_GET" }, courtSender);
+    assert.deepEqual(await adoptedRead.readResponse(), {
+      ok: true,
+      pendingDetail: { uid: "synthetic-uid", kind: "qz" },
+      handoff: { uid: "synthetic-uid", kind: "qz", phase: "adopted" },
+    });
 
     const cleared = invoke(loaded.runtimeListener, { type: "CASE_DETAIL_PENDING_CLEAR" }, courtSender);
     assert.equal(cleared.returned, true);

@@ -78,7 +78,7 @@ async function dispatch(listener, message) {
   let response;
   const returnValue = listener(message, {}, (value) => { response = value; });
   if (returnValue === true) {
-    const deadline = Date.now() + 1000;
+    const deadline = Date.now() + 5000;
     while (response === undefined && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
@@ -125,6 +125,47 @@ test("AUTO_LOGIN 非登录路由先拒绝，不触碰 DOM/fetch，且不回传 p
   assert.equal(fetchCalls, 0);
   assert.equal(JSON.stringify(result.response).includes("demo-password"), false);
   cleanup(dom);
+});
+
+test("案件空间点击未打开详情标签时明确失败，不把点击动作当成截图成功", async () => {
+  await db.resetDb();
+  const uid = "synthetic-case-space-not-opened";
+  const sourceCaseName = "SYNTHETIC REJECTED CASE WITHOUT DETAIL TAB";
+  await db.upsertByUid(db.STORE_CASES, uid, {
+    uid,
+    account: "demo-account",
+    plaintiff: "synthetic plaintiff",
+    defendant: "synthetic defendant",
+    sourceCaseName,
+    kind: "li",
+    status: "已驳回",
+  });
+  const { dom, listener } = await loadContent({
+    hash: "#/pagesWsla/pc/list/index",
+    html: `
+      <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
+      <div class="fd-case-item">
+        <div class="fd-header-status">审核不通过</div>
+        <div class="fd-header-ajmc">${sourceCaseName}</div>
+        <div class="fd-header-ajlx">民事一审案件</div>
+        <div class="fd-field-item"><span class="fd-field-lable">审核意见</span><span class="fd-field-value">synthetic opinion</span></div>
+        <button class="fd-case-space-btn">案件空间</button>
+      </div>`,
+  });
+  let clicks = 0;
+  dom.window.document.querySelector(".fd-case-space-btn").addEventListener("click", () => { clicks += 1; });
+  const nativeSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, _delay, ...args) => nativeSetTimeout(callback, 0, ...args);
+  try {
+    const result = await dispatch(listener, { type: "START_BATCH", kind: "li" });
+    assert.equal(result.response?.ok, false);
+    assert.equal(result.response?.error, "CASE_SPACE_TAB_UNAVAILABLE");
+    assert.ok(clicks >= 2);
+  } finally {
+    globalThis.setTimeout = nativeSetTimeout;
+    cleanup(dom);
+    await db.resetDb();
+  }
 });
 
 test("EXPORT_REPORT 在非允许列表路由先拒绝，不下载或上传", async () => {

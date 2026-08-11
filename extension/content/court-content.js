@@ -645,12 +645,19 @@ async function triggerDetailCapture({ uid, kind, target }) {
   }
   if (handoff?.ok !== true) throw new Error(handoff?.code ?? "CASE_SPACE_HANDOFF_FAILED");
   const btn = target.querySelector(SELECTORS.list.spaceBtn);
-  if (btn) {
+  if (!btn?.isConnected) throw new Error("CASE_SPACE_BUTTON_UNAVAILABLE");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
     btn.click();
-    return;
+    for (let poll = 0; poll < 20; poll += 1) {
+      const state = await chrome.runtime.sendMessage({ type: "CASE_DETAIL_PENDING_GET" });
+      const adopted = state?.handoff?.uid === uid
+        && state.handoff.kind === kind
+        && state.handoff.phase === "adopted";
+      if (adopted || (state?.ok === true && state.pendingDetail == null)) return;
+      await sleep(250);
+    }
   }
-  // 无空间按钮（异常）→ 保留待办，由人工打开详情页触发
-  showToast("未找到「案件空间」按钮，请手动打开详情页以采集驳回凭证");
+  throw new Error("CASE_SPACE_TAB_UNAVAILABLE");
 }
 
 /** 列表页角色：查询单个案件（pageOps.queryCase 浏览器实现） */
