@@ -645,3 +645,102 @@ test("详情页最新审核记录不完整时不回退历史记录或截图", as
     await db.resetDb();
   }
 });
+
+test("驳回截图组合页面中的双方当事人姓名与审核结果且排除非必要敏感字段", async () => {
+  await db.resetDb();
+  const uid = "synthetic-party-linked-evidence";
+  await db.upsertByUid(db.STORE_CASES, uid, {
+    uid,
+    account: "demo-account",
+    plaintiff: "SYNTHETIC PLAINTIFF",
+    defendant: "SYNTHETIC DEFENDANT",
+    kind: "li",
+    status: "已驳回",
+  });
+  const { dom, chrome, module } = await loadContent({
+    hash: "#/pagesWsla/common/wsla/detail/index",
+    html: `
+      <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
+      <main class="fd-com-main-container">
+        <uni-section title="审核结果">
+          <div class="uni-forms-item"><span>审核结果</span><span>审核不通过</span></div>
+          <div class="uni-forms-item"><span>审核时间</span><span>2026-08-11 11:19:04</span></div>
+          <div class="uni-forms-item"><span>审核意见</span><span>SYNTHETIC AUDIT OPINION</span></div>
+        </uni-section>
+        <uni-section title="原告信息">
+          <div class="uni-forms-item"><span>名称</span><span>SYNTHETIC PLAINTIFF</span></div>
+          <div class="uni-forms-item"><span>证件号码</span><span>SYNTHETIC SECRET ID</span></div>
+        </uni-section>
+        <uni-section title="被告信息">
+          <div class="uni-forms-item"><span>名称</span><span>SYNTHETIC DEFENDANT</span></div>
+          <div class="uni-forms-item"><span>联系电话</span><span>SYNTHETIC SECRET PHONE</span></div>
+        </uni-section>
+      </main>`,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  chrome.setPendingDetail({ uid, kind: "li" });
+  try {
+    let capturedText = "";
+    assert.equal(await module.runDetailCapture({
+      capture: async (target) => {
+        capturedText = target.textContent;
+        return new Blob(["synthetic-party-linked-image"], { type: "image/jpeg" });
+      },
+    }), true);
+    assert.match(capturedText, /原告信息[\s\S]*SYNTHETIC PLAINTIFF/);
+    assert.match(capturedText, /被告信息[\s\S]*SYNTHETIC DEFENDANT/);
+    assert.match(capturedText, /审核结果[\s\S]*审核不通过[\s\S]*SYNTHETIC AUDIT OPINION/);
+    assert.doesNotMatch(capturedText, /SYNTHETIC SECRET ID|SYNTHETIC SECRET PHONE/);
+    const stored = await db.getByUid(db.STORE_CASES, uid);
+    assert.ok(stored.rejectImage instanceof Blob);
+    assert.equal(stored.needsHuman, false);
+  } finally {
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
+test("详情页当事人身份与待办记录不一致时保留审核文字但禁止降级截图", async () => {
+  await db.resetDb();
+  const uid = "synthetic-party-evidence-mismatch";
+  await db.upsertByUid(db.STORE_ENFORCEMENT, uid, {
+    uid,
+    account: "demo-account",
+    plaintiff: "SYNTHETIC APPLICANT",
+    defendant: "SYNTHETIC RESPONDENT",
+    kind: "qz",
+    status: "已驳回",
+  });
+  const { dom, chrome, module } = await loadContent({
+    hash: "#/pagesWsla/common/wsla/detail/index",
+    html: `
+      <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
+      <uni-section title="审核结果">
+        <div class="uni-forms-item"><span>审核结果</span><span>退回补充材料</span></div>
+        <div class="uni-forms-item"><span>审核时间</span><span>2026-08-11 11:19:04</span></div>
+        <div class="uni-forms-item"><span>审核意见</span><span>SYNTHETIC QZ OPINION</span></div>
+      </uni-section>
+      <uni-section title="申请执行人信息">
+        <div class="uni-forms-item"><span>名称</span><span>DIFFERENT APPLICANT</span></div>
+      </uni-section>
+      <uni-section title="被执行人信息">
+        <div class="uni-forms-item"><span>名称</span><span>SYNTHETIC RESPONDENT</span></div>
+      </uni-section>`,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  chrome.setPendingDetail({ uid, kind: "qz" });
+  try {
+    let captures = 0;
+    assert.equal(await module.runDetailCapture({ capture: async () => { captures += 1; } }), true);
+    assert.equal(captures, 0);
+    const stored = await db.getByUid(db.STORE_ENFORCEMENT, uid);
+    assert.equal(stored.rejectTime, "2026-08-11");
+    assert.equal(stored.rejectReason, "SYNTHETIC QZ OPINION");
+    assert.equal(stored.rejectImage, undefined);
+    assert.equal(stored.needsHuman, true);
+    assert.equal(stored.errorCode, "PARTY_EVIDENCE_INCOMPLETE");
+  } finally {
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
