@@ -82,7 +82,14 @@ function originOf(request: FastifyRequest): string | undefined {
 
 function secureSessionCookie(request: FastifyRequest): boolean {
   if (String(request.protocol ?? '').toLowerCase() === 'https') return true;
-  return originOf(request)?.toLowerCase().startsWith('https://') === true;
+  const origin = originOf(request);
+  if (!origin) return true;
+  try {
+    const parsed = new URL(origin);
+    return !(parsed.protocol === 'http:' && parsed.hostname === '127.0.0.1');
+  } catch {
+    return true;
+  }
 }
 
 function assertLoginOrigin(request: FastifyRequest, config: ServerConfig, clientType: ClientType): void {
