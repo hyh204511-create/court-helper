@@ -99,7 +99,7 @@ needsHuman, errorCode, sourceUpdatedAt
 - 单主密钥由部署 secret `CREDENTIAL_MASTER_KEY` 注入（32 字节 base64），不进数据库、镜像、Compose 文件或仓库；缺失、长度错误或认证解密失败时拒绝启动/拒绝出密，不返回残缺明文。
 - 日志只记录 request ID、路由模板、状态码、耗时和脱敏主体 ID；禁止记录请求/响应体、查询参数中的业务值、凭据、截图、驳回原因。无 SSE 通道。
 - **后台明文查看例外**：根据已确认内部权限，`admin_ui` Cookie 会话的 admin、user 均可从专用 `credential-view` 与模板内容接口得到完整平台账号/密码及上传文件内容；这些响应一律 `Cache-Control: private, no-store`，不得通过 extension Bearer、普通列表、command payload、任务结果、客户端存储或日志暴露。
-- TLS 以下不提供服务；CORS 仅允许后台同源与配置的扩展 Origin。登录校验 Origin，其他 Cookie 写操作校验 Origin + CSRF token；Bearer 请求不接受 Cookie 降级认证。
+- 生产服务仅通过 TLS 提供；本机回环开发服务允许 `http://127.0.0.1`。后台会话 Cookie 在 HTTPS 请求/受信 HTTPS Origin 下设置 `Secure`，本机 HTTP 登录省略 `Secure` 以确保浏览器实际回传 HttpOnly Cookie；CORS 仅允许后台同源与配置的扩展 Origin。登录校验 Origin，其他 Cookie 写操作校验 Origin + CSRF token；Bearer 请求不接受 Cookie 降级认证。
 
 ## 5. 30 天保留与迁移
 

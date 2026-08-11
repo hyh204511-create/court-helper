@@ -80,6 +80,11 @@ function originOf(request: FastifyRequest): string | undefined {
   return typeof origin === 'string' ? origin : undefined;
 }
 
+function secureSessionCookie(request: FastifyRequest): boolean {
+  if (String(request.protocol ?? '').toLowerCase() === 'https') return true;
+  return originOf(request)?.toLowerCase().startsWith('https://') === true;
+}
+
 function assertLoginOrigin(request: FastifyRequest, config: ServerConfig, clientType: ClientType): void {
   const origin = originOf(request);
   const allowed = clientType === 'admin_ui'
@@ -192,7 +197,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: RegisterAuthOp
     if (clientType === 'admin_ui') {
       reply.setCookie(SESSION_COOKIE_NAME, result.token, {
         httpOnly: true,
-        secure: true,
+        secure: secureSessionCookie(request),
         sameSite: 'strict',
         path: '/',
         maxAge: config.auth.sessionTtlSeconds,
