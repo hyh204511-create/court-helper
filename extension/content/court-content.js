@@ -453,7 +453,13 @@ function detailItemPair(item) {
 
 function uniqueDetailSection(title) {
   const matches = [...document.querySelectorAll(SELECTORS.detail.section)]
-    .filter((section) => section.getAttribute("title")?.trim() === title);
+    .filter((section) => {
+      const attributeTitle = section.getAttribute("title")?.trim();
+      if (attributeTitle) return attributeTitle === title;
+      const headings = [...section.querySelectorAll(SELECTORS.detail.sectionTitle)]
+        .filter((heading) => textOf(heading) === title);
+      return headings.length === 1;
+    });
   return matches.length === 1 ? matches[0] : null;
 }
 

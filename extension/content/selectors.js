@@ -38,7 +38,8 @@ export const SELECTORS = {
   },
   // 案件详情页（案件空间 pagesWsla/common/wsla/detail）
   detail: {
-    section: "uni-section[title]",
+    section: ".uni-section, uni-section[title]",
+    sectionTitle: ".uni-section__content-title",
     formItem: ".uni-forms-item",
   },
 };
