@@ -700,6 +700,62 @@ test("驳回截图组合页面中的双方当事人姓名与审核结果且排�
   }
 });
 
+test("详情页等待延迟渲染的双方当事人信息后再生成驳回截图", async () => {
+  await db.resetDb();
+  const uid = "synthetic-delayed-party-evidence";
+  await db.upsertByUid(db.STORE_CASES, uid, {
+    uid,
+    account: "demo-account",
+    plaintiff: "SYNTHETIC DELAYED PLAINTIFF",
+    defendant: "SYNTHETIC DELAYED DEFENDANT",
+    kind: "li",
+    status: "已驳回",
+  });
+  const { dom, chrome, module } = await loadContent({
+    hash: "#/pagesWsla/common/wsla/detail/index",
+    html: `
+      <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
+      <uni-section title="审核结果">
+        <div class="uni-forms-item"><span>审核结果</span><span>审核不通过</span></div>
+        <div class="uni-forms-item"><span>审核时间</span><span>2026-08-11 12:00:00</span></div>
+        <div class="uni-forms-item"><span>审核意见</span><span>SYNTHETIC DELAYED OPINION</span></div>
+      </uni-section>`,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  chrome.setPendingDetail({ uid, kind: "li" });
+  try {
+    let waitCalls = 0;
+    let capturedText = "";
+    assert.equal(await module.runDetailCapture({
+      waitForEvidence: async (predicate) => {
+        waitCalls += 1;
+        assert.equal(Boolean(predicate()), false);
+        dom.window.document.body.insertAdjacentHTML("beforeend", `
+          <uni-section title="原告信息">
+            <div class="uni-forms-item"><span>名称</span><span>SYNTHETIC DELAYED PLAINTIFF</span></div>
+          </uni-section>
+          <uni-section title="被告信息">
+            <div class="uni-forms-item"><span>名称</span><span>SYNTHETIC DELAYED DEFENDANT</span></div>
+          </uni-section>`);
+        return Boolean(predicate());
+      },
+      capture: async (target) => {
+        capturedText = target.textContent;
+        return new Blob(["synthetic-delayed-party-image"], { type: "image/jpeg" });
+      },
+    }), true);
+    assert.equal(waitCalls, 1);
+    assert.match(capturedText, /SYNTHETIC DELAYED PLAINTIFF/);
+    assert.match(capturedText, /SYNTHETIC DELAYED DEFENDANT/);
+    const stored = await db.getByUid(db.STORE_CASES, uid);
+    assert.ok(stored.rejectImage instanceof Blob);
+    assert.equal(stored.needsHuman, false);
+  } finally {
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
 test("详情页当事人身份与待办记录不一致时保留审核文字但禁止降级截图", async () => {
   await db.resetDb();
   const uid = "synthetic-party-evidence-mismatch";
