@@ -480,7 +480,7 @@ test("START_BATCH 驳回行使用真实 DOM 按钮触发详情取证", async () 
     needsHuman: true,
     errorCode: "SCREENSHOT_CAPTURE_FAILED",
   });
-  const { dom, listener } = await loadContent({
+  const { dom, chrome, listener } = await loadContent({
     hash: "#/pagesWsla/pc/list/index",
     html: `
       <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
@@ -508,6 +508,7 @@ test("START_BATCH 驳回行使用真实 DOM 按钮触发详情取证", async () 
         needsHuman: false,
         errorCode: null,
       });
+      chrome.setPendingDetail(null);
       finishCapture();
     }, 10);
   });
@@ -542,7 +543,7 @@ test("START_BATCH 强执待补充材料沿已驳回链路写入驳回证据", as
     kind: "qz",
     status: "UNKNOWN",
   });
-  const { dom, listener } = await loadContent({
+  const { dom, chrome, listener } = await loadContent({
     hash: "#/pagesWsla/pc/list/index",
     html: `
       <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
@@ -564,6 +565,7 @@ test("START_BATCH 强执待补充材料沿已驳回链路写入驳回证据", as
       needsHuman: false,
       errorCode: null,
     });
+    chrome.setPendingDetail(null);
   });
   const nativeSetTimeout = globalThis.setTimeout;
   globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, delay >= 1000 ? 0 : delay, ...args);

@@ -685,8 +685,8 @@ async function queryCase({ uid, kind }) {
     raw.rejectReason = biz.auditOpinion ?? null;
     await triggerDetailCapture({ uid, kind, target: targetElement });
     const ok = await waitFor(async () => {
-      const updated = await db.getByUid(store, uid);
-      return !!updated?.rejectTime || updated?.errorCode === "AUDIT_EVIDENCE_INCOMPLETE";
+      const pending = await chrome.runtime.sendMessage({ type: "CASE_DETAIL_PENDING_GET" });
+      return pending?.ok === true && pending.pendingDetail == null;
     }, 30000, 1000);
     const updated = await db.getByUid(store, uid);
     if (ok && updated) {
