@@ -603,6 +603,7 @@ test("详情页最新审核记录不完整时不回退历史记录或截图", as
   try {
     let captures = 0;
     const ok = await module.runDetailCapture({
+      waitForEvidence: async () => false,
       capture: async () => {
         captures += 1;
         return new Blob(["synthetic-recaptured-image"], { type: "image/jpeg" });
@@ -633,7 +634,10 @@ test("详情页最新审核记录不完整时不回退历史记录或截图", as
       <div class="uni-forms-item"><span>审核时间</span><span>2026-08-07 09:30:00</span></div>`;
     chrome.setPendingDetail({ uid: incompleteUid, kind: "li" });
     let incompleteCaptures = 0;
-    assert.equal(await module.runDetailCapture({ capture: async () => { incompleteCaptures += 1; } }), true);
+    assert.equal(await module.runDetailCapture({
+      waitForEvidence: async () => false,
+      capture: async () => { incompleteCaptures += 1; },
+    }), true);
     const incomplete = await db.getByUid(db.STORE_CASES, incompleteUid);
     assert.equal(incompleteCaptures, 0);
     assert.equal(incomplete.rejectTime, undefined);
@@ -787,7 +791,10 @@ test("详情页当事人身份与待办记录不一致时保留审核文字但�
   chrome.setPendingDetail({ uid, kind: "qz" });
   try {
     let captures = 0;
-    assert.equal(await module.runDetailCapture({ capture: async () => { captures += 1; } }), true);
+    assert.equal(await module.runDetailCapture({
+      waitForEvidence: async () => false,
+      capture: async () => { captures += 1; },
+    }), true);
     assert.equal(captures, 0);
     const stored = await db.getByUid(db.STORE_ENFORCEMENT, uid);
     assert.equal(stored.rejectTime, "2026-08-11");

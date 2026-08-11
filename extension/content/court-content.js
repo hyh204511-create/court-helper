@@ -502,7 +502,7 @@ function appendEvidenceBlock(target, title, items) {
  * 由同一详情页中精确核对的双方名称项与最新审核记录构造临时截图目标。
  * 业务文字只来自页面源 DOM；record 值仅用于全等校验，不写入证据容器。
  */
-function buildDetailEvidenceTarget({ record, kind, latest }) {
+function findDetailEvidenceSources({ record, kind, latest }) {
   const roles = kind === "qz"
     ? [["申请执行人信息", record.plaintiff], ["被执行人信息", record.defendant]]
     : [["原告信息", record.plaintiff], ["被告信息", record.defendant]];
@@ -520,17 +520,27 @@ function buildDetailEvidenceTarget({ record, kind, latest }) {
   const auditItems = latestAuditItems(auditSection, latest);
   if (!auditItems) return null;
 
+  return { partyEvidence, auditItems };
+}
+
+function buildDetailEvidenceTarget(input) {
+  const sources = findDetailEvidenceSources(input);
+  if (!sources) return null;
+
   const target = document.createElement("div");
   target.setAttribute("data-court-helper-detail-evidence", "");
   target.style.cssText = "position:absolute;left:-100000px;top:0;box-sizing:border-box;width:1200px;padding:16px;background:#fff;color:#1f2937;";
-  for (const party of partyEvidence) appendEvidenceBlock(target, party.title, [party.item]);
-  appendEvidenceBlock(target, "审核结果", auditItems);
+  for (const party of sources.partyEvidence) appendEvidenceBlock(target, party.title, [party.item]);
+  appendEvidenceBlock(target, "审核结果", sources.auditItems);
   document.body.append(target);
   return { target, cleanup: () => target.remove() };
 }
 
 // —— 详情页角色：读取待办并采集驳回凭证（审核时间/原因/截图） ——
-export async function runDetailCapture({ capture = captureElement } = {}) {
+export async function runDetailCapture({
+  capture = captureElement,
+  waitForEvidence = (predicate) => waitFor(predicate, 15000),
+} = {}) {
   const pendingResponse = await chrome.runtime.sendMessage({ type: "CASE_DETAIL_PENDING_GET" });
   if (pendingResponse?.ok !== true) return false;
   const { pendingDetail } = pendingResponse;
@@ -542,17 +552,22 @@ export async function runDetailCapture({ capture = captureElement } = {}) {
     // pendingDetail remains the authoritative handoff; adoption is diagnostic only.
   }
   const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
-  const ok = await waitFor(
-    () => document.querySelectorAll(SELECTORS.detail.formItem).length >= 2,
-    15000,
-  );
-  if (!ok) {
+  const rec = await db.getByUid(store, uid);
+  if (!rec) return false;
+  await waitForEvidence(() => {
+    const candidate = collectDetail(document);
+    const candidateLatest = selectLatestAuditRecord(candidate.auditRecords);
+    return Boolean(candidateLatest && findDetailEvidenceSources({
+      record: rec,
+      kind,
+      latest: candidateLatest,
+    }));
+  });
+  const detail = collectDetail(document);
+  if (!detail.auditRecords.length) {
     showToast("详情页加载超时，驳回凭证未采集，请人工处理");
     return false;
   }
-  const detail = collectDetail(document);
-  const rec = await db.getByUid(store, uid);
-  if (!rec || !detail.auditRecords.length) return false;
   const latest = selectLatestAuditRecord(detail.auditRecords);
   if (!latest) {
     await db.upsertByUid(store, uid, {
