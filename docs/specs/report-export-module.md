@@ -98,6 +98,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS report_exports_sha256_creator_account_uidx
 - `QUERY_ALL_EXPORT` 的非敏感 `payload.salesperson` 只在命令执行链路中传给 content，并统一写入工作簿 U 列；上传接口与报表记录不另存业务员元数据。兼容 `EXPORT_REPORT` 未携带该值时 U 列留空。
 - 后台“导出成功”以服务端创建记录或幂等命中为准；仅本地下载、未配置或上传失败不显示为后台成功记录。
 - `QUERY_ALL_EXPORT` 只有在每一类都完成安全处理后才进入导出：某类有记录时必须通过结构/会话/账号/选择器/API-DOM 校验；某类没有记录时必须取得结构化 `total=0` 且当前 DOM 无该类行的确认空结果。只要至少一类产生可导出记录，即可生成仅含该类数据的报表；确认为空的另一类不阻断。任一无法确认空结果或其他硬失败不得读取旧数据生成混合报表。案件级 `UNKNOWN/needsHuman` 不属于硬失败，仍按既有样式导出并保留待人工提示。
+- 网上立案列表中不属于 query-module 批准状态白名单的行不属于可导出业务记录：API 与 DOM 按原始顺序逐项确认双方均为未批准后，在建档前跳过，不点击“案件空间”，不写入 `UNKNOWN` 行。任一位置的保留/跳过结论、原始行数或顺序不一致仍按硬失败阻断；非报表识别场景的未知状态继续遵循 `UNKNOWN/needsHuman` 规则。某类全部为已核验未批准状态时等同该类确认空结果；另一类有有效记录即可继续导出，两类均无有效记录仍返回 `REPORT_EMPTY`。
 - 导出前按当前页面账号和命令绑定的 `platformAccountId` 查询两张本地案件表；两表合计为 0 行时返回稳定错误 `REPORT_EMPTY`，不得创建 Blob、触发本地下载、上传服务器或回写 `SUCCESS`。非空记录即使为 `UNKNOWN` 或缺少部分证据，仍按既有红色待人工规则导出，不得猜测补齐。
 - **SW 配置懒初始化**：`EXPORT_UPLOAD` 到达时若 SW 尚无 remote client，须重新读取 `chrome.storage.local` 同步配置并初始化（运行中新增/清除服务器配置立即生效）；相关 storage 键变化时重建 client，不得沿用过期配置。
 
