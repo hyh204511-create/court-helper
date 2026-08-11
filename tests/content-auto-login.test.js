@@ -679,7 +679,7 @@ test("驳回截图保留原生案件空间页头、重新提交和最新审核�
     html: `
       <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
       <uni-view class="fd-com-page">
-        <uni-view class="fd-com-header"><span>案件空间</span><span>SYNTHETIC CASE TITLE</span></uni-view>
+        <uni-view class="fd-com-header"><span>案件空间</span><span>SYNTHETIC PLAINTIFF 与 SYNTHETIC DEFENDANT 一案</span></uni-view>
         <main class="fd-com-main-container"><uni-view class="fd-content-container">
           <uni-view class="uni-section">
             <uni-text class="uni-section__content-title"><span>重新提交信息</span></uni-text>
@@ -722,7 +722,7 @@ test("驳回截图保留原生案件空间页头、重新提交和最新审核�
       },
     }), true);
     assert.match(capturedClass, /fd-com-page/);
-    assert.match(capturedText, /案件空间[\s\S]*SYNTHETIC CASE TITLE/);
+    assert.match(capturedText, /案件空间[\s\S]*SYNTHETIC PLAINTIFF 与 SYNTHETIC DEFENDANT 一案/);
     assert.match(capturedText, /重新提交信息[\s\S]*2026-08-01 10:00:00/);
     assert.match(capturedText, /审核结果[\s\S]*审核不通过[\s\S]*SYNTHETIC AUDIT OPINION/);
     assert.doesNotMatch(capturedText, /SYNTHETIC STALE OPINION|基本信息|SYNTHETIC BASIC SECRET|原告信息|被告信息/);
