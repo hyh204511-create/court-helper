@@ -144,10 +144,10 @@ button:disabled { cursor: not-allowed; opacity: .48; box-shadow: none; }
 .field input:hover, .field select:hover { border-color: #91caff; }
 .field input::placeholder { color: #94a3b8; }
 .field input:focus, .field select:focus { border-color: var(--navy); box-shadow: 0 0 0 3px rgba(22, 119, 255, .12); }
-.account-picker { display: flex; align-items: center; position: relative; min-height: 44px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--paper-bright); }
+.account-picker { display: flex; align-items: center; position: relative; min-width: 0; min-height: 44px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--paper-bright); }
 .account-picker:hover { border-color: #91caff; }
 .account-picker:focus-within { border-color: var(--navy); box-shadow: 0 0 0 3px rgba(22, 119, 255, .12); }
-.account-picker input { min-width: 0; flex: 1 1 auto; width: auto; border: 0; background: transparent; }
+.account-picker input { min-width: 0; flex: 1 1 auto; width: auto; overflow: hidden; border: 0; background: transparent; text-overflow: ellipsis; }
 .account-picker input:focus-visible { outline: 0; }
 .account-picker-toggle { flex: 0 0 40px; width: 40px; min-height: 38px; margin-right: 3px; padding: 6px; border: 0; border-radius: 6px; color: #526477; background: transparent; }
 .account-picker-toggle:hover { color: var(--navy-hover); background: var(--blue-soft); }
@@ -190,6 +190,7 @@ button:disabled { cursor: not-allowed; opacity: .48; box-shadow: none; }
 .small-button.danger:hover { border-color: #ff7875; color: #a8071a; background: #ffe7e5; }
 
 .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(156px, 1fr)); gap: 14px; align-items: end; }
+.filters > .field { min-width: 0; }
 .filter-actions { display: flex; gap: 8px; }
 .filter-actions button { width: 100%; }
 .case-status { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 44px; margin-bottom: 8px; color: var(--ink-soft); font-size: 12px; }

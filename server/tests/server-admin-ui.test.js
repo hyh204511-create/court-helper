@@ -12,7 +12,7 @@ import { REPORT_EXPORT_CONTENT_TYPE } from '../src/report-exports/types.ts';
 import { MemoryScreenshotRepository } from '../src/screenshots/memory-repository.ts';
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
 import { renderAdminPage } from '../src/admin/pages.ts';
-import { ADMIN_SCRIPT } from '../src/admin/assets.ts';
+import { ADMIN_SCRIPT, ADMIN_STYLES } from '../src/admin/assets.ts';
 
 const TEST_KEY = Buffer.alloc(32, 37).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
@@ -49,6 +49,12 @@ test('cases is the only case-status view and browser control links to it', () =>
   const browserControl = renderAdminPage('browser-control', 'user');
   assert.match(browserControl, /href="\/admin\/cases"[^>]*>查看案件台账<\/a>/);
   assert.doesNotMatch(browserControl, /id="browser-account-search-form"|id="browser-account-case-rows"/);
+});
+
+test('case filter grid keeps account controls inside their own columns', () => {
+  assert.match(ADMIN_STYLES, /\.filters\s*>\s*\.field\s*\{[^}]*min-width:\s*0/);
+  assert.match(ADMIN_STYLES, /\.account-picker\s*\{[^}]*min-width:\s*0/);
+  assert.match(ADMIN_STYLES, /\.account-picker input\s*\{[^}]*text-overflow:\s*ellipsis/);
 });
 
 test('case account filter resolves manual labels once, shows business and handling status separately, and polling keeps the applied UUID', async () => {
