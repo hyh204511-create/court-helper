@@ -23,7 +23,7 @@ import {
   isCourtListRoute,
   isLoginRoute,
 } from "./login-detector.js";
-import { doAutoLogin } from "./login-auto.js";
+import { doAutoLogin, requestTrustedClick } from "./login-auto.js";
 import { captureElement } from "./screen-capturer.js";
 import { persistSyncRecord, runBatch, jitterMs } from "../data/batch-runner.js";
 import { createRuntimeCaseOutbox } from "../data/runtime-case-outbox.js";
@@ -646,18 +646,29 @@ async function triggerDetailCapture({ uid, kind, target }) {
   if (handoff?.ok !== true) throw new Error(handoff?.code ?? "CASE_SPACE_HANDOFF_FAILED");
   const btn = target.querySelector(SELECTORS.list.spaceBtn);
   if (!btn?.isConnected) throw new Error("CASE_SPACE_BUTTON_UNAVAILABLE");
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    btn.click();
-    for (let poll = 0; poll < 20; poll += 1) {
-      const state = await chrome.runtime.sendMessage({ type: "CASE_DETAIL_PENDING_GET" });
-      const adopted = state?.handoff?.uid === uid
-        && state.handoff.kind === kind
-        && state.handoff.phase === "adopted";
-      if (adopted || (state?.ok === true && state.pendingDetail == null)) return;
-      await sleep(250);
+  const clickDependencies = {
+    sendMessage: chrome.runtime.sendMessage.bind(chrome.runtime),
+    clickSessionStarted: false,
+  };
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const clicked = await requestTrustedClick(btn, clickDependencies);
+      if (!clicked.ok) throw new Error("CASE_SPACE_CLICK_FAILED");
+      for (let poll = 0; poll < 20; poll += 1) {
+        const state = await chrome.runtime.sendMessage({ type: "CASE_DETAIL_PENDING_GET" });
+        const adopted = state?.handoff?.uid === uid
+          && state.handoff.kind === kind
+          && state.handoff.phase === "adopted";
+        if (adopted || (state?.ok === true && state.pendingDetail == null)) return;
+        await sleep(250);
+      }
+    }
+    throw new Error("CASE_SPACE_TAB_UNAVAILABLE");
+  } finally {
+    if (clickDependencies.clickSessionStarted) {
+      await chrome.runtime.sendMessage({ type: "CLICK_SESSION_END" }).catch(() => undefined);
     }
   }
-  throw new Error("CASE_SPACE_TAB_UNAVAILABLE");
 }
 
 /** 列表页角色：查询单个案件（pageOps.queryCase 浏览器实现） */

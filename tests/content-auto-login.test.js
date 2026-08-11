@@ -21,6 +21,11 @@ function makeChrome() {
         },
       },
       sendMessage: async (message) => {
+        if (message?.type === "CLICK_REQUEST") {
+          globalThis.document?.querySelector(".fd-case-space-btn")?.click();
+          return { ok: true };
+        }
+        if (message?.type === "CLICK_SESSION_END") return { ok: true };
         if (message?.type === "CASE_DETAIL_PENDING_GET") return { ok: true, pendingDetail };
         if (message?.type === "CASE_DETAIL_PENDING_CLEAR") {
           pendingDetail = null;
@@ -69,6 +74,9 @@ async function loadContent({ hash, html = "<main></main>" }) {
   globalThis.document = dom.window.document;
   globalThis.location = dom.window.location;
   globalThis.chrome = chrome;
+  for (const button of dom.window.document.querySelectorAll(".fd-case-space-btn")) {
+    setRect(button, { left: 20, top: 20, width: 120, height: 40 });
+  }
   const module = await import(`../extension/content/court-content.js?auto-login-test=${importSequence++}`);
   assert.equal(typeof module.observePanelLogin, "function");
   return { dom, chrome, listener: chrome.listeners.at(-1), module };
@@ -140,7 +148,7 @@ test("案件空间点击未打开详情标签时明确失败，不把点击动�
     kind: "li",
     status: "已驳回",
   });
-  const { dom, listener } = await loadContent({
+  const { dom, chrome, listener } = await loadContent({
     hash: "#/pagesWsla/pc/list/index",
     html: `
       <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
@@ -153,6 +161,15 @@ test("案件空间点击未打开详情标签时明确失败，不把点击动�
       </div>`,
   });
   let clicks = 0;
+  const clickMessages = [];
+  const sendMessage = chrome.runtime.sendMessage;
+  chrome.runtime.sendMessage = async (message) => {
+    if (message?.type === "CLICK_REQUEST" || message?.type === "CLICK_SESSION_END") {
+      clickMessages.push(message);
+      return { ok: true };
+    }
+    return sendMessage(message);
+  };
   dom.window.document.querySelector(".fd-case-space-btn").addEventListener("click", () => { clicks += 1; });
   const nativeSetTimeout = globalThis.setTimeout;
   globalThis.setTimeout = (callback, _delay, ...args) => nativeSetTimeout(callback, 0, ...args);
@@ -160,7 +177,9 @@ test("案件空间点击未打开详情标签时明确失败，不把点击动�
     const result = await dispatch(listener, { type: "START_BATCH", kind: "li" });
     assert.equal(result.response?.ok, false);
     assert.equal(result.response?.error, "CASE_SPACE_TAB_UNAVAILABLE");
-    assert.ok(clicks >= 2);
+    assert.equal(clicks, 0);
+    assert.ok(clickMessages.filter((message) => message.type === "CLICK_REQUEST").length >= 2);
+    assert.equal(clickMessages.at(-1)?.type, "CLICK_SESSION_END");
   } finally {
     globalThis.setTimeout = nativeSetTimeout;
     cleanup(dom);

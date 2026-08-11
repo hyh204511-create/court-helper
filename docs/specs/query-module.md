@@ -115,7 +115,7 @@
 - 截图归属：立案成功 → H 列；驳回 → K 列；强执成功 → H 列（强执表块）。
 - 文字事实与截图独立提交：已精确读取的状态、审核时间和审核意见必须先保留；截图失败仅标记 `SCREENSHOT_CAPTURE_FAILED + needsHuman=true`，不得降级为 `UNKNOWN`、不得清空时间/原因。驳回图片必须沿 `rejectImage` 传播，禁止误写 `successImage`。
 - 列表页打开案件空间后，必须等待本次详情采集产生的完整终态（新 `rejectImage`，或本次明确写入的证据/截图失败码）再结束案件查询；已有的 `rejectTime`、`rejectReason` 或历史失败码不得被当作本次详情采集已完成，否则禁止进入报表导出。
-- 点击「案件空间」后必须通过 Service Worker 确认新详情标签已接管待办，或确认本次详情采集已经清除待办；单次未确认允许再次点击 1 次，仍未打开详情标签时返回 `CASE_SPACE_TAB_UNAVAILABLE` 并阻断无图导出，不得仅凭 `.click()` 已调用就判定成功。
+- 「案件空间」必须沿用受控浏览器真实点击链路（坐标只来自当前可见、已严格绑定的 `.fd-case-space-btn`），不得用合成 `.click()` 触发可能被浏览器拦截的新标签；点击后必须通过 Service Worker 确认新详情标签已接管待办，或确认本次详情采集已经清除待办。单次未确认允许再次点击 1 次，仍未打开详情标签时返回 `CASE_SPACE_TAB_UNAVAILABLE` 并阻断无图导出；点击会话无论成功失败都必须释放。
 - DOM 截图在克隆页面中移除已确认不承载业务事实且无法跨域读取的装饰背景（当前为 `yja-status-bg.png`）。截图目标只允许克隆同页原生 `.fd-com-page`，保留原生页头并把内容裁剪到可选「重新提交信息」与唯一最新审核记录；临时克隆无论成功或失败都必须移除。真实平台源 DOM 只允许添加截图定位所需的临时属性，且必须清理，不得改变其样式、业务内容；禁止向证据图绘制来自 IndexedDB、命令 payload 或 URL 的业务文字。补图成功时允许清除历史 `SCREENSHOT_CAPTURE_FAILED`、`PARTY_EVIDENCE_INCOMPLETE` 或 `DETAIL_SCREENSHOT_TARGET_INCOMPLETE`。
 - 一个批次中只要存在 `UNKNOWN`、截图失败或其他 `needsHuman=true` 记录，浏览器查询命令就不得回写成功；必须返回该批次首个稳定错误码（没有更具体错误码时为 `NEEDS_HUMAN`）。后续跨页补证不得掩盖首轮失败。
 
