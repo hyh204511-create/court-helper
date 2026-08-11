@@ -440,14 +440,93 @@ function isBrowserCommandReady() {
   return isQueryControlsReady(document);
 }
 
-/** 审核结果区元素（截图目标） */
-function findAuditSection() {
-  const items = document.querySelectorAll(SELECTORS.detail.formItem);
-  const first = items[0];
-  if (!first) return null;
-  let el = first;
-  for (let i = 0; i < 6 && el.parentElement; i++) el = el.parentElement;
-  return el;
+const textOf = (value) => String(value?.textContent ?? value?.innerText ?? "").trim();
+
+function detailItemPair(item) {
+  const children = [...(item?.children ?? [])].filter((child) => textOf(child));
+  if (children.length >= 2) {
+    return { label: textOf(children[0]), value: textOf(children[children.length - 1]) };
+  }
+  const parts = textOf(item).split("\n").map((part) => part.trim()).filter(Boolean);
+  return parts.length ? { label: parts[0], value: parts.slice(1).join(" ") } : null;
+}
+
+function uniqueDetailSection(title) {
+  const matches = [...document.querySelectorAll(SELECTORS.detail.section)]
+    .filter((section) => section.getAttribute("title")?.trim() === title);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function uniquePartyItem(section, expectedValue) {
+  const matches = [...section.querySelectorAll(SELECTORS.detail.formItem)]
+    .filter((item) => detailItemPair(item)?.value === expectedValue);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function latestAuditItems(section, latest) {
+  const records = [];
+  let current = null;
+  for (const item of section.querySelectorAll(SELECTORS.detail.formItem)) {
+    const pair = detailItemPair(item);
+    if (!pair?.label) continue;
+    if (pair.label === "审核结果") {
+      current = { status: pair.value, items: [item] };
+      records.push(current);
+    } else if (pair.label === "审核时间" && current) {
+      current.time = pair.value;
+      current.items.push(item);
+    } else if (pair.label === "审核意见" && current) {
+      current.opinion = pair.value;
+      current.items.push(item);
+    }
+  }
+  const matches = records.filter((record) => record.status === latest.status
+    && record.time === latest.time
+    && record.opinion === latest.opinion
+    && record.items.length === 3);
+  return matches.length === 1 ? matches[0].items : null;
+}
+
+function appendEvidenceBlock(target, title, items) {
+  const block = document.createElement("section");
+  block.setAttribute("data-court-helper-evidence-block", "");
+  block.style.cssText = "box-sizing:border-box;width:100%;margin:0 0 12px;padding:12px;border:1px solid #d8e2ef;border-radius:4px;background:#fff;";
+  const heading = document.createElement("div");
+  heading.textContent = title;
+  heading.style.cssText = "margin:0 0 8px;font-weight:600;color:#26384a;";
+  block.append(heading, ...items.map((item) => item.cloneNode(true)));
+  target.append(block);
+}
+
+/**
+ * 由同一详情页中精确核对的双方名称项与最新审核记录构造临时截图目标。
+ * 业务文字只来自页面源 DOM；record 值仅用于全等校验，不写入证据容器。
+ */
+function buildDetailEvidenceTarget({ record, kind, latest }) {
+  const roles = kind === "qz"
+    ? [["申请执行人信息", record.plaintiff], ["被执行人信息", record.defendant]]
+    : [["原告信息", record.plaintiff], ["被告信息", record.defendant]];
+  if (roles.some(([, expected]) => typeof expected !== "string" || !expected.trim())) return null;
+  const partyEvidence = [];
+  for (const [title, expected] of roles) {
+    const section = uniqueDetailSection(title);
+    if (!section) return null;
+    const item = uniquePartyItem(section, expected.trim());
+    if (!item) return null;
+    partyEvidence.push({ title, item });
+  }
+  const auditSection = uniqueDetailSection("审核结果");
+  if (!auditSection) return null;
+  const auditItems = latestAuditItems(auditSection, latest);
+  if (!auditItems) return null;
+
+  const target = document.createElement("div");
+  target.setAttribute("data-court-helper-detail-evidence", "");
+  target.style.cssText = "position:absolute;left:-100000px;top:0;box-sizing:border-box;width:1200px;padding:16px;background:#fff;color:#1f2937;";
+  for (const party of partyEvidence) appendEvidenceBlock(target, party.title, [party.item]);
+  appendEvidenceBlock(target, "审核结果", auditItems);
+  document.body.append(target);
+  return { target, cleanup: () => target.remove() };
 }
 
 // —— 详情页角色：读取待办并采集驳回凭证（审核时间/原因/截图） ——
@@ -485,12 +564,19 @@ export async function runDetailCapture({ capture = captureElement } = {}) {
     return true;
   }
   let image = null;
-  const section = findAuditSection();
-  if (section) {
+  let evidenceError = null;
+  const evidenceTarget = buildDetailEvidenceTarget({ record: rec, kind, latest });
+  if (!evidenceTarget) {
+    evidenceError = "PARTY_EVIDENCE_INCOMPLETE";
+  } else {
     try {
-      image = await capture(section);
+      image = await capture(evidenceTarget.target);
+      if (!image) evidenceError = "SCREENSHOT_CAPTURE_FAILED";
     } catch (e) {
       console.warn("[court-helper] captureElement failed", e);
+      evidenceError = "SCREENSHOT_CAPTURE_FAILED";
+    } finally {
+      evidenceTarget.cleanup();
     }
   }
   const rejectReason = latest.opinion ?? rec.rejectReason ?? null;
@@ -504,7 +590,7 @@ export async function runDetailCapture({ capture = captureElement } = {}) {
     rejectReason,
     rejectImage: image ?? rec.rejectImage,
     needsHuman: image ? (recoveredCapture ? false : rec.needsHuman === true) : true,
-    errorCode: image ? (recoveredCapture ? null : rec.errorCode ?? null) : "SCREENSHOT_CAPTURE_FAILED",
+    errorCode: image ? (recoveredCapture ? null : rec.errorCode ?? null) : evidenceError,
   });
   await chrome.runtime.sendMessage({ type: "CASE_DETAIL_PENDING_CLEAR" });
   showToast(`已采集驳回凭证（${uid.slice(0, 8)}…）：${latest.time || "时间未知"}`);
