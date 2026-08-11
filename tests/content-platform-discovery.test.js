@@ -640,6 +640,48 @@ test("QUERY_LI 混合列表跳过未批准状态且只建档批准状态行", as
   }
 });
 
+test("QUERY_LI 原始列表全为未批准状态时确认零行并清理旧记录", async () => {
+  await db.resetDb();
+  const platformAccountId = "00000000-0000-4000-8000-000000000042";
+  await db.upsertByUid(db.STORE_CASES, "SYNTHETIC-OLD-UID", {
+    uid: "SYNTHETIC-OLD-UID",
+    account: "PLATFORM-ACCOUNT",
+    platformAccountId,
+    plaintiff: "SYNTHETIC OLD PLAINTIFF",
+    defendant: "SYNTHETIC OLD DEFENDANT",
+    status: "审核中",
+  });
+  const initialRows = caseRow({
+    status: "待提交",
+    name: "名称暂无",
+    type: "民事一审案件",
+    values: { 参与人: "", 案由: "", 申请日期: "" },
+  });
+  const { dom, chrome } = await loadContent({
+    initialRows,
+    runtimeSendMessage: async (message) => {
+      if (message?.type !== "QUERY_API_REQUEST") return undefined;
+      return message.path.includes("/count")
+        ? { ok: true, status: 200, data: { data: 1 } }
+        : { ok: true, status: 200, data: { data: [{ zt: "11800007-100" }] } };
+    },
+  });
+  try {
+    const response = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_LI",
+      queryMode: "platform_discovery",
+      platformAccountId,
+    });
+
+    assert.deepEqual(response, { ok: true, stats: { total: 0, completed: 0, needsHuman: 0 } });
+    assert.equal((await db.query(db.STORE_CASES, { account: "PLATFORM-ACCOUNT", platformAccountId })).length, 0);
+  } finally {
+    cleanup(dom);
+    await db.resetDb();
+  }
+});
+
 test("legacy my-case evidence phase no longer bypasses the normal structured query path", async () => {
   await db.resetDb();
   const platformAccountId = "00000000-0000-4000-8000-000000000027";

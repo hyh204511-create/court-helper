@@ -305,12 +305,19 @@ test("reconcileApiDomRows 要求 API 与非空 DOM 对未批准状态的逐行�
   });
   assert.equal(mismatch.code, "API_DOM_MISMATCH");
 
-  const emptyDomStatusFallsBackToApi = await reconcileApiDomRows({
+  const missingDomSkipEvidence = await reconcileApiDomRows({
     readApi,
     readDom: async () => ({ rawTotal: 2, reportableMask: [null, true], rows: approved }),
     waitForQuiet: async () => false,
   });
-  assert.equal(emptyDomStatusFallsBackToApi.ok, true);
+  assert.equal(missingDomSkipEvidence.code, "API_DOM_MISMATCH");
+
+  const emptyDomApprovedStatusFallsBackToApi = await reconcileApiDomRows({
+    readApi: async () => ({ ok: true, rawTotal: 1, total: 1, reportableMask: [true], rows: approved }),
+    readDom: async () => ({ rawTotal: 1, reportableMask: [null], rows: approved }),
+    waitForQuiet: async () => false,
+  });
+  assert.equal(emptyDomApprovedStatusFallsBackToApi.ok, true);
 });
 
 test("fetchLayyPages 强执使用 createTime 作为缺失 tjsj 的申请日期", async () => {

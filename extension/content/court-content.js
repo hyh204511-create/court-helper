@@ -980,7 +980,8 @@ async function startPlatformDiscovery(kind, { platformAccountId = null, allowEmp
     const apiResult = reconciled.api;
     rows = reconciled.dom.value;
     sourceApiRows = apiResult.rows;
-    if (allowEmpty && apiResult.total === 0 && rows.length === 0) {
+    const confirmedEmpty = apiResult.total === 0 && rows.length === 0;
+    if (confirmedEmpty && (allowEmpty || Number(apiResult.rawTotal) > 0)) {
       await db.replaceAccountRecords(store, account, [], { platformAccountId });
       return { ok: true, stats: { total: 0, completed: 0, needsHuman: 0 } };
     }

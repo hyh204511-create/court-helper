@@ -126,7 +126,7 @@ function reportableMasksMatch(api, dom) {
     || apiMask.length !== api.rawTotal || domMask.length !== dom.rawTotal) return false;
   return apiMask.every((decision, index) => (
     typeof decision === "boolean"
-    && (domMask[index] === null || domMask[index] === decision)
+    && (domMask[index] === decision || (domMask[index] === null && decision === true))
   ));
 }
 
