@@ -42,7 +42,16 @@ test('account filters support manual label input and an explicit dropdown', () =
   assert.match(accounts, /id="platform-list-account-menu"[^>]*role="listbox"/);
 });
 
-test('case account filter resolves manual labels once and polling keeps the applied UUID', async () => {
+test('cases is the only case-status view and browser control links to it', () => {
+  const cases = renderAdminPage('cases', 'user');
+  assert.match(cases, /<th>案件状态<\/th><th>处理状态<\/th>/);
+
+  const browserControl = renderAdminPage('browser-control', 'user');
+  assert.match(browserControl, /href="\/admin\/cases"[^>]*>查看案件台账<\/a>/);
+  assert.doesNotMatch(browserControl, /id="browser-account-search-form"|id="browser-account-case-rows"/);
+});
+
+test('case account filter resolves manual labels once, shows business and handling status separately, and polling keeps the applied UUID', async () => {
   const dom = new JSDOM(renderAdminPage('cases', 'user'), {
     runScripts: 'outside-only',
     url: 'https://admin.example.test/admin/cases',
@@ -66,7 +75,10 @@ test('case account filter resolves manual labels once and polling keeps the appl
         { id: SECOND_ACCOUNT_ID, label: 'second-account', enabled: true },
       ] });
     }
-    if (requestUrl.pathname === '/api/v1/cases') return jsonResponse({ cases: [], nextCursor: null });
+    if (requestUrl.pathname === '/api/v1/cases') return jsonResponse({ cases: [
+      { id: CASE_ID, clientUid: 'fixture-success', platformAccountId: ACCOUNT_ID, kind: 'li', plaintiff: '脱敏原告', defendant: '脱敏被告', status: '立案成功', needsHuman: true, errorCode: 'SCREENSHOT_CAPTURE_FAILED', queryTime: NOW.toISOString() },
+      { id: '00000000-0000-0000-0000-000000000101', clientUid: 'fixture-unknown', platformAccountId: ACCOUNT_ID, kind: 'li', plaintiff: '脱敏原告二', defendant: '脱敏被告二', status: 'UNKNOWN', needsHuman: true, errorCode: 'UNKNOWN_STATUS', queryTime: NOW.toISOString() },
+    ], nextCursor: null });
     throw new Error(`unexpected request ${requestUrl.pathname}`);
   };
   dom.window.eval(ADMIN_SCRIPT);
@@ -82,6 +94,17 @@ test('case account filter resolves manual labels once and polling keeps the appl
 
   try {
     await waitFor(() => dom.window.document.querySelectorAll('#case-account-menu [role="option"]').length === 2);
+    await waitFor(() => dom.window.document.querySelectorAll('#case-rows tr').length === 2);
+    const firstCasesRequest = requests.find((path) => path.startsWith('/api/v1/cases?'));
+    assert.doesNotMatch(firstCasesRequest, /(?:from|to)=/);
+    const firstRowCells = dom.window.document.querySelectorAll('#case-rows tr')[0].children;
+    assert.equal(firstRowCells[3].textContent, '立案成功');
+    assert.equal(firstRowCells[4].textContent, '待人工');
+    assert.equal(firstRowCells[4].classList.contains('status-pill'), false);
+    assert.equal(firstRowCells[4].querySelector('.status-pill').textContent, '待人工');
+    const secondRowCells = dom.window.document.querySelectorAll('#case-rows tr')[1].children;
+    assert.equal(secondRowCells[3].textContent, '待人工确认');
+    assert.equal(secondRowCells[4].textContent, '待人工');
     const input = dom.window.document.querySelector('#case-account');
     const form = dom.window.document.querySelector('#case-filters');
     input.value = 'first';
@@ -497,8 +520,8 @@ test('admin and user page reachability is role-isolated, while unauthenticated p
     assert.match(browserControl.body, /id="current-backoffice-user"/);
     assert.match(browserControl.body, /id="import-batch-form"/);
     assert.match(browserControl.body, /id="browser-command-rows"/);
-    assert.match(browserControl.body, /id="browser-account-search-form"/);
-    assert.match(browserControl.body, /id="browser-account-case-rows"/);
+    assert.match(browserControl.body, /href="\/admin\/cases"[^>]*>查看案件台账<\/a>/);
+    assert.doesNotMatch(browserControl.body, /id="browser-account-search-form"|id="browser-account-case-rows"/);
     assert.match(browserControl.body, /id="browser-command-clear"/);
     assert.match(browserControl.body, /id="browser-command-delete-all"/);
     assert.match(browserControl.body, /id="extension-device-delete-all"/);
@@ -620,7 +643,6 @@ test('browser control renders full session and creator names, separates LOGIN, a
         progress: 100,
         createdAt: NOW.toISOString(),
       }];
-      let stallCasePagination = false;
       let importBatches = [emptyLiBatch, emptyQzBatch];
       const jsonResponse = (body, status = 200) => ({
         ok: status >= 200 && status < 300,
@@ -658,27 +680,6 @@ test('browser control renders full session and creator names, separates LOGIN, a
           importBatches = importBatches.filter((batch) => batch.id !== emptyLiBatch.id);
           return jsonResponse(null, 204);
         }
-        if (requestUrl.pathname === '/api/v1/cases') {
-          assert.equal(requestUrl.searchParams.get('platformAccountId'), ACCOUNT_ID);
-          assert.equal(requestUrl.searchParams.has('keyword'), false);
-          if (requestUrl.searchParams.get('cursor') === '1') {
-            if (stallCasePagination) return jsonResponse({ cases: [], nextCursor: 1 });
-            return jsonResponse({
-              cases: [
-                { id: 'case-page-2', platformAccountId: ACCOUNT_ID, kind: 'qz', plaintiff: 'synthetic plaintiff', status: '审核中', caseNumber: '（测）案号-002', queryTime: NOW.toISOString() },
-              ],
-              nextCursor: null,
-            });
-          }
-          return jsonResponse({
-              cases: [
-                { id: 'case-li', platformAccountId: ACCOUNT_ID, kind: 'li', plaintiff: 'synthetic plaintiff', status: '立案成功', caseNumber: '（测）案号-001', queryTime: NOW.toISOString() },
-                { id: 'case-manual', platformAccountId: ACCOUNT_ID, kind: 'li', plaintiff: 'synthetic plaintiff', status: 'UNKNOWN', caseNumber: null, queryTime: NOW.toISOString() },
-                { id: 'case-hidden', platformAccountId: ACCOUNT_ID, kind: 'li', plaintiff: 'other plaintiff', status: '已驳回', caseNumber: 'HIDDEN-001', queryTime: NOW.toISOString() },
-              ],
-            nextCursor: 1,
-          });
-        }
         if (requestUrl.pathname === '/api/v1/auth/extension-pairings') return jsonResponse({ pairings: [] });
         if (requestUrl.pathname === '/api/v1/auth/extension-devices') return jsonResponse({ devices: [] });
         if (requestUrl.pathname === '/api/v1/browser-commands' && method === 'POST') {
@@ -713,11 +714,6 @@ test('browser control renders full session and creator names, separates LOGIN, a
       const cancelButton = dom.window.document.querySelector('[data-action="cancel-browser-command"]');
       assert.equal(cancelButton !== null, session.creatorId === session.id);
 
-      const accountSearch = dom.window.document.querySelector('#browser-account-search');
-      assert.deepEqual(
-        [...dom.window.document.querySelector('#browser-account-labels').options].map((option) => option.value),
-        ['synthetic-account', 'second-account', 'archived-account'],
-      );
       assert.deepEqual(
         dom.window.document.querySelector('#platform-login-account').tagName,
         'INPUT',
@@ -741,18 +737,7 @@ test('browser control renders full session and creator names, separates LOGIN, a
       loginAccountToggle.click();
       loginAccountMenu.querySelector('[data-platform-account-label="synthetic-account"]').click();
       assert.equal(loginAccount.value, 'synthetic-account');
-      accountSearch.value = 'synthetic-account';
-      dom.window.document.querySelector('#browser-account-keyword').value = 'synthetic plaintiff';
-      dom.window.document.querySelector('#browser-account-search-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
-      await waitFor(() => dom.window.document.querySelector('#browser-account-case-rows').textContent.includes('立案成功'));
-      assert.match(dom.window.document.querySelector('#browser-account-case-rows').textContent, /待人工/);
-      assert.match(dom.window.document.querySelector('#browser-account-case-rows').textContent, /审核中/);
-      assert.doesNotMatch(dom.window.document.querySelector('#browser-account-case-rows').textContent, /已驳回/);
-      assert.ok(requests.some((request) => request.path === `/api/v1/cases?platformAccountId=${ACCOUNT_ID}&limit=100`));
-      stallCasePagination = true;
-      dom.window.document.querySelector('#browser-account-search-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
-      await waitFor(() => dom.window.document.querySelector('[data-browser-account-message]').textContent.includes('请求失败'));
-      assert.equal(dom.window.document.querySelector('#browser-account-case-rows').textContent, '');
+      assert.equal(requests.some((request) => request.path.startsWith('/api/v1/cases')), false);
 
       assert.equal(dom.window.document.querySelector('#browser-command-type'), null);
       assert.match(dom.window.document.querySelector('#browser-command-form').textContent, /一键查询并导出/);

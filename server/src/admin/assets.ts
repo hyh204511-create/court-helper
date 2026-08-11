@@ -176,9 +176,9 @@ button:disabled { cursor: not-allowed; opacity: .48; box-shadow: none; }
 .subtle { color: var(--ink-soft); font-size: 12px; }
 .muted { color: var(--ink-soft); }
 .status-pill { display: inline-flex; align-items: center; min-height: 26px; padding: 4px 9px; border: 1px solid #bae0ff; border-radius: 999px; color: #0958d9; background: #e6f4ff; font-size: 11px; font-weight: 600; white-space: nowrap; }
-.status-pill.status-待人工 { border-color: #ffd591; color: #874d00; background: var(--amber-soft); }
+.status-pill.status-待人工, .status-pill.status-待人工确认 { border-color: #ffd591; color: #874d00; background: var(--amber-soft); }
 .status-pill.status-已驳回 { border-color: #ffccc7; color: #a8071a; background: var(--red-soft); }
-.status-pill.status-立案成功, .status-pill.status-强执成功 { border-color: #b7ebc6; color: #17663d; background: var(--green-soft); }
+.status-pill.status-立案成功, .status-pill.status-强执成功, .status-pill.status-正常 { border-color: #b7ebc6; color: #17663d; background: var(--green-soft); }
 .status-pill.status-login-pending { border-color: #ffd591; color: #874d00; background: var(--amber-soft); }
 .status-pill.status-login-executing { border-color: #bae0ff; color: #0958d9; background: #e6f4ff; }
 .status-pill.status-login-success { border-color: #b7ebc6; color: #17663d; background: var(--green-soft); }
@@ -273,8 +273,6 @@ button:disabled { cursor: not-allowed; opacity: .48; box-shadow: none; }
 
 export const ADMIN_SCRIPT = String.raw`
 const API_BASE = '/api/v1';
-const ACCOUNT_CASE_PAGE_SIZE = 100;
-const ACCOUNT_CASE_MAX_PAGES = 100;
 let csrfToken = null;
 let currentSessionUser = null;
 let casePollTimer = null;
@@ -465,7 +463,11 @@ function installLogout() {
 }
 
 function statusLabel(status) {
-  return status === 'UNKNOWN' ? '待人工' : (status || '—');
+  return status === 'UNKNOWN' ? '待人工确认' : (status || '—');
+}
+
+function handlingStatusLabel(needsHuman) {
+  return needsHuman ? '待人工' : '正常';
 }
 
 function dateLabel(value) {
@@ -531,7 +533,7 @@ function renderCaseRows(items) {
   if (!items.length) {
     const row = element('tr');
     const cell = element('td', '暂无案件');
-    cell.colSpan = 8;
+    cell.colSpan = 9;
     row.appendChild(cell);
     rows.appendChild(row);
     return;
@@ -548,6 +550,10 @@ function renderCaseRows(items) {
     const statusCell = element('td');
     statusCell.appendChild(renderStatus(item.status));
     row.appendChild(statusCell);
+    const handlingLabel = handlingStatusLabel(item.needsHuman);
+    const handlingCell = element('td');
+    handlingCell.appendChild(element('span', handlingLabel, 'status-pill status-' + handlingLabel));
+    row.appendChild(handlingCell);
     row.appendChild(element('td', item.kind === 'qz' ? '强执' : '立案'));
     row.appendChild(element('td', platformLabels.get(item.platformAccountId) || '—'));
     row.appendChild(element('td', item.rejectReason || '—'));
@@ -614,12 +620,6 @@ function initCases() {
   const next = $('#case-next');
   if (retry) retry.textContent = '手动重试';
   if (next) next.style.display = 'none';
-  const today = new Date();
-  const from = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const fromField = $('#case-from');
-  const toField = $('#case-to');
-  if (fromField) fromField.value = from.toISOString().slice(0, 10);
-  if (toField) toField.value = today.toISOString().slice(0, 10);
   bindAccountPicker(account, accountPicker, accountToggle, accountMenu);
   account?.addEventListener('input', () => { caseAccountValidationMessage = null; });
   if (filter) filter.addEventListener('submit', (event) => {
@@ -981,7 +981,6 @@ let browserCommandPollTimer = null;
 let browserControlVisible = true;
 let browserControlUserNames = null;
 let browserControlAccounts = [];
-let browserAccountQueryGeneration = 0;
 
 function browserCommandStatusLabel(status) {
   const labels = { pending: '等待中', executing: '执行中', succeeded: '成功', failed: '失败', expired: '已过期', manual_required: '待人工', cancelled: '已取消' };
@@ -1071,11 +1070,6 @@ async function loadBrowserControlAccounts() {
     browserControlAccounts = allAccounts;
     fillPlatformAccountLabelList(taskInput, taskLabels, enabledAccounts);
     fillPlatformAccountLabelList(loginInput, loginLabels, enabledAccounts, true);
-    const labels = $('#browser-account-labels');
-    if (labels) {
-      clear(labels);
-      allAccounts.forEach((account) => { const option = document.createElement('option'); option.value = account.label || '未命名'; labels.appendChild(option); });
-    }
     clearPlatformCredential();
   } catch (error) {
     setMessage($('[data-browser-command-message]'), errorMessage(error));
@@ -1154,76 +1148,6 @@ function bindAccountPicker(input, picker, toggle, menu) {
   });
 }
 
-function filterBrowserCommandRows() {
-  const query = String($('#browser-account-search')?.value || '').trim().toLocaleLowerCase('zh-CN');
-  document.querySelectorAll('#browser-command-rows tr[data-account-label]').forEach((row) => {
-    row.hidden = Boolean(query) && !String(row.dataset.accountLabel || '').toLocaleLowerCase('zh-CN').includes(query);
-  });
-}
-
-function matchesBrowserAccountKeyword(caseRecord, keyword) {
-  if (!keyword) return true;
-  const normalized = keyword.toLocaleLowerCase('zh-CN');
-  return [caseRecord.plaintiff, caseRecord.defendant, caseRecord.caseNumber].some((candidate) => (
-    typeof candidate === 'string'
-    && candidate.toLocaleLowerCase('zh-CN').includes(normalized)
-  ));
-}
-
-async function loadBrowserAccountCases(account, generation) {
-  const target = $('#browser-account-case-rows');
-  const message = $('[data-browser-account-message]');
-  if (!target) return;
-  if (generation !== browserAccountQueryGeneration) return;
-  clear(target);
-  try {
-    const keyword = String($('#browser-account-keyword')?.value || '').trim();
-    const cases = [];
-    const seenCursors = new Set();
-    let cursor = null;
-    let pageCount = 0;
-    while (true) {
-      if (pageCount >= ACCOUNT_CASE_MAX_PAGES) throw new ApiError(0, 'CASE_QUERY_PAGINATION_INVALID');
-      if (cursor !== null) {
-        const cursorKey = String(cursor);
-        if (seenCursors.has(cursorKey)) throw new ApiError(0, 'CASE_QUERY_PAGINATION_INVALID');
-        seenCursors.add(cursorKey);
-      }
-      pageCount += 1;
-      const params = new URLSearchParams();
-      params.set('platformAccountId', account.id);
-      params.set('limit', String(ACCOUNT_CASE_PAGE_SIZE));
-      if (cursor !== null) params.set('cursor', String(cursor));
-      const result = await api('/cases?' + params.toString());
-      if (generation !== browserAccountQueryGeneration) return;
-      cases.push(...(result.cases || []));
-      const nextCursor = result.nextCursor ?? null;
-      if (nextCursor !== null && cursor !== null && String(nextCursor) === String(cursor)) {
-        throw new ApiError(0, 'CASE_QUERY_PAGINATION_INVALID');
-      }
-      cursor = nextCursor;
-      if (cursor === null) break;
-    }
-    const filteredCases = cases.filter((caseRecord) => matchesBrowserAccountKeyword(caseRecord, keyword));
-    filteredCases.forEach((caseRecord) => {
-      const row = element('tr');
-      row.append(
-        element('td', account.label || '未命名'),
-        element('td', caseRecord.kind === 'qz' ? '强执' : '立案'),
-        element('td', caseRecord.status === 'UNKNOWN' ? '待人工' : caseRecord.status, 'status-pill'),
-        element('td', caseRecord.caseNumber || '—'),
-        element('td', dateLabel(caseRecord.queryTime)),
-      );
-      target.appendChild(row);
-    });
-    if (!target.firstChild) { const row = element('tr'); const cell = element('td', '该账号暂无案件记录'); cell.colSpan = 5; row.appendChild(cell); target.appendChild(row); }
-    setMessage(message, '已定位账号：' + (account.label || '未命名') + '，共 ' + filteredCases.length + ' 条案件', 'success');
-  } catch (error) {
-    if (generation !== browserAccountQueryGeneration) return;
-    setMessage(message, errorMessage(error));
-  }
-}
-
 async function loadBrowserControlUserNames() {
   if (browserControlUserNames) return browserControlUserNames;
   const names = new Map();
@@ -1294,7 +1218,6 @@ async function loadBrowserCommands() {
       row.appendChild(actions); target.appendChild(row);
     });
     if (!target.firstChild) { const row = element('tr'); const cell = element('td', '暂无浏览器任务'); cell.colSpan = 8; row.appendChild(cell); target.appendChild(row); }
-    filterBrowserCommandRows();
     setMessage(message, '已更新 ' + (result.commands?.length || 0) + ' 条任务', 'success');
   } catch (error) { setMessage(message, errorMessage(error)); }
 }
@@ -1375,8 +1298,6 @@ function initBrowserControl() {
   const accountMenu = $('#browser-command-account-menu');
   const batch = $('#browser-command-batch');
   const salesperson = $('#browser-command-salesperson');
-  const accountSearchForm = $('#browser-account-search-form');
-  const accountSearch = $('#browser-account-search');
   let credentialRequestGeneration = 0;
   const invalidatePlatformCredential = () => {
     credentialRequestGeneration += 1;
@@ -1463,16 +1384,6 @@ function initBrowserControl() {
     }
   });
   $('#browser-command-refresh')?.addEventListener('click', () => { void loadBrowserCommands(); void loadImportBatches(); });
-  accountSearch?.addEventListener('input', filterBrowserCommandRows);
-  accountSearchForm?.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const selected = selectedBrowserAccount(accountSearch?.value);
-    if (!selected) { setMessage($('[data-browser-account-message]'), '未找到唯一账号，请从账号标签提示中选择'); return; }
-    accountSearch.value = selected.label || '';
-    filterBrowserCommandRows();
-    const generation = ++browserAccountQueryGeneration;
-    void loadBrowserAccountCases(selected, generation);
-  });
   $('#browser-command-clear')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
     if (!window.confirm('确认清空有权查看的全部已结束任务记录？活动任务和案件台账不会删除。')) return;
