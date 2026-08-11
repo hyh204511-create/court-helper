@@ -803,6 +803,7 @@ test("详情页等待延迟渲染的原生页头后再生成驳回截图", async
     account: "demo-account",
     plaintiff: "SYNTHETIC DELAYED PLAINTIFF",
     defendant: "SYNTHETIC DELAYED DEFENDANT",
+    sourceCaseName: "SYNTHETIC DELAYED CASE NAME",
     kind: "li",
     status: "已驳回",
   });
@@ -830,7 +831,7 @@ test("详情页等待延迟渲染的原生页头后再生成驳回截图", async
         waitCalls += 1;
         assert.equal(Boolean(predicate()), false);
         dom.window.document.querySelector(".fd-com-page").insertAdjacentHTML("afterbegin", `
-          <uni-view class="fd-com-header"><span>案件空间</span><span>SYNTHETIC DELAYED PLAINTIFF 与 SYNTHETIC DELAYED DEFENDANT 一案</span></uni-view>`);
+          <uni-view class="fd-com-header"><span>案件空间</span><span>SYNTHETIC DELAYED CASE NAME</span></uni-view>`);
         dom.window.document.querySelector(".fd-content-container").insertAdjacentHTML("afterbegin", `
           <uni-section title="重新提交信息">
             <div class="uni-forms-item"><span>重新提交时间</span><span>2026-08-10 12:00:00</span></div>
@@ -843,8 +844,7 @@ test("详情页等待延迟渲染的原生页头后再生成驳回截图", async
       },
     }), true);
     assert.equal(waitCalls, 1);
-    assert.match(capturedText, /SYNTHETIC DELAYED PLAINTIFF/);
-    assert.match(capturedText, /SYNTHETIC DELAYED DEFENDANT/);
+    assert.match(capturedText, /SYNTHETIC DELAYED CASE NAME/);
     const stored = await db.getByUid(db.STORE_CASES, uid);
     assert.ok(stored.rejectImage instanceof Blob);
     assert.equal(stored.needsHuman, false);

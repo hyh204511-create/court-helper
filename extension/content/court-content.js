@@ -506,7 +506,11 @@ function findDetailEvidenceSources({ record, latest }) {
   const expectedParties = [record?.plaintiff, record?.defendant]
     .map((value) => typeof value === "string" ? value.trim() : "");
   const headerText = textOf(headers[0]);
-  if (expectedParties.some((value) => !value || !headerText.includes(value))) return null;
+  const sourceCaseName = typeof record?.sourceCaseName === "string" ? record.sourceCaseName.trim() : "";
+  const headerMatches = sourceCaseName
+    ? headerText.includes(sourceCaseName)
+    : expectedParties.every((value) => value && headerText.includes(value));
+  if (!headerMatches) return null;
   const content = contents[0];
   const resubmitSections = [...content.querySelectorAll(SELECTORS.detail.section)]
     .filter((section) => detailSectionTitle(section) === "重新提交信息");
