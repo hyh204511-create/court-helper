@@ -39,7 +39,14 @@ import {
   selectMyCaseApiEvidence,
   selectSourceApiRow,
 } from "../data/platform-evidence.js";
-import { createMainWorldFetch, fetchLayyPages, fetchMyCases, memoizeAsync, reconcileApiDomRows } from "./query-api.js";
+import {
+  createMainWorldFetch,
+  fetchLayyPages,
+  fetchMyCases,
+  isApprovedLayyStatusText,
+  memoizeAsync,
+  reconcileApiDomRows,
+} from "./query-api.js";
 import { isQueryControlsReady, runQueryAllExport, switchQueryCategory, waitForListQuiet } from "./query-all-export.js";
 import * as db from "../data/db.js";
 import { sanitizeReportFileName } from "../data/report-file-name.js";
@@ -946,7 +953,12 @@ async function startPlatformDiscovery(kind, { platformAccountId = null, allowEmp
       fetchImpl: structuredFetch,
     });
     const readDom = () => {
-      const value = collectListRows(document);
+      const rawValue = collectListRows(document);
+      const reportableMask = rawValue.map((row) => {
+        const statusText = String(row?.statusText ?? "").trim();
+        return statusText ? isApprovedLayyStatusText(statusText) : null;
+      });
+      const value = rawValue.filter((_row, index) => reportableMask[index] !== false);
       const identities = value.map((row) => {
         const participants = parseParticipantField(findField(row.fields, "参与人"), kind);
         return {
@@ -957,7 +969,7 @@ async function startPlatformDiscovery(kind, { platformAccountId = null, allowEmp
           applicationDate: String(findField(row.fields, "申请日期") ?? "").trim(),
         };
       });
-      return { value, rows: identities };
+      return { value, rows: identities, rawTotal: rawValue.length, reportableMask };
     };
     const reconciled = await reconcileApiDomRows({
       readApi,

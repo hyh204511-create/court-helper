@@ -588,7 +588,7 @@ test("QUERY_LI 混合列表跳过未批准状态且只建档批准状态行", as
       status: "待提交",
       name: "名称暂无",
       type: "民事一审案件",
-      values: {},
+      values: { 参与人: "", 案由: "", 申请日期: "" },
     }),
     caseRow({
       status: "待审核",
@@ -628,7 +628,7 @@ test("QUERY_LI 混合列表跳过未批准状态且只建档批准状态行", as
       platformAccountId,
     });
 
-    assert.equal(response.ok, true);
+    assert.equal(response.ok, true, JSON.stringify(response));
     assert.equal(response.stats.total, 1);
     const records = await db.query(db.STORE_CASES, { account: "PLATFORM-ACCOUNT", platformAccountId });
     assert.equal(records.length, 1);

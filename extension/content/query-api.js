@@ -116,6 +116,20 @@ export function matchApiDomRows(apiRows = [], domRows = []) {
   return { ok: true, matches: apiRows.map((row) => domRows.findIndex((candidate) => identity(candidate) === identity(row))) };
 }
 
+function reportableMasksMatch(api, dom) {
+  const apiMask = api?.reportableMask;
+  const domMask = dom?.reportableMask;
+  if (apiMask == null && domMask == null) return true;
+  if (!Array.isArray(apiMask) || !Array.isArray(domMask)
+    || !Number.isInteger(api?.rawTotal) || !Number.isInteger(dom?.rawTotal)
+    || api.rawTotal !== dom.rawTotal
+    || apiMask.length !== api.rawTotal || domMask.length !== dom.rawTotal) return false;
+  return apiMask.every((decision, index) => (
+    typeof decision === "boolean"
+    && (domMask[index] === null || domMask[index] === decision)
+  ));
+}
+
 /**
  * Compare one fresh API/DOM snapshot and allow exactly one re-read after the
  * caller confirms the SPA list has become quiet. Neither side of a failed
@@ -139,6 +153,7 @@ export async function reconcileApiDomRows({ readApi, readDom, waitForQuiet } = {
     }
     const domRows = dom?.rows;
     const matched = Number.isInteger(api?.total)
+      && reportableMasksMatch(api, dom)
       && api.total === domRows?.length
       ? matchApiDomRows(api.rows, domRows)
       : MANUAL("API_DOM_MISMATCH");
@@ -259,7 +274,12 @@ const LAYY_STATUS = new Map([
   ["11800007-6", "待补充材料"],
   ["11800007-31", "待补正"],
 ]);
+const APPROVED_LAYY_STATUS_TEXTS = new Set(LAYY_STATUS.values());
 export const LAYY_REQUIRED_FIELDS = ["id", "zt", "ajmc", "dsrMc"];
+
+export function isApprovedLayyStatusText(value) {
+  return APPROVED_LAYY_STATUS_TEXTS.has(String(value ?? "").trim());
+}
 
 function parseLayyParticipants(value, kind = "li") {
   const text = String(value ?? "").trim();
@@ -287,11 +307,15 @@ export async function fetchLayyPages({ kind = "li", filters = {}, pageSize = 50,
   });
   if (!result.ok) return result;
   const rows = [];
+  const reportableMask = [];
   for (const raw of result.rows) {
+    const statusSignature = validateFieldSignature(raw, ["zt"]);
+    if (!statusSignature.ok) return statusSignature;
+    const statusText = LAYY_STATUS.get(String(raw.zt));
+    reportableMask.push(Boolean(statusText));
+    if (!statusText) continue;
     const signature = validateFieldSignature(raw, expectedFields);
     if (!signature.ok) return signature;
-    const statusText = LAYY_STATUS.get(String(raw.zt));
-    if (!statusText) return MANUAL("UNKNOWN_STATUS");
     const participants = parseLayyParticipants(raw.dsrMc, kind);
     const applicationDate = normalizeLayyDate(raw.tjsj || raw.createTime);
     if (raw.laay != null && typeof raw.laay !== "string") return MANUAL("FIELD_SIGNATURE_DRIFT");
@@ -306,7 +330,15 @@ export async function fetchLayyPages({ kind = "li", filters = {}, pageSize = 50,
       applicationDate,
     });
   }
-  return { ok: true, total: result.total, rows, pages: result.pages };
+  return {
+    ok: true,
+    rawTotal: result.total,
+    total: rows.length,
+    skipped: result.total - rows.length,
+    reportableMask,
+    rows,
+    pages: result.pages,
+  };
 }
 
 /** Fetch 我的案件 using the documented POST contract. */
