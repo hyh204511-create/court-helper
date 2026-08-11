@@ -22,7 +22,15 @@ test("zero-count layy skips the list request", async () => {
     },
   });
 
-  assert.deepEqual(result, { ok: true, total: 0, rows: [], pages: [] });
+  assert.deepEqual(result, {
+    ok: true,
+    rawTotal: 0,
+    total: 0,
+    skipped: 0,
+    reportableMask: [],
+    rows: [],
+    pages: [],
+  });
   assert.equal(calls.length, 1);
   assert.match(calls[0], /\/count/);
 });
