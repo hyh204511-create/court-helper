@@ -474,7 +474,11 @@ test("START_BATCH 驳回行使用真实 DOM 按钮触发详情取证", async () 
     defendant: "synthetic defendant",
     sourceCaseName,
     kind: "li",
-    status: "UNKNOWN",
+    status: "已驳回",
+    rejectTime: "2026-08-01",
+    rejectReason: "synthetic stale opinion",
+    needsHuman: true,
+    errorCode: "SCREENSHOT_CAPTURE_FAILED",
   });
   const { dom, listener } = await loadContent({
     hash: "#/pagesWsla/pc/list/index",
@@ -489,19 +493,24 @@ test("START_BATCH 驳回行使用真实 DOM 按钮触发详情取证", async () 
       </div>`,
   });
   let clicks = 0;
-  dom.window.document.querySelector(".fd-case-space-btn").addEventListener("click", async () => {
-    clicks += 1;
-    const current = await db.getByUid(db.STORE_CASES, uid);
-    await db.upsertByUid(db.STORE_CASES, uid, {
-      ...current,
-      rejectTime: "2026-08-07",
-      rejectReason: "synthetic current opinion",
-      rejectImage: new Blob(["synthetic-reject-image"], { type: "image/jpeg" }),
-      needsHuman: false,
-      errorCode: null,
-    });
-  });
+  let finishCapture;
+  const captureFinished = new Promise((resolve) => { finishCapture = resolve; });
   const nativeSetTimeout = globalThis.setTimeout;
+  dom.window.document.querySelector(".fd-case-space-btn").addEventListener("click", () => {
+    clicks += 1;
+    nativeSetTimeout(async () => {
+      const current = await db.getByUid(db.STORE_CASES, uid);
+      await db.upsertByUid(db.STORE_CASES, uid, {
+        ...current,
+        rejectTime: "2026-08-07",
+        rejectReason: "synthetic current opinion",
+        rejectImage: new Blob(["synthetic-reject-image"], { type: "image/jpeg" }),
+        needsHuman: false,
+        errorCode: null,
+      });
+      finishCapture();
+    }, 10);
+  });
   globalThis.setTimeout = (callback, delay, ...args) => nativeSetTimeout(callback, delay >= 1000 ? 0 : delay, ...args);
   try {
     const result = await dispatch(listener, { type: "START_BATCH", kind: "li" });
@@ -510,9 +519,11 @@ test("START_BATCH 驳回行使用真实 DOM 按钮触发详情取证", async () 
     const stored = await db.getByUid(db.STORE_CASES, uid);
     assert.equal(stored.rejectTime, "2026-08-07");
     assert.equal(stored.rejectReason, "synthetic current opinion");
+    assert.ok(stored.rejectImage instanceof Blob);
     assert.equal(stored.needsHuman, false);
   } finally {
     globalThis.setTimeout = nativeSetTimeout;
+    await captureFinished;
     cleanup(dom);
     await db.resetDb();
   }
