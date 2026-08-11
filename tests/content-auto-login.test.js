@@ -679,19 +679,22 @@ test("驳回截图组合页面中的双方当事人姓名与审核结果且排�
     html: `
       <div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>
       <main class="fd-com-main-container">
-        <uni-section title="审核结果">
+        <uni-view class="uni-section">
+          <uni-view class="uni-section-header"><uni-text class="uni-section__content-title"><span>审核结果</span></uni-text></uni-view>
           <div class="uni-forms-item"><span>审核结果</span><span>审核不通过</span></div>
           <div class="uni-forms-item"><span>审核时间</span><span>2026-08-11 11:19:04</span></div>
           <div class="uni-forms-item"><span>审核意见</span><span>SYNTHETIC AUDIT OPINION</span></div>
-        </uni-section>
-        <uni-section title="原告信息">
+        </uni-view>
+        <uni-view class="uni-section">
+          <uni-view class="uni-section-header"><uni-text class="uni-section__content-title"><span>原告信息</span></uni-text></uni-view>
           <div class="uni-forms-item"><span>名称</span><span>SYNTHETIC PLAINTIFF</span></div>
           <div class="uni-forms-item"><span>证件号码</span><span>SYNTHETIC SECRET ID</span></div>
-        </uni-section>
-        <uni-section title="被告信息">
+        </uni-view>
+        <uni-view class="uni-section">
+          <uni-view class="uni-section-header"><uni-text class="uni-section__content-title"><span>被告信息</span></uni-text></uni-view>
           <div class="uni-forms-item"><span>名称</span><span>SYNTHETIC DEFENDANT</span></div>
           <div class="uni-forms-item"><span>联系电话</span><span>SYNTHETIC SECRET PHONE</span></div>
-        </uni-section>
+        </uni-view>
       </main>`,
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
