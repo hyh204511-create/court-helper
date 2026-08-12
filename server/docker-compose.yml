@@ -38,6 +38,7 @@ services:
       ADMIN_INITIAL_PASSWORD: "${ADMIN_INITIAL_PASSWORD:?Set ADMIN_INITIAL_PASSWORD in server/.env}"
       CORS_EXTENSION_ORIGINS: "${CORS_EXTENSION_ORIGINS:?Set CORS_EXTENSION_ORIGINS in server/.env}"
       CORS_ADMIN_ORIGINS: "${CORS_ADMIN_ORIGINS:-}"
+      WECOM_WEBHOOK_URL: "${WECOM_WEBHOOK_URL:-}"
       # server/.env.example sets this to /var/lib/court-helper/storage.
       # Leave it empty when switching to external COS/OSS storage.
       LOCAL_STORAGE_DIR: "${LOCAL_STORAGE_DIR:-}"
