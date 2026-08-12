@@ -145,6 +145,21 @@ test("ajlist 强执补证接受强执成功记录并沿用严格结构", () => {
   });
 });
 
+test("ajlist 强执来源缺少 updateTime 时仍按其余严格结构唯一读取成功时间和案号", () => {
+  const record = { ...apiRecord, uid: "qz-api-no-update-time", status: "强执成功" };
+  const source = { ...sourceApiRow };
+  delete source.updateTime;
+  assert.deepEqual(selectMyCaseApiEvidence({
+    kind: "qz",
+    record,
+    sourceApiRow: source,
+    rows: [apiEvidence({ cah: "SYNTHETIC-QZ-NO-UPDATE-001" })],
+  }), {
+    ok: true,
+    value: { uid: record.uid, caseNumber: "SYNTHETIC-QZ-NO-UPDATE-001", filedTime: "2026-08-07" },
+  });
+});
+
 test("ajlist 强执案由暂无时由其余结构键与完整标题唯一补证", () => {
   const record = {
     ...apiRecord,

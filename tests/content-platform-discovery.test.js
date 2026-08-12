@@ -897,7 +897,6 @@ test("强执平台发现通过 layy 与 ajlist 在网上立案页直接补全 F/
           sfBh: "SYNTHETIC-QZ-ACCOUNT",
           fymc: "SYNTHETIC QZ COURT",
           ajlx: "SYNTHETIC-QZ-TYPE",
-          updateTime: "2026-08-07T08:00:00Z",
         }] } };
     },
   });

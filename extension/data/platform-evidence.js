@@ -150,7 +150,7 @@ export function selectMyCaseApiEvidence({ record, sourceApiRow, rows = [], kind 
   if (!sourceAccount) return { ok: false, error: "SOURCE_ACCOUNT_MISSING" };
   if (!sourceCourt) return { ok: false, error: "SOURCE_COURT_MISSING" };
   if (!sourceType) return { ok: false, error: "SOURCE_TYPE_MISSING" };
-  if (!sourceDate) return { ok: false, error: "SOURCE_DATE_INVALID" };
+  if (!sourceDate && kind !== "qz") return { ok: false, error: "SOURCE_DATE_INVALID" };
 
   const stages = [
     [(row) => text(row?.csfid) === sourceAccount, "MYCASE_ACCOUNT_MISMATCH"],
@@ -158,8 +158,8 @@ export function selectMyCaseApiEvidence({ record, sourceApiRow, rows = [], kind 
     [(row) => text(row?.cywlx) === sourceType, "MYCASE_TYPE_MISMATCH"],
   ];
   if (!causeUnavailable) stages.push([(row) => text(row?.claay) === sourceCause, "MYCASE_CAUSE_MISMATCH"]);
+  if (sourceDate) stages.push([(row) => apiDay(row?.clarq) === sourceDate, "MYCASE_DATE_MISMATCH"]);
   stages.push(
-    [(row) => apiDay(row?.clarq) === sourceDate, "MYCASE_DATE_MISMATCH"],
     [
       (row) => causeUnavailable
         ? text(row?.cajmc) === text(record.sourceCaseName)
