@@ -1068,7 +1068,12 @@ async function executeBrowserCommand(message) {
     if (message.accountBindingVerified !== true) return { ok: false, error: "ACCOUNT_BINDING_REQUIRED" };
     return runQueryAllExport({
       switchCategory: (kind) => switchQueryCategory(document, kind),
-      queryKind: (kind) => startPlatformDiscovery(kind, { platformAccountId: message.platformAccountId, allowEmpty: true }),
+      queryKind: async (kind) => {
+        const result = await startPlatformDiscovery(kind, { platformAccountId: message.platformAccountId, allowEmpty: true });
+        const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
+        const records = await db.query(store, { account: getCurrentAccount(document), platformAccountId: message.platformAccountId });
+        return { ...result, records };
+      },
       exportReport: () => handlePanelExport({
         platformAccountId: message.platformAccountId,
         accountLabel: message.accountLabel,

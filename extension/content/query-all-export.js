@@ -127,15 +127,23 @@ export async function switchQueryCategory(root, kind, options = {}) {
   return { ok: false, error: "QUERY_TAB_TIMEOUT" };
 }
 
-function softManualResult(result) {
-  return result?.ok === false && (
-    Number(result?.stats?.needsHuman ?? 0) > 0
-    || Number(result?.evidence?.needsHuman ?? 0) > 0
-  );
+function recordEvidenceComplete(record) {
+  if (!record || typeof record !== "object") return false;
+  if (record.status === "UNKNOWN" || record.needsHuman === true) return false;
+  if (record.status === "立案成功" || record.status === "强执成功") {
+    return Boolean(record.filedTime && record.caseNumber && record.successImage);
+  }
+  if (record.status === "已驳回") {
+    return Boolean(record.rejectTime && record.rejectReason && record.rejectImage);
+  }
+  return true;
+}
+
+function incompleteEvidence(result) {
+  return Array.isArray(result?.records) && result.records.some((record) => !recordEvidenceComplete(record));
 }
 
 export async function runQueryAllExport({ switchCategory, queryKind, exportReport }) {
-  let needsHuman = false;
   for (const kind of ["li", "qz"]) {
     const switched = await switchCategory(kind);
     const canProbeAfterTimeout = switched?.ok !== true && switched?.error === "QUERY_TAB_TIMEOUT";
@@ -147,10 +155,10 @@ export async function runQueryAllExport({ switchCategory, queryKind, exportRepor
       if (canProbeAfterTimeout) {
         return { ok: false, error: queried?.error ?? switched.error };
       }
-      if (!softManualResult(queried)) return { ok: false, error: queried?.error ?? "NEEDS_HUMAN" };
-      needsHuman = true;
+      return { ok: false, error: queried?.error ?? "NEEDS_HUMAN" };
     }
+    if (incompleteEvidence(queried)) return { ok: false, error: "EVIDENCE_INCOMPLETE" };
   }
   const exported = await exportReport();
-  return { ...exported, needsHuman };
+  return { ...exported, needsHuman: false };
 }

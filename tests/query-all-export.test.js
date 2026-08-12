@@ -4,7 +4,7 @@ import { JSDOM } from "jsdom";
 
 import { runQueryAllExport, switchQueryCategory, waitForListQuiet } from "../extension/content/query-all-export.js";
 
-test("一键流程严格按审判查询、执行查询、导出顺序运行", async () => {
+test("一键流程遇到待人工记录停止导出并保留具体错误", async () => {
   const calls = [];
   const result = await runQueryAllExport({
     switchCategory: async (kind) => { calls.push(`switch:${kind}`); return { ok: true }; },
@@ -15,8 +15,43 @@ test("一键流程严格按审判查询、执行查询、导出顺序运行", as
     exportReport: async () => { calls.push("export"); return { ok: true, upload: { status: "uploaded" } }; },
   });
 
-  assert.equal(result.ok, true);
-  assert.equal(result.needsHuman, true);
+  assert.deepEqual(result, { ok: false, error: "NEEDS_HUMAN" });
+  assert.deepEqual(calls, ["switch:li", "query:li"]);
+});
+
+test("一键流程成功或驳回证据不完整时不得生成残缺报表", async () => {
+  for (const incomplete of [
+    { status: "立案成功", filedTime: null, caseNumber: "SYNTHETIC-LI-001", successImage: {} },
+    { status: "强执成功", filedTime: "2026-08-12", caseNumber: null, successImage: {} },
+    { status: "立案成功", filedTime: "2026-08-12", caseNumber: "SYNTHETIC-LI-001", successImage: null },
+    { status: "已驳回", rejectTime: "2026-08-12", rejectReason: "SYNTHETIC", rejectImage: null },
+  ]) {
+    let exported = 0;
+    const result = await runQueryAllExport({
+      switchCategory: async () => ({ ok: true }),
+      queryKind: async (kind) => kind === "li"
+        ? { ok: true, records: [incomplete] }
+        : { ok: true, records: [] },
+      exportReport: async () => { exported += 1; return { ok: true }; },
+    });
+    assert.deepEqual(result, { ok: false, error: "EVIDENCE_INCOMPLETE" });
+    assert.equal(exported, 0);
+  }
+});
+
+test("一键流程证据完整时查询两类后导出", async () => {
+  const calls = [];
+  const result = await runQueryAllExport({
+    switchCategory: async (kind) => { calls.push(`switch:${kind}`); return { ok: true }; },
+    queryKind: async (kind) => {
+      calls.push(`query:${kind}`);
+      return kind === "li"
+        ? { ok: true, records: [{ status: "立案成功", filedTime: "2026-08-12", caseNumber: "SYNTHETIC-LI-001", successImage: {} }] }
+        : { ok: true, records: [{ status: "审核中" }] };
+    },
+    exportReport: async () => { calls.push("export"); return { ok: true }; },
+  });
+  assert.deepEqual(result, { ok: true, needsHuman: false });
   assert.deepEqual(calls, ["switch:li", "query:li", "switch:qz", "query:qz", "export"]);
 });
 

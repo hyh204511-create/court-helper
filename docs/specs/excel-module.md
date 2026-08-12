@@ -96,6 +96,7 @@
    - 业务员列：控制台本次“一键查询并导出”任务的自由文本输入经首尾空白清理后写入 U 列；同一工作簿所有业务数据行使用同一个值。业务员不从导入模板、平台页面或案件记录推断，不写入 IndexedDB；空白预留行的 U 列保持空白。
 4. 图片嵌入：立案成功/驳回图锚定 H/K，强执成功/驳回图锚定 P/S；使用 OneCellAnchor，尺寸沿用对应模板列宽与数据行高度。
    - content script 运行在真实 Chromium 页面，图片 Blob 转换必须使用浏览器原生 `ArrayBuffer` / `Uint8Array`；禁止依赖 Node 全局 `Buffer`。自动测试必须覆盖 `globalThis.Buffer` 不存在时仍可构建带图工作簿。
+   - `QUERY_ALL_EXPORT` 调用本模块前必须通过 report-export-module 的证据完整性闸门；成功或驳回记录缺少其必需图片/时间/案号/原因时不得调用 `buildExportWorkbook`，不得以空单元格生成残缺报表。
 5. 文件命名：使用本次命令绑定的平台账号非敏感标签，经与服务端相同的 basename/控制字符/允许字符规则净化后生成 `<账号标签>.xlsx`；空或异常标签回退为 `report-<日期>.xlsx`。真实登录账号不得进入文件名。`EXPORT_REPORT`/`QUERY_ALL_EXPORT` 由扩展生成并本地下载，随后携带 `platformAccountId` 上传服务器形成后台报表记录。
 6. 最终 xlsx 因包含真实平台密码，按截图同等级的敏感业务文件保护；只有授权下载可读取，后台页面不得展开或复制其中的账号密码。
 
