@@ -160,6 +160,32 @@ test("ajlist 标题使用法院无分隔符的双方名称与案由严格拼接�
   });
 });
 
+test("ajlist 强执标题使用申请执行人与申请及被执行人案由严格拼接时可补证", () => {
+  const record = { ...apiRecord, uid: "qz-api-apply-title", status: "强执成功" };
+  assert.deepEqual(selectMyCaseApiEvidence({
+    kind: "qz",
+    record,
+    sourceApiRow,
+    rows: [apiEvidence({
+      cajmc: `${record.plaintiff}申请${record.defendant}${record.sourceCause}`,
+      cah: "SYNTHETIC-QZ-APPLY-001",
+    })],
+  }), {
+    ok: true,
+    value: { uid: record.uid, caseNumber: "SYNTHETIC-QZ-APPLY-001", filedTime: "2026-08-07" },
+  });
+});
+
+test("ajlist 立案标题不得把强执专用申请拼接格式当作匹配", () => {
+  assert.deepEqual(selectMyCaseApiEvidence({
+    record: apiRecord,
+    sourceApiRow,
+    rows: [apiEvidence({
+      cajmc: `${apiRecord.plaintiff}申请${apiRecord.defendant}${apiRecord.sourceCause}`,
+    })],
+  }), { ok: false, error: "MYCASE_PARTIES_TITLE_MISMATCH" });
+});
+
 test("ajlist 强执补证接受强执成功记录并沿用严格结构", () => {
   const record = { ...apiRecord, uid: "qz-api-record", status: "强执成功" };
   assert.deepEqual(selectMyCaseApiEvidence({

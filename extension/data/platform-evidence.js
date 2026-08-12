@@ -66,8 +66,9 @@ function apiDay(value) {
   return match?.[1] ?? null;
 }
 
-function titleHasExactParties(title, cause, plaintiff, defendant) {
+function titleHasExactParties(title, cause, plaintiff, defendant, kind) {
   if (title === `${plaintiff}${defendant}${cause}`) return true;
+  if (kind === "qz" && title === `${plaintiff}申请${defendant}${cause}`) return true;
   const suffix = `${cause}一案`;
   if (!title.endsWith(suffix)) return false;
   const partyTokens = title.slice(0, -suffix.length)
@@ -163,7 +164,7 @@ export function selectMyCaseApiEvidence({ record, sourceApiRow, rows = [], kind 
     [
       (row) => causeUnavailable
         ? text(row?.cajmc) === text(record.sourceCaseName)
-        : titleHasExactParties(text(row?.cajmc), sourceCause, plaintiff, defendant),
+        : titleHasExactParties(text(row?.cajmc), sourceCause, plaintiff, defendant, kind),
       "MYCASE_PARTIES_TITLE_MISMATCH",
     ],
   );
