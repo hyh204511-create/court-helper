@@ -228,6 +228,7 @@ test("PING only reports browser command readiness after the panel and list contr
   let response;
   listener({ type: "PING" }, {}, (value) => { response = value; });
   assert.equal(response?.ok, true);
+  assert.equal(typeof response?.protocolVersion, "string");
   assert.equal(response?.ready, false);
 
   dom.window.document.body.insertAdjacentHTML("beforeend", `<div class="fd-com-tab"><span>${"\u5ba1\u5224"}</span><span>${"\u6267\u884c"}</span></div><button class="fd-com-search-btn">${"\u67e5\u8be2"}</button>`);

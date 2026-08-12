@@ -1,5 +1,6 @@
 import { createRemoteClient } from "../data/remote-client.js";
 import { isCourtListRoute, isLoginRoute } from "../content/login-detector.js";
+import { CONTENT_PROTOCOL_VERSION } from "../shared/runtime-protocol.js";
 
 export const BROWSER_COMMAND_ALARM_NAME = "browser-command-poll";
 export const BROWSER_COMMAND_ALARM_PERIOD_MINUTES = 1;
@@ -85,6 +86,7 @@ const MANUAL_CODES = new Set([
   "QUERY_TAB_TIMEOUT",
   "LOGIN_PAGE_TIMEOUT",
   "LOGIN_CONTENT_UNAVAILABLE",
+  "CONTENT_VERSION_MISMATCH",
 ]);
 
 function trim(value) {
@@ -276,13 +278,27 @@ async function waitForQueryAllExportContent(chromeApi, tabId, scheduler, delayMs
       );
       const route = probeResult.response?.route;
       const routeReady = typeof route === "string" && route.split("?", 1)[0] === WSLA_LIST_ROUTE;
-      if (probeResult.response?.ok === true && routeReady && probeResult.response?.ready === true) return true;
+      if (probeResult.response?.ok === true
+        && probeResult.response?.protocolVersion === CONTENT_PROTOCOL_VERSION
+        && routeReady && probeResult.response?.ready === true) return true;
     } catch {
       // The SPA/content script can still be registering while the list controls render.
     }
     if (attempt + 1 < attempts) await waitForContentRoute(scheduler, delayMs);
   }
   return false;
+}
+
+async function ensureQueryContentVersion(chromeApi, tabId, scheduler, delayMs, attempts, timeoutMs) {
+  const probe = await withMessageTimeout(chromeApi, tabId, { type: "PING" }, scheduler, timeoutMs);
+  if (probe.response?.protocolVersion === CONTENT_PROTOCOL_VERSION) return true;
+  if (typeof chromeApi.tabs?.reload !== "function") return false;
+  try {
+    await chromeApi.tabs.reload(tabId);
+  } catch {
+    return false;
+  }
+  return waitForQueryAllExportContent(chromeApi, tabId, scheduler, delayMs, attempts, timeoutMs);
 }
 
 function resultFor(response) {
@@ -421,6 +437,19 @@ export function createBrowserCommandPoller({
       }
       if (activePlatformAccountId !== null && activePlatformAccountId !== command.platformAccountId) {
         return { ok: false, error: "ACCOUNT_MISMATCH" };
+      }
+      if (command.type === "QUERY_ALL_EXPORT") {
+        const attempts = retryAttempts(contentRouteRetryAttempts);
+        const currentContent = await ensureQueryContentVersion(
+          chromeApi,
+          tab.id,
+          scheduler,
+          contentRouteRetryDelayMs,
+          attempts,
+          contentRoutePingTimeoutMs,
+        );
+        if (!currentContent) return { ok: false, error: "CONTENT_VERSION_MISMATCH" };
+        if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
       }
       let data;
       try {

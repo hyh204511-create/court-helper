@@ -1,0 +1,1 @@
+export const CONTENT_PROTOCOL_VERSION = "2026-08-13.1";

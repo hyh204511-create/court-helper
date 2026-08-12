@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { createBrowserCommandPoller } from "../extension/sw/browser-command-poll.js";
+import { CONTENT_PROTOCOL_VERSION } from "../extension/shared/runtime-protocol.js";
 
 function response(body, status = 200) {
   return {
@@ -28,7 +29,13 @@ function chromeMock(sendMessage) {
     } },
     tabs: {
       query: async () => [{ id: 7, url: "https://zxfw.court.gov.cn/#/pagesWsla/pc/list/index" }],
-      sendMessage,
+      sendMessage: async (tabId, message) => {
+        const value = await sendMessage(tabId, message);
+        if (message?.type === "PING" && value && !Object.hasOwn(value, "protocolVersion")) {
+          return { ...value, protocolVersion: CONTENT_PROTOCOL_VERSION };
+        }
+        return value;
+      },
     },
     alarms: { create() {}, clear() {} },
   };
@@ -101,6 +108,44 @@ test("browser command poller claims QUERY_LI, reads only bound extension data, d
     resultSummary: "任务已完成",
     progress: { done: 1, total: 1 },
   });
+});
+
+test("查询命令发现旧 content 协议时刷新法院列表页并等待新版后再执行", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000121",
+    type: "QUERY_ALL_EXPORT",
+    platformAccountId: "00000000-0000-4000-8000-000000000321",
+    clientBatchId: "00000000-0000-4000-8000-000000000221",
+  };
+  const messages = [];
+  let refreshed = false;
+  const chromeApi = chromeMock(async (_tabId, message) => {
+    messages.push(message);
+    if (message.type === "PING") {
+      return refreshed
+        ? { ok: true, protocolVersion: CONTENT_PROTOCOL_VERSION, route: "#/pagesWsla/pc/list/index", ready: true }
+        : { ok: true, protocolVersion: null, route: "#/pagesWsla/pc/list/index", ready: true };
+    }
+    return { ok: true, progress: { done: 1, total: 1 } };
+  });
+  let reloads = 0;
+  chromeApi.tabs.reload = async (tabId) => {
+    assert.equal(tabId, 7);
+    reloads += 1;
+    refreshed = true;
+  };
+  const harness = platformDiscoveryHarness(command);
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl: harness.fetchImpl,
+    contentRouteRetryDelayMs: 0,
+    contentRouteRetryAttempts: 2,
+    contentRoutePingTimeoutMs: 10,
+    initialActivePlatformAccountId: command.platformAccountId,
+  }).pollOnce();
+  assert.equal(result.ok, true);
+  assert.equal(reloads, 1);
+  assert.deepEqual(messages.map((message) => message.type), ["PING", "PING", "PING", "BROWSER_COMMAND_EXECUTE"]);
 });
 
 test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命令", async () => {

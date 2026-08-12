@@ -207,6 +207,39 @@ test("案件空间新标签创建时已携带详情 URL 也由 Worker 自动确�
   }
 });
 
+test("案件空间事件丢失时读取待办会扫描当前新详情标签并补偿接管", async () => {
+  const tabs = [{ id: 17, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/pc/list/index" }];
+  const loaded = await loadWorker({ tabs });
+  try {
+    const opened = invoke(loaded.runtimeListener, { type: "CASE_SPACE_OPEN", uid: "synthetic-reconcile", kind: "li" }, { tab: tabs[0] });
+    assert.deepEqual(await opened.readResponse(), { ok: true, phase: "opening", tabId: 17 });
+    tabs.push({
+      id: 21,
+      url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/common/wsla/detail/index?synthetic=lost-event",
+    });
+    const read = invoke(loaded.runtimeListener, { type: "CASE_DETAIL_PENDING_GET" }, { tab: tabs[0] });
+    assert.deepEqual((await read.readResponse()).handoff, { uid: "synthetic-reconcile", kind: "li", phase: "adopted" });
+  } finally {
+    loaded.cleanup();
+  }
+});
+
+test("案件空间补偿扫描不接管点击前已存在且 URL 未变化的旧详情标签", async () => {
+  const tabs = [
+    { id: 17, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/pc/list/index" },
+    { id: 22, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/common/wsla/detail/index?synthetic=old" },
+  ];
+  const loaded = await loadWorker({ tabs });
+  try {
+    const opened = invoke(loaded.runtimeListener, { type: "CASE_SPACE_OPEN", uid: "synthetic-no-stale", kind: "qz" }, { tab: tabs[0] });
+    assert.deepEqual(await opened.readResponse(), { ok: true, phase: "opening", tabId: 17 });
+    const read = invoke(loaded.runtimeListener, { type: "CASE_DETAIL_PENDING_GET" }, { tab: tabs[0] });
+    assert.deepEqual((await read.readResponse()).handoff, { uid: "synthetic-no-stale", kind: "qz", phase: "opening" });
+  } finally {
+    loaded.cleanup();
+  }
+});
+
 test("案件空间复用点击前已有详情标签且 URL 更新时 Worker 自动确认接管", async () => {
   const loaded = await loadWorker({ tabs: [
     { id: 17, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/pc/list/index" },

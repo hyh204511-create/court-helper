@@ -24,6 +24,7 @@ import {
   isLoginRoute,
 } from "./login-detector.js";
 import { doAutoLogin, requestTrustedClick } from "./login-auto.js";
+import { CONTENT_PROTOCOL_VERSION } from "../shared/runtime-protocol.js";
 import { captureElement } from "./screen-capturer.js";
 import { persistSyncRecord, runBatch, jitterMs } from "../data/batch-runner.js";
 import { createRuntimeCaseOutbox } from "../data/runtime-case-outbox.js";
@@ -1128,6 +1129,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "PING") {
     sendResponse({
       ok: true,
+      protocolVersion: CONTENT_PROTOCOL_VERSION,
       role: isDetailPage() ? "detail" : "list",
       route: location.hash.split("?", 1)[0],
       state: detectLoginState({ hash: location.hash, root: document }),

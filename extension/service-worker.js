@@ -381,6 +381,23 @@ async function adoptUpdatedCaseSpaceTab(tabId, changeInfo, tab) {
   });
 }
 
+async function reconcileCaseSpaceTabs() {
+  if (typeof chrome.tabs?.query !== "function") return;
+  let tabs;
+  try {
+    tabs = await chrome.tabs.query({});
+  } catch {
+    return;
+  }
+  for (const tab of Array.isArray(tabs) ? tabs : []) {
+    if (!Number.isInteger(tab?.id)) continue;
+    const currentUrl = tab.pendingUrl || tab.url;
+    await adoptUpdatedCaseSpaceTab(tab.id, { url: currentUrl }, { ...tab, url: currentUrl });
+    const { caseSpaceHandoff } = await chrome.storage.session.get("caseSpaceHandoff");
+    if (caseSpaceHandoff?.phase === "adopted") return;
+  }
+}
+
 function handleCaseDetailMessage(message, sender, sendResponse) {
   if (!CASE_DETAIL_MESSAGE_TYPES.has(message?.type)) return false;
   if (!isCourtContentSender(sender)) {
@@ -394,6 +411,7 @@ function handleCaseDetailMessage(message, sender, sendResponse) {
   }
   (async () => {
     if (message.type === "CASE_DETAIL_PENDING_GET") {
+      await reconcileCaseSpaceTabs();
       const { pendingDetail, caseSpaceHandoff } = await session.get(["pendingDetail", "caseSpaceHandoff"]);
       const value = pendingDetail?.uid
         ? { uid: pendingDetail.uid, kind: pendingDetail.kind === "qz" ? "qz" : "li" }
