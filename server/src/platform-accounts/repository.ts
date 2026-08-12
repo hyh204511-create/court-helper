@@ -36,6 +36,8 @@ function accountFromRow(row: Record<string, unknown>): PlatformAccountRecord {
     createdBy: String(row.created_by),
     createdAt: dateValue(row.created_at),
     updatedAt: dateValue(row.updated_at),
+    salespersonMobile: row.salesperson_mobile ? String(row.salesperson_mobile) : null,
+    assistantMobile: row.assistant_mobile ? String(row.assistant_mobile) : null,
   };
 }
 
@@ -71,8 +73,8 @@ export class PgPlatformAccountRepository implements PlatformAccountRepository {
   async create(input: NewPlatformAccount): Promise<PlatformAccountRecord> {
     const result = await this.database.query(`
       INSERT INTO platform_accounts
-        (id, label, secret_ciphertext, secret_iv, secret_tag, secret_version, enabled, created_by)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        (id, label, secret_ciphertext, secret_iv, secret_tag, secret_version, enabled, created_by, salesperson_mobile, assistant_mobile)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
     `, [
       input.id ?? randomUUID(),
@@ -83,6 +85,8 @@ export class PgPlatformAccountRepository implements PlatformAccountRepository {
       input.secretVersion,
       input.enabled ?? true,
       input.createdBy,
+      input.salespersonMobile ?? null,
+      input.assistantMobile ?? null,
     ]);
     return accountFromRow(result.rows[0]);
   }
@@ -96,6 +100,8 @@ export class PgPlatformAccountRepository implements PlatformAccountRepository {
     };
     if (patch.label !== undefined) add('label', patch.label);
     if (patch.enabled !== undefined) add('enabled', patch.enabled);
+    if (patch.salespersonMobile !== undefined) add('salesperson_mobile', patch.salespersonMobile);
+    if (patch.assistantMobile !== undefined) add('assistant_mobile', patch.assistantMobile);
     if (patch.secretCiphertext !== undefined) add('secret_ciphertext', patch.secretCiphertext);
     if (patch.secretIv !== undefined) add('secret_iv', patch.secretIv);
     if (patch.secretTag !== undefined) add('secret_tag', patch.secretTag);

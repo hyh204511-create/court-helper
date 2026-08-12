@@ -10,6 +10,8 @@ export interface PlatformAccountRecord {
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
+  salespersonMobile: string | null;
+  assistantMobile: string | null;
 }
 
 export interface EncryptedCredential {
@@ -23,12 +25,16 @@ export interface NewPlatformAccount extends EncryptedCredential {
   id?: string;
   label: string;
   enabled?: boolean;
+  salespersonMobile?: string | null;
+  assistantMobile?: string | null;
   createdBy: string;
 }
 
 export interface PlatformAccountPatch extends Partial<EncryptedCredential> {
   label?: string;
   enabled?: boolean;
+  salespersonMobile?: string | null;
+  assistantMobile?: string | null;
 }
 
 export interface PlatformAccountListOptions {

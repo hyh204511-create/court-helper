@@ -21,6 +21,7 @@ export function publicPlatformAccount(account: PlatformAccountRecord) {
     label: account.label,
     enabled: account.enabled,
     updatedAt: account.updatedAt.toISOString(),
+    contactsConfigured: account.salespersonMobile !== null && account.assistantMobile !== null,
   };
 }
 
@@ -55,7 +56,7 @@ export class PlatformAccountService {
     return account;
   }
 
-  async create(createdBy: string, label: string, credential: PlainCredential, enabled = true): Promise<PlatformAccountRecord> {
+  async create(createdBy: string, label: string, credential: PlainCredential, enabled = true, contacts: { salespersonMobile: string | null; assistantMobile: string | null } = { salespersonMobile: null, assistantMobile: null }): Promise<PlatformAccountRecord> {
     if (label.trim() === '') {
       throw new ValidationError([{ field: 'label', code: 'required' }]);
     }
@@ -66,6 +67,7 @@ export class PlatformAccountService {
       label,
       ...encryptCredential(id, credential, this.config.credentialMasterKey),
       enabled,
+      ...contacts,
       createdBy,
     });
   }
@@ -74,6 +76,11 @@ export class PlatformAccountService {
     const current = await this.get(id);
     if (patch.label !== undefined && patch.label.trim() === '') {
       throw new ValidationError([{ field: 'label', code: 'required' }]);
+    }
+    const salespersonMobile = patch.salespersonMobile ?? current.salespersonMobile;
+    const assistantMobile = patch.assistantMobile ?? current.assistantMobile;
+    if ((salespersonMobile === null) !== (assistantMobile === null)) {
+      throw new ValidationError([{ field: 'contacts', code: 'pair_required' }]);
     }
     const encrypted = credential
       ? encryptCredential(id, credential, this.config.credentialMasterKey)

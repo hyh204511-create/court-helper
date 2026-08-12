@@ -48,6 +48,7 @@ import { registerAdminRoutes } from './admin/routes.ts';
 import type { LocalLoginHelper } from './local-login-helper.ts';
 import { registerWecomNotificationRoutes } from './wecom-notifications/routes.ts';
 import { WecomNotificationService, type WecomTransport } from './wecom-notifications/service.ts';
+import type { WecomNotificationRepository } from './wecom-notifications/types.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -86,6 +87,7 @@ export interface BuildAppOptions {
   };
   localLoginHelper?: LocalLoginHelper;
   wecomTransport?: WecomTransport;
+  wecomNotificationRepository?: WecomNotificationRepository;
 }
 
 function registerCors(app: FastifyInstance, config: ServerConfig): void {
@@ -259,7 +261,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         service: caseService,
       });
     }
-    if (options.caseRepository && options.screenshotRepository && options.storageBackend) {
+    if (options.caseRepository && options.platformAccountRepository && options.screenshotRepository && options.storageBackend) {
       const screenshotService = new ScreenshotService(
         options.screenshotRepository,
         options.caseRepository,
@@ -278,20 +280,22 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         prefix: '/api/v1',
         service: screenshotService,
       });
-      const wecomNotificationService = new WecomNotificationService(
+      const wecomNotificationService = options.wecomNotificationRepository ? new WecomNotificationService(
         config.wecom.webhookUrl,
         options.caseRepository,
+        options.platformAccountRepository,
         options.screenshotRepository,
+        options.wecomNotificationRepository,
         options.storageBackend,
         options.wecomTransport,
-      );
-      registerWecomNotificationRoutes(app, {
+      ) : undefined;
+      if (wecomNotificationService) registerWecomNotificationRoutes(app, {
         authService,
         config,
         prefix: '',
         service: wecomNotificationService,
       });
-      registerWecomNotificationRoutes(app, {
+      if (wecomNotificationService) registerWecomNotificationRoutes(app, {
         authService,
         config,
         prefix: '/api/v1',

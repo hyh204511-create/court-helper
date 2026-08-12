@@ -23,6 +23,8 @@ function copyAccount(account: PlatformAccountRecord): PlatformAccountRecord {
     deletedAt: account.deletedAt ? new Date(account.deletedAt) : null,
     createdAt: new Date(account.createdAt),
     updatedAt: new Date(account.updatedAt),
+    salespersonMobile: account.salespersonMobile ?? null,
+    assistantMobile: account.assistantMobile ?? null,
   };
 }
 
@@ -63,6 +65,8 @@ export class MemoryPlatformAccountRepository implements PlatformAccountRepositor
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
+      salespersonMobile: input.salespersonMobile ?? null,
+      assistantMobile: input.assistantMobile ?? null,
     };
     this.accounts.set(account.id, account);
     return copyAccount(account);
@@ -76,6 +80,8 @@ export class MemoryPlatformAccountRepository implements PlatformAccountRepositor
     }
     if (patch.label !== undefined) account.label = patch.label;
     if (patch.enabled !== undefined) account.enabled = patch.enabled;
+    if (patch.salespersonMobile !== undefined) account.salespersonMobile = patch.salespersonMobile;
+    if (patch.assistantMobile !== undefined) account.assistantMobile = patch.assistantMobile;
     if (patch.secretCiphertext !== undefined) account.secretCiphertext = Buffer.from(patch.secretCiphertext);
     if (patch.secretIv !== undefined) account.secretIv = Buffer.from(patch.secretIv);
     if (patch.secretTag !== undefined) account.secretTag = Buffer.from(patch.secretTag);
