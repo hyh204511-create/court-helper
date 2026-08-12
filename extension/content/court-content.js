@@ -818,17 +818,21 @@ async function startBatch(kind, { account = null, platformAccountId = null, sync
       }
       const storeName = record.kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
       const existing = await db.getByUid(storeName, record.uid);
+      const preservedStatus = record.status === "UNKNOWN" && existing?.status
+        ? existing.status
+        : record.status;
       const successImage = record.successImage
-        ?? (record.status !== "已驳回" ? record.image : null)
+        ?? (preservedStatus !== "已驳回" ? record.image : null)
         ?? existing?.successImage
         ?? null;
       const rejectImage = record.rejectImage
-        ?? (record.status === "已驳回" ? record.image : null)
+        ?? (preservedStatus === "已驳回" ? record.image : null)
         ?? existing?.rejectImage
         ?? null;
       await db.upsertByUid(storeName, record.uid, {
         ...existing,
         ...record,
+        status: preservedStatus,
         filedTime: record.filedTime ?? existing?.filedTime ?? null,
         caseNumber: record.caseNumber ?? existing?.caseNumber ?? null,
         rejectTime: record.rejectTime ?? existing?.rejectTime ?? null,
@@ -836,8 +840,8 @@ async function startBatch(kind, { account = null, platformAccountId = null, sync
         successImage,
         rejectImage,
         needsHuman: record.needsHuman
-          || (!successImage && ["立案成功", "强执成功"].includes(record.status))
-          || (!rejectImage && record.status === "已驳回"),
+          || (!successImage && ["立案成功", "强执成功"].includes(preservedStatus))
+          || (!rejectImage && preservedStatus === "已驳回"),
       });
       done += 1;
       _panel?.setProgress({ done, total, groups: groupByAccount(all) });

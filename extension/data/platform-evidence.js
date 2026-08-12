@@ -141,7 +141,6 @@ export function selectMyCaseApiEvidence({ record, sourceApiRow, rows = [], kind 
   const sourceCourt = text(sourceApiRow.fymc);
   const sourceType = text(sourceApiRow.ajlx);
   const sourceCause = text(sourceApiRow.cause) || text(sourceApiRow.laay);
-  const sourceDate = apiDay(sourceApiRow.updateTime);
   const causeUnavailable = kind === "qz" && unavailableCause(cause) && unavailableCause(sourceCause);
   if (!plaintiff) return { ok: false, error: "SOURCE_PLAINTIFF_MISSING" };
   if (!defendant) return { ok: false, error: "SOURCE_DEFENDANT_MISSING" };
@@ -150,7 +149,6 @@ export function selectMyCaseApiEvidence({ record, sourceApiRow, rows = [], kind 
   if (!sourceAccount) return { ok: false, error: "SOURCE_ACCOUNT_MISSING" };
   if (!sourceCourt) return { ok: false, error: "SOURCE_COURT_MISSING" };
   if (!sourceType) return { ok: false, error: "SOURCE_TYPE_MISSING" };
-  if (!sourceDate && kind !== "qz") return { ok: false, error: "SOURCE_DATE_INVALID" };
 
   const stages = [
     [(row) => text(row?.csfid) === sourceAccount, "MYCASE_ACCOUNT_MISMATCH"],
@@ -158,7 +156,8 @@ export function selectMyCaseApiEvidence({ record, sourceApiRow, rows = [], kind 
     [(row) => text(row?.cywlx) === sourceType, "MYCASE_TYPE_MISMATCH"],
   ];
   if (!causeUnavailable) stages.push([(row) => text(row?.claay) === sourceCause, "MYCASE_CAUSE_MISMATCH"]);
-  if (sourceDate) stages.push([(row) => apiDay(row?.clarq) === sourceDate, "MYCASE_DATE_MISMATCH"]);
+  // layy.updateTime 是来源记录更新时间，不等同于 ajlist.clarq 的成功日期；
+  // 不用它否决唯一候选，最终成功时间始终只取 ajlist.clarq。
   stages.push(
     [
       (row) => causeUnavailable

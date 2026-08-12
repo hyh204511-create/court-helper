@@ -50,6 +50,37 @@ test("批量执行：成功案件 → 状态识别 + 截图 + 进度回调", asy
   assert.equal(stats.unknown, 0);
 });
 
+test("批量执行 UNKNOWN 不覆盖已有终态、时间、案号和图片", async () => {
+  const existing = {
+    uid: "preserve-unknown",
+    kind: "qz",
+    status: "已驳回",
+    filedTime: "2026-08-01",
+    caseNumber: "SYNTHETIC-QZ-001",
+    rejectTime: "2026-08-02",
+    rejectReason: "SYNTHETIC REASON",
+    rejectImage: { arrayBuffer: async () => new ArrayBuffer(0) },
+  };
+  const fakeDb = {
+    STORE_ENFORCEMENT: "qz",
+    getByUid: async (_store, uid) => uid === existing.uid ? existing : null,
+    upsertByUid: async (_store, uid, value) => ({ ...existing, ...value, uid }),
+  };
+  const sent = [];
+  const fakeOutbox = { enqueue: async (event) => sent.push(event) };
+  await persistSyncRecord({
+    uid: existing.uid,
+    kind: "qz",
+    status: "UNKNOWN",
+    needsHuman: true,
+    error: "MYCASE_EVIDENCE_UNAVAILABLE",
+  }, { db: fakeDb, outbox: fakeOutbox });
+  assert.equal(sent[0].payload.status, "已驳回");
+  assert.equal(sent[0].payload.caseNumber, existing.caseNumber);
+  assert.equal(sent[0].payload.filedTime, existing.filedTime);
+  assert.equal(sent[0].blobRef.field, "rejectImage");
+});
+
 test("批量执行：强执案件类型 → 强执成功", async () => {
   const updated = [];
   const ops = makePageOps({

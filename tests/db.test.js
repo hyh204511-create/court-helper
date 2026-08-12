@@ -134,6 +134,28 @@ test("keepImages：重查无新图时保留旧图；显式传新图才覆盖", a
   assert.equal(rec.successImage.size, 2);
 });
 
+test("replaceAccountRecords：同一来源重查保留已确认字段和图片", async () => {
+  const base = caseRec({
+    status: "已驳回",
+    rejectTime: "2026-08-02",
+    rejectReason: "SYNTHETIC REASON",
+    rejectImage: IMG(),
+  });
+  await upsert(STORE_ENFORCEMENT, base);
+  await replaceAccountRecords(STORE_ENFORCEMENT, base.account, [{
+    ...base,
+    status: "UNKNOWN",
+    rejectTime: null,
+    rejectReason: null,
+    rejectImage: null,
+  }]);
+  const [record] = await query(STORE_ENFORCEMENT, { account: base.account });
+  assert.equal(record.status, "已驳回");
+  assert.equal(record.rejectTime, "2026-08-02");
+  assert.equal(record.rejectReason, "SYNTHETIC REASON");
+  assert.ok(record.rejectImage);
+});
+
 test("applyImport：新增/更新计数", async () => {
   const a = await applyImport(STORE_CASES, [caseRec(), caseRec({ caseNumber: "（2026）京0000民初00001号" })]);
   assert.deepEqual({ ...a }, { imported: 2, updated: 0 });

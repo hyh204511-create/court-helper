@@ -251,6 +251,7 @@ export async function replaceAccountRecords(storeName, account, records, { platf
   const tx = db.transaction(storeName, "readwrite");
   const store = tx.objectStore(storeName);
   const request = store.openCursor();
+  const previousByUid = new Map();
   request.onsuccess = () => {
     const cursor = request.result;
     if (cursor) {
@@ -261,6 +262,7 @@ export async function replaceAccountRecords(storeName, account, records, { platf
           || value.platformAccountId == null
           || value.platformAccountId === "");
       if (belongsToReplacedAccount) {
+        previousByUid.set(value.uid, value);
         cursor.delete();
       }
       cursor.continue();
@@ -268,7 +270,21 @@ export async function replaceAccountRecords(storeName, account, records, { platf
     }
     for (const record of records) {
       const cleaned = withoutPassword(record);
-      store.put({ ...cleaned, uid: uidOf(cleaned), updatedAt: Date.now() });
+      const uid = uidOf(cleaned);
+      const previous = previousByUid.get(uid);
+      const status = cleaned.status === "UNKNOWN" && previous?.status ? previous.status : cleaned.status;
+      store.put({
+        ...cleaned,
+        status,
+        filedTime: cleaned.filedTime ?? previous?.filedTime ?? null,
+        caseNumber: cleaned.caseNumber ?? previous?.caseNumber ?? null,
+        rejectTime: cleaned.rejectTime ?? previous?.rejectTime ?? null,
+        rejectReason: cleaned.rejectReason ?? previous?.rejectReason ?? null,
+        successImage: cleaned.successImage ?? previous?.successImage ?? null,
+        rejectImage: cleaned.rejectImage ?? previous?.rejectImage ?? null,
+        uid,
+        updatedAt: Date.now(),
+      });
     }
   };
   request.onerror = () => tx.abort();

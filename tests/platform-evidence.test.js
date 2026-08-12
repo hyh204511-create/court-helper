@@ -160,6 +160,30 @@ test("ajlist 强执来源缺少 updateTime 时仍按其余严格结构唯一读�
   });
 });
 
+test("ajlist 强执 updateTime 与 clarq 不同仍读取强执成功时间和案号", () => {
+  const record = { ...apiRecord, uid: "qz-api-different-update-time", status: "强执成功" };
+  assert.deepEqual(selectMyCaseApiEvidence({
+    kind: "qz",
+    record,
+    sourceApiRow: { ...sourceApiRow, updateTime: "2026-08-12T08:30:00Z" },
+    rows: [apiEvidence({ cah: "SYNTHETIC-QZ-DATE-DIFF-001", clarq: "2026-08-07" })],
+  }), {
+    ok: true,
+    value: { uid: record.uid, caseNumber: "SYNTHETIC-QZ-DATE-DIFF-001", filedTime: "2026-08-07" },
+  });
+});
+
+test("ajlist 立案 updateTime 与 clarq 不同仍读取立案成功时间和案号", () => {
+  assert.deepEqual(selectMyCaseApiEvidence({
+    record: apiRecord,
+    sourceApiRow: { ...sourceApiRow, updateTime: "2026-08-12T08:30:00Z" },
+    rows: [apiEvidence({ cah: "SYNTHETIC-LI-DATE-DIFF-001", clarq: "2026-08-07" })],
+  }), {
+    ok: true,
+    value: { uid: apiRecord.uid, caseNumber: "SYNTHETIC-LI-DATE-DIFF-001", filedTime: "2026-08-07" },
+  });
+});
+
 test("ajlist 强执案由暂无时由其余结构键与完整标题唯一补证", () => {
   const record = {
     ...apiRecord,
@@ -197,7 +221,6 @@ test("ajlist 补证前置字段缺失返回具体且安全的诊断码", () => {
     [{ record: apiRecord, sourceApiRow: { ...sourceApiRow, sfBh: "" }, rows: [] }, "SOURCE_ACCOUNT_MISSING"],
     [{ record: apiRecord, sourceApiRow: { ...sourceApiRow, fymc: "" }, rows: [] }, "SOURCE_COURT_MISSING"],
     [{ record: apiRecord, sourceApiRow: { ...sourceApiRow, ajlx: "" }, rows: [] }, "SOURCE_TYPE_MISSING"],
-    [{ record: apiRecord, sourceApiRow: { ...sourceApiRow, updateTime: "not-a-date" }, rows: [] }, "SOURCE_DATE_INVALID"],
   ];
   for (const [input, error] of cases) {
     assert.deepEqual(selectMyCaseApiEvidence(input), { ok: false, error }, error);
@@ -211,7 +234,6 @@ test("ajlist 无候选时按账号、法院、类型、案由、日期、当事�
     [apiEvidence({ cfydmTranslateText: "OTHER" }), "MYCASE_COURT_MISMATCH"],
     [apiEvidence({ cywlx: "OTHER" }), "MYCASE_TYPE_MISMATCH"],
     [apiEvidence({ claay: "OTHER" }), "MYCASE_CAUSE_MISMATCH"],
-    [apiEvidence({ clarq: "2026-08-08" }), "MYCASE_DATE_MISMATCH"],
     [apiEvidence({ cajmc: "SYNTHETIC PLAINTIFF与OTHER SYNTHETIC CAUSE一案" }), "MYCASE_PARTIES_TITLE_MISMATCH"],
   ]) {
     assert.deepEqual(selectMyCaseApiEvidence({ record: apiRecord, sourceApiRow, rows: [row] }), {
