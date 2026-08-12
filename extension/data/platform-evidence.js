@@ -70,7 +70,7 @@ function titleHasExactParties(title, cause, plaintiff, defendant) {
   const suffix = `${cause}一案`;
   if (!title.endsWith(suffix)) return false;
   const partyTokens = title.slice(0, -suffix.length)
-    .split(/与|,|，|、/)
+    .split(/与|诉|,|，|、/)
     .map((value) => value.trim())
     .filter(Boolean);
   return partyTokens.includes(plaintiff) && partyTokens.includes(defendant);

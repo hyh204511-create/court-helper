@@ -168,6 +168,28 @@ test("takeoverCaseSpaceTab 接管案件空间新标签，不继续等待原列�
   assert.equal(result.tabId, 11);
 });
 
+test("takeoverCaseSpaceTab 接受原标签导航到详情页", async () => {
+  assert.deepEqual(await takeoverCaseSpaceTab({
+    originalTabId: 7,
+    tabsBefore: [{ id: 7, url: "https://zxfw.court.gov.cn/zxfw/#/pagesWsla/pc/list/index" }],
+    tabsAfter: [{ id: 7, url: "https://zxfw.court.gov.cn/zxfw/#/pagesWsla/common/wsla/detail/index" }],
+  }), { ok: true, tabId: 7, originalTabId: 7 });
+});
+
+test("takeoverCaseSpaceTab 接受复用点击前已存在的法院详情标签", async () => {
+  assert.deepEqual(await takeoverCaseSpaceTab({
+    originalTabId: 7,
+    tabsBefore: [
+      { id: 7, url: "https://zxfw.court.gov.cn/zxfw/#/pagesWsla/pc/list/index" },
+      { id: 8, url: "https://zxfw.court.gov.cn/zxfw/#/pagesWsla/common/wsla/detail/index?old=1" },
+    ],
+    tabsAfter: [
+      { id: 7, url: "https://zxfw.court.gov.cn/zxfw/#/pagesWsla/pc/list/index" },
+      { id: 8, url: "https://zxfw.court.gov.cn/zxfw/#/pagesWsla/common/wsla/detail/index?current=1" },
+    ],
+  }), { ok: true, tabId: 8, originalTabId: 7 });
+});
+
 test("selectLatestAudit 按最新 shsj 选择；并列最新时待人工", () => {
   const records = [
     { shjg: "通过", cshjg: "通过", shyj: "旧", shsj: "2026-01-01T00:00:00Z" },

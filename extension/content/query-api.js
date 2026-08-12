@@ -172,8 +172,12 @@ export async function reconcileApiDomRows({ readApi, readDom, waitForQuiet } = {
 }
 
 export async function takeoverCaseSpaceTab({ originalTabId, tabsBefore = [], tabsAfter = [], isDetail = (tab) => /detail|layyxq/i.test(String(tab?.url ?? "")) } = {}) {
-  const before = new Set((Array.isArray(tabsBefore) ? tabsBefore : []).map((tab) => tab?.id));
-  const candidate = (Array.isArray(tabsAfter) ? tabsAfter : []).find((tab) => tab?.id !== originalTabId && !before.has(tab?.id) && isDetail(tab));
+  const before = new Map((Array.isArray(tabsBefore) ? tabsBefore : []).map((tab) => [tab?.id, String(tab?.url ?? "")]));
+  const candidate = (Array.isArray(tabsAfter) ? tabsAfter : [])
+    .filter((tab) => isDetail(tab))
+    .find((tab) => tab?.id !== originalTabId
+      ? !before.has(tab?.id) || before.get(tab?.id) !== String(tab?.url ?? "")
+      : before.get(tab?.id) !== String(tab?.url ?? ""));
   return candidate ? { ok: true, tabId: candidate.id, originalTabId } : MANUAL("CASE_SPACE_TAB_UNAVAILABLE");
 }
 

@@ -132,6 +132,20 @@ test("ajlist 成功补证使用跨接口严格结构，不要求两个页面标�
   });
 });
 
+test("ajlist 标题使用法院常见的诉连接词时仍按完整当事人 token 补证", () => {
+  assert.deepEqual(selectMyCaseApiEvidence({
+    record: apiRecord,
+    sourceApiRow,
+    rows: [apiEvidence({
+      cajmc: "SYNTHETIC PLAINTIFF诉SYNTHETIC DEFENDANTSYNTHETIC CAUSE一案",
+      cah: "SYNTHETIC-LI-SU-001",
+    })],
+  }), {
+    ok: true,
+    value: { uid: apiRecord.uid, caseNumber: "SYNTHETIC-LI-SU-001", filedTime: "2026-08-07" },
+  });
+});
+
 test("ajlist 强执补证接受强执成功记录并沿用严格结构", () => {
   const record = { ...apiRecord, uid: "qz-api-record", status: "强执成功" };
   assert.deepEqual(selectMyCaseApiEvidence({

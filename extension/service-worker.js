@@ -348,6 +348,39 @@ function isCourtContentSender(sender) {
   }
 }
 
+function isCourtDetailUrl(url) {
+  try {
+    const parsed = new URL(url ?? "");
+    return parsed.hostname === "zxfw.court.gov.cn" && /detail|layyxq/i.test(parsed.hash || parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
+async function adoptUpdatedCaseSpaceTab(tabId, changeInfo, tab) {
+  if (!isCourtDetailUrl(changeInfo?.url ?? tab?.url)) return;
+  const session = chrome.storage?.session;
+  if (!session?.get || !session?.set) return;
+  const { pendingDetail, caseSpaceHandoff } = await session.get(["pendingDetail", "caseSpaceHandoff"]);
+  if (!pendingDetail?.uid || caseSpaceHandoff?.phase === "adopted") return;
+  const sourceTabId = caseSpaceHandoff?.sourceTabId;
+  const beforeTabs = new Map((Array.isArray(caseSpaceHandoff?.beforeTabs) ? caseSpaceHandoff.beforeTabs : [])
+    .map((value) => [value?.id, String(value?.url ?? "")]));
+  const currentUrl = String(changeInfo?.url ?? tab?.url ?? "");
+  if (Number.isInteger(sourceTabId) && tabId !== sourceTabId
+    && beforeTabs.has(tabId) && beforeTabs.get(tabId) === currentUrl) return;
+  await session.set({
+    caseSpaceHandoff: {
+      uid: pendingDetail.uid,
+      kind: pendingDetail.kind === "qz" ? "qz" : "li",
+      sourceTabId,
+      detailTabId: tabId,
+      phase: "adopted",
+      at: Date.now(),
+    },
+  });
+}
+
 function handleCaseDetailMessage(message, sender, sendResponse) {
   if (!CASE_DETAIL_MESSAGE_TYPES.has(message?.type)) return false;
   if (!isCourtContentSender(sender)) {
@@ -388,12 +421,24 @@ function handleCaseDetailMessage(message, sender, sendResponse) {
     const kind = message.kind === "qz" ? "qz" : "li";
     const tabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : null;
     const phase = message.type === "CASE_SPACE_ADOPTED" ? "adopted" : "opening";
+    let beforeTabs = [];
+    if (phase === "opening" && typeof chrome.tabs?.query === "function") {
+      try {
+        const tabs = await chrome.tabs.query({});
+        beforeTabs = Array.isArray(tabs)
+          ? tabs.filter((tab) => Number.isInteger(tab?.id)).map((tab) => ({ id: tab.id, url: String(tab.url ?? "") }))
+          : [];
+      } catch {
+        beforeTabs = [];
+      }
+    }
     await session.set({
       ...(phase === "opening" ? { pendingDetail: { uid, kind } } : {}),
       caseSpaceHandoff: {
         uid,
         kind,
         sourceTabId: phase === "opening" ? tabId : undefined,
+        beforeTabs: phase === "opening" ? beforeTabs : undefined,
         detailTabId: phase === "adopted" ? tabId : undefined,
         phase,
         at: Date.now(),
@@ -402,6 +447,12 @@ function handleCaseDetailMessage(message, sender, sendResponse) {
     sendResponse({ ok: true, phase, tabId });
   })().catch(() => sendResponse({ ok: false, code: "CASE_SPACE_HANDOFF_FAILED" }));
   return true;
+}
+
+if (globalThis.chrome?.tabs?.onUpdated?.addListener) {
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    adoptUpdatedCaseSpaceTab(tabId, changeInfo, tab).catch(() => undefined);
+  });
 }
 
 if (globalThis.chrome?.runtime?.onMessage?.addListener) {
