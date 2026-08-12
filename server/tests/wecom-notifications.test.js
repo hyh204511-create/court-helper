@@ -25,7 +25,7 @@ function config(webhookUrl = WEBHOOK) {
     OBJECT_STORAGE_ENDPOINT: 'https://cos.example.test',
     OBJECT_STORAGE_BUCKET: 'private-test-bucket',
     ADMIN_INITIAL_PASSWORD: ADMIN_PASSWORD,
-    ...(webhookUrl === undefined ? {} : { WECOM_WEBHOOK_URL: webhookUrl }),
+    ...(webhookUrl == null ? {} : { WECOM_WEBHOOK_URL: webhookUrl }),
   });
 }
 
@@ -169,7 +169,7 @@ test('requires admin UI cookie, CSRF, valid mobiles, configured webhook, and mat
     await state.app.close();
   }
 
-  const unconfigured = await makeApp({ webhookUrl: undefined });
+  const unconfigured = await makeApp({ webhookUrl: null });
   try {
     const response = await request(unconfigured);
     assert.equal(response.statusCode, 503);

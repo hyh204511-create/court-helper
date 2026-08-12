@@ -62,8 +62,8 @@ export class TooManyRequestsError extends AppError {
 }
 
 export class DependencyUnavailableError extends AppError {
-  constructor(message = 'Dependency unavailable') {
-    super(message, 'DEPENDENCY_UNAVAILABLE', 503, true);
+  constructor(message = 'Dependency unavailable', code = 'DEPENDENCY_UNAVAILABLE') {
+    super(message, code, 503, true);
   }
 }
 

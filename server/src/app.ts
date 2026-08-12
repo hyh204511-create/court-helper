@@ -46,6 +46,8 @@ import {
 import type { Clock } from './retention/policy.ts';
 import { registerAdminRoutes } from './admin/routes.ts';
 import type { LocalLoginHelper } from './local-login-helper.ts';
+import { registerWecomNotificationRoutes } from './wecom-notifications/routes.ts';
+import { WecomNotificationService, type WecomTransport } from './wecom-notifications/service.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -83,6 +85,7 @@ export interface BuildAppOptions {
     logger?: RetentionLogger;
   };
   localLoginHelper?: LocalLoginHelper;
+  wecomTransport?: WecomTransport;
 }
 
 function registerCors(app: FastifyInstance, config: ServerConfig): void {
@@ -274,6 +277,25 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         config,
         prefix: '/api/v1',
         service: screenshotService,
+      });
+      const wecomNotificationService = new WecomNotificationService(
+        config.wecom.webhookUrl,
+        options.caseRepository,
+        options.screenshotRepository,
+        options.storageBackend,
+        options.wecomTransport,
+      );
+      registerWecomNotificationRoutes(app, {
+        authService,
+        config,
+        prefix: '',
+        service: wecomNotificationService,
+      });
+      registerWecomNotificationRoutes(app, {
+        authService,
+        config,
+        prefix: '/api/v1',
+        service: wecomNotificationService,
       });
     }
     if (options.reportExportRepository && options.storageBackend && options.platformAccountRepository) {

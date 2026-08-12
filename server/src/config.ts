@@ -27,6 +27,9 @@ export interface ServerConfig {
     enabled: boolean;
     extensionDir?: string;
   };
+  wecom: {
+    webhookUrl?: string;
+  };
 }
 
 export type Environment = Record<string, string | undefined>;
@@ -101,6 +104,29 @@ function credentialMasterKey(raw: string): Buffer {
   return decoded;
 }
 
+function wecomWebhookUrl(raw: string | undefined): string | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw.trim());
+  } catch {
+    throw new Error('Invalid environment variable: WECOM_WEBHOOK_URL');
+  }
+  if (
+    parsed.protocol !== 'https:'
+    || parsed.hostname !== 'qyapi.weixin.qq.com'
+    || parsed.port !== ''
+    || parsed.pathname !== '/cgi-bin/webhook/send'
+    || !parsed.searchParams.get('key')?.trim()
+    || parsed.username !== ''
+    || parsed.password !== ''
+    || parsed.hash !== ''
+  ) {
+    throw new Error('Invalid environment variable: WECOM_WEBHOOK_URL');
+  }
+  return parsed.toString();
+}
+
 export function loadConfig(env: Environment = process.env): ServerConfig {
   const port = positiveInteger(env, 'PORT', 3000);
   if (port > 65535) {
@@ -168,6 +194,9 @@ export function loadConfig(env: Environment = process.env): ServerConfig {
     localWindowsDelivery: {
       enabled: optionalBoolean(env, 'LOCAL_WINDOWS_DELIVERY', false),
       extensionDir: optional(env, ['LOCAL_EXTENSION_DIR']),
+    },
+    wecom: {
+      webhookUrl: wecomWebhookUrl(env.WECOM_WEBHOOK_URL),
     },
   };
 }
