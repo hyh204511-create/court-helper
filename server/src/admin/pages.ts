@@ -196,6 +196,17 @@ function caseDetailPage(role: AdminRole, caseId: string): string {
     <section class="panel" aria-labelledby="screenshot-title">
       <div class="panel-head"><div><h3 id="screenshot-title">截图存证</h3><p>内容经鉴权 API 查看或下载，不暴露存储内部信息。</p></div></div>
       <div class="panel-body"><div id="screenshot-list" class="screenshot-grid"></div></div>
+    </section>
+    <section class="panel" aria-labelledby="wecom-title">
+      <div class="panel-head"><div><h3 id="wecom-title">推送到企业微信群</h3><p>发送对应结果截图、原被告和结果内容，并同时 @业务员与@助理。手机号仅用于本次推送，不保存。</p></div></div>
+      <div class="panel-body">
+        <form id="wecom-notification-form" class="filters">
+          <div class="field"><label for="wecom-salesperson-mobile">业务员手机号</label><input id="wecom-salesperson-mobile" name="salespersonMobile" type="tel" inputmode="numeric" autocomplete="off" maxlength="11" pattern="1[0-9]{10}" required></div>
+          <div class="field"><label for="wecom-assistant-mobile">助理手机号</label><input id="wecom-assistant-mobile" name="assistantMobile" type="tel" inputmode="numeric" autocomplete="off" maxlength="11" pattern="1[0-9]{10}" required></div>
+          <div class="filter-actions"><button class="primary" type="submit">确认并推送</button></div>
+        </form>
+        <p class="message" data-wecom-message aria-live="polite"></p>
+      </div>
     </section>`, caseId);
 }
 

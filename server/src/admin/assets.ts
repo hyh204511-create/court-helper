@@ -1600,6 +1600,36 @@ async function loadCaseDetail() {
   }
 }
 
+function initWecomNotification() {
+  const form = $('#wecom-notification-form');
+  if (!form) return;
+  const message = $('[data-wecom-message]');
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    if (!window.confirm('确认将当前案件截图、原被告及结果内容发送到已配置的企业微信群，并 @业务员和@助理？')) return;
+    const button = form.querySelector('button[type="submit"]');
+    const salesperson = $('#wecom-salesperson-mobile');
+    const assistant = $('#wecom-assistant-mobile');
+    button.disabled = true;
+    try {
+      await api('/cases/' + encodeURIComponent(document.body.dataset.caseId) + '/wecom-notifications', {
+        method: 'POST',
+        body: JSON.stringify({
+          salespersonMobile: salesperson.value.trim(),
+          assistantMobile: assistant.value.trim(),
+        }),
+      });
+      form.reset();
+      setMessage(message, '已推送到企业微信群', 'success');
+    } catch (error) {
+      setMessage(message, errorMessage(error));
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 async function initPage() {
   const page = document.body.dataset.page;
   initNavigationDrawer();
@@ -1615,7 +1645,7 @@ async function initPage() {
     else if (page === 'platform-accounts') initPlatformAccounts();
     else if (page === 'report-exports') initReportExports();
     else if (page === 'browser-control') initBrowserControl();
-    else if (page === 'case-detail') void loadCaseDetail();
+    else if (page === 'case-detail') { initWecomNotification(); void loadCaseDetail(); }
   } catch (error) {
     setMessage($('[data-page-status]'), errorMessage(error));
   }
