@@ -146,6 +146,20 @@ test("ajlist 标题使用法院常见的诉连接词时仍按完整当事人 tok
   });
 });
 
+test("ajlist 标题使用法院无分隔符的双方名称与案由严格拼接时仍可补证", () => {
+  assert.deepEqual(selectMyCaseApiEvidence({
+    record: apiRecord,
+    sourceApiRow,
+    rows: [apiEvidence({
+      cajmc: `${apiRecord.plaintiff}${apiRecord.defendant}${apiRecord.sourceCause}`,
+      cah: "SYNTHETIC-LI-CONCAT-001",
+    })],
+  }), {
+    ok: true,
+    value: { uid: apiRecord.uid, caseNumber: "SYNTHETIC-LI-CONCAT-001", filedTime: "2026-08-07" },
+  });
+});
+
 test("ajlist 强执补证接受强执成功记录并沿用严格结构", () => {
   const record = { ...apiRecord, uid: "qz-api-record", status: "强执成功" };
   assert.deepEqual(selectMyCaseApiEvidence({

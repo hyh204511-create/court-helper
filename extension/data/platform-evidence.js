@@ -67,6 +67,7 @@ function apiDay(value) {
 }
 
 function titleHasExactParties(title, cause, plaintiff, defendant) {
+  if (title === `${plaintiff}${defendant}${cause}`) return true;
   const suffix = `${cause}一案`;
   if (!title.endsWith(suffix)) return false;
   const partyTokens = title.slice(0, -suffix.length)
