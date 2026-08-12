@@ -29,6 +29,7 @@ async function loadWorker({
 } = {}) {
   const runtimeListeners = [];
   const storageListeners = [];
+  const tabCreatedListeners = [];
   const tabUpdatedListeners = [];
   const fetches = [];
   const alarmCreates = [];
@@ -86,6 +87,7 @@ async function loadWorker({
     },
     tabs: {
       query: async () => tabs,
+      onCreated: { addListener(listener) { tabCreatedListeners.push(listener); } },
       onUpdated: { addListener(listener) { tabUpdatedListeners.push(listener); } },
       sendMessage: async () => ({ ok: true }),
       captureVisibleTab,
@@ -94,7 +96,7 @@ async function loadWorker({
 
   try {
     const worker = await import(`../extension/service-worker.js?export-upload-test=${importSequence++}`);
-    return { worker, runtimeListener: runtimeListeners.at(-1), fetches, alarmCreates, intervals, storageData, sessionData, tabUpdatedListeners, notifyStorageChange(changes) {
+    return { worker, runtimeListener: runtimeListeners.at(-1), fetches, alarmCreates, intervals, storageData, sessionData, tabCreatedListeners, tabUpdatedListeners, notifyStorageChange(changes) {
       for (const [key, change] of Object.entries(changes)) {
         if (!Object.hasOwn(change ?? {}, "newValue")) continue;
         if (change.newValue === undefined) delete storageData[key];
@@ -183,6 +185,23 @@ test("案件空间原标签导航到详情页时 Worker 自动确认接管", asy
     await loaded.tabUpdatedListeners[0](17, { url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/common/wsla/detail/index" }, { id: 17, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/common/wsla/detail/index" });
     const read = invoke(loaded.runtimeListener, { type: "CASE_DETAIL_PENDING_GET" }, { tab: { id: 17, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/common/wsla/detail/index" } });
     assert.equal((await read.readResponse()).handoff.phase, "adopted");
+  } finally {
+    loaded.cleanup();
+  }
+});
+
+test("案件空间新标签创建时已携带详情 URL 也由 Worker 自动确认接管", async () => {
+  const loaded = await loadWorker({ tabs: [{ id: 17, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/pc/list/index" }] });
+  try {
+    const opened = invoke(loaded.runtimeListener, { type: "CASE_SPACE_OPEN", uid: "synthetic-created", kind: "li" }, { tab: { id: 17, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/pc/list/index" } });
+    assert.deepEqual(await opened.readResponse(), { ok: true, phase: "opening", tabId: 17 });
+    await loaded.tabCreatedListeners[0]({
+      id: 19,
+      url: "",
+      pendingUrl: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/common/wsla/detail/index?synthetic=1",
+    });
+    const read = invoke(loaded.runtimeListener, { type: "CASE_DETAIL_PENDING_GET" }, { tab: { id: 17, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/pc/list/index" } });
+    assert.deepEqual((await read.readResponse()).handoff, { uid: "synthetic-created", kind: "li", phase: "adopted" });
   } finally {
     loaded.cleanup();
   }

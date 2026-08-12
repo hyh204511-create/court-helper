@@ -449,6 +449,13 @@ function handleCaseDetailMessage(message, sender, sendResponse) {
   return true;
 }
 
+if (globalThis.chrome?.tabs?.onCreated?.addListener) {
+  chrome.tabs.onCreated.addListener((tab) => {
+    const createdUrl = tab?.pendingUrl || tab?.url;
+    adoptUpdatedCaseSpaceTab(tab?.id, { url: createdUrl }, { ...tab, url: createdUrl }).catch(() => undefined);
+  });
+}
+
 if (globalThis.chrome?.tabs?.onUpdated?.addListener) {
   chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     adoptUpdatedCaseSpaceTab(tabId, changeInfo, tab).catch(() => undefined);
