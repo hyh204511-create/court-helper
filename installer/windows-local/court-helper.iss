@@ -28,6 +28,7 @@ WizardStyle=modern
 [Files]
 Source: "{#StagingDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#StagingDir}\installer\windows-local\prepare-upgrade.ps1"; Flags: dontcopy
+Source: "{#StagingDir}\installer\windows-local\restore-upgrade-services.ps1"; Flags: dontcopy
 
 [Icons]
 Name: "{autodesktop}\法院查询助手"; Filename: "{app}\runtime\node.exe"; Parameters: """{app}\installer\windows-local\open-console.mjs"""; WorkingDir: "{app}"
@@ -35,7 +36,7 @@ Name: "{group}\法院查询助手"; Filename: "{app}\runtime\node.exe"; Paramete
 Name: "{group}\诊断与修复"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\windows-local\diagnose.ps1"""; WorkingDir: "{app}"
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\windows-local\bootstrap.ps1"" -InstallRoot ""{app}"" -AdminPasswordFile ""{tmp}\court-helper-admin-password.txt"""; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\windows-local\bootstrap.ps1"" -InstallRoot ""{app}"" -AdminPasswordFile ""{tmp}\court-helper-admin-password.txt"" -CompletionMarker ""{tmp}\court-helper-bootstrap-complete.txt"""; Flags: runhidden waituntilterminated
 Filename: "{app}\installer\windows-local\open-onboarding.cmd"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
@@ -45,6 +46,7 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Fil
 var
   PasswordPage: TInputQueryWizardPage;
   DeleteDataOnUninstall: Boolean;
+  UpgradePrepared: Boolean;
 
 procedure InitializeWizard;
 begin
@@ -87,10 +89,23 @@ begin
     exit;
   end;
   ExtractTemporaryFile('prepare-upgrade.ps1');
+  ExtractTemporaryFile('restore-upgrade-services.ps1');
   if not Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -File "' +
     ExpandConstant('{tmp}\prepare-upgrade.ps1') + '" -InstallRoot "' + ExpandConstant('{app}') + '"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
-    Result := '升级前备份或服务停止失败，安装已取消。';
+    Result := '升级前备份或服务停止失败，安装已取消。'
+  else
+    UpgradePrepared := True;
+end;
+
+procedure DeinitializeSetup;
+var
+  ResultCode: Integer;
+begin
+  if UpgradePrepared and not FileExists(ExpandConstant('{tmp}\court-helper-bootstrap-complete.txt')) then
+    Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -File "' +
+      ExpandConstant('{tmp}\restore-upgrade-services.ps1') + '"', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
 end;
 
 function InitializeUninstall(): Boolean;

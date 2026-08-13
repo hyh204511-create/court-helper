@@ -1,4 +1,4 @@
-﻿param([Parameter(Mandatory=$true)][string]$InstallRoot, [Parameter(Mandatory=$true)][string]$AdminPasswordFile)
+﻿param([Parameter(Mandatory=$true)][string]$InstallRoot, [Parameter(Mandatory=$true)][string]$AdminPasswordFile, [Parameter(Mandatory=$true)][string]$CompletionMarker)
 $ErrorActionPreference = 'Stop'
 $dataRoot = Join-Path $env:ProgramData 'CourtHelper'
 $runtimeRoot = Join-Path $InstallRoot 'runtime'
@@ -103,6 +103,7 @@ if ((Test-Path $initdb) -and -not (Test-Path (Join-Path $pgData 'PG_VERSION'))) 
   Set-Acl -LiteralPath $dataRoot -AclObject $dataAcl
 }
 if (-not (Get-Service CourtHelperPostgres -ErrorAction SilentlyContinue)) { & $pgCtl register -N CourtHelperPostgres -D $pgData -S auto -o '-p 55432' | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL 服务注册失败。' } }
+Set-Service CourtHelperPostgres -StartupType Automatic
 Start-Service CourtHelperPostgres -ErrorAction Stop
 $pgReady = Join-Path $pgRoot 'bin\pg_isready.exe'
 for ($i=0; $i -lt 30 -and (Test-Path $pgReady); $i++) { & $pgReady -h 127.0.0.1 -p 55432 -d postgres | Out-Null; if ($LASTEXITCODE -eq 0) { break }; Start-Sleep -Seconds 1 }
@@ -144,5 +145,7 @@ $xmlDataRoot = [Security.SecurityElement]::Escape($dataRoot)
 </service>
 "@ | Set-Content -LiteralPath $wrapperConfig -Encoding UTF8
 if (-not (Get-Service CourtHelperBackend -ErrorAction SilentlyContinue)) { & $wrapper install | Out-Null; if ($LASTEXITCODE -ne 0) { throw '后台服务注册失败。' } }
+Set-Service CourtHelperBackend -StartupType Automatic
 & $wrapper start | Out-Null
 if ($LASTEXITCODE -ne 0) { throw '后台服务启动失败。' }
+Set-Content -LiteralPath $CompletionMarker -Value 'ok' -Encoding ascii

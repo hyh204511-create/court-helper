@@ -53,6 +53,8 @@ test('local manifest never retains cloud or wildcard permissions', () => {
 test('installer keeps secrets off command lines and uses managed service lifecycle', () => {
   const iss = readFileSync(new URL('../installer/windows-local/court-helper.iss', import.meta.url), 'utf8');
   const bootstrap = readFileSync(new URL('../installer/windows-local/bootstrap.ps1', import.meta.url), 'utf8');
+  const prepareUpgrade = readFileSync(new URL('../installer/windows-local/prepare-upgrade.ps1', import.meta.url), 'utf8');
+  const restoreUpgrade = readFileSync(new URL('../installer/windows-local/restore-upgrade-services.ps1', import.meta.url), 'utf8');
   const backend = readFileSync(new URL('../installer/windows-local/start-backend.ps1', import.meta.url), 'utf8');
   assert.match(iss, /AdminPasswordFile/);
   assert.doesNotMatch(iss, /-AdminPassword\s/);
@@ -77,6 +79,21 @@ test('installer keeps secrets off command lines and uses managed service lifecyc
   assert.match(bootstrap, /postgres\\bin\\createdb\.exe/);
   assert.match(bootstrap, /SELECT 1 FROM pg_database WHERE datname = 'courthelper'/);
   assert.match(bootstrap, /Remove-Item Env:PGPASSWORD/);
+  assert.match(bootstrap, /Set-Service CourtHelperPostgres -StartupType Automatic/);
+  assert.match(bootstrap, /Set-Service CourtHelperBackend -StartupType Automatic/);
+  assert.match(prepareUpgrade, /Set-Service CourtHelperBackend -StartupType Disabled/);
+  assert.match(prepareUpgrade, /WaitForStatus\('Stopped'/);
+  assert.match(prepareUpgrade, /Get-NetTCPConnection -LocalPort 55432/);
+  assert.match(prepareUpgrade, /FileShare\]::None/);
+  assert.match(prepareUpgrade, /if \(-not \(Test-Path -LiteralPath \$lockProbe\)\) \{ throw/);
+  assert.doesNotMatch(prepareUpgrade, /Stop-Service CourtHelperPostgres -Force -ErrorAction SilentlyContinue/);
+  assert.match(iss, /restore-upgrade-services\.ps1/);
+  assert.match(iss, /DeinitializeSetup/);
+  assert.match(iss, /court-helper-bootstrap-complete\.txt/);
+  assert.match(bootstrap, /CompletionMarker/);
+  assert.match(bootstrap, /Set-Content -LiteralPath \$CompletionMarker/);
+  assert.match(restoreUpgrade, /Set-Service CourtHelperPostgres -StartupType Automatic/);
+  assert.match(restoreUpgrade, /Set-Service CourtHelperBackend -StartupType Automatic/);
   assert.match(backend, /Remove-Item Env:DATABASE_URL/);
   assert.match(iss, /prepare-upgrade\.ps1/);
   assert.match(iss, /Parameters:\s+"""\{app\}\\installer\\windows-local\\open-console\.mjs"""/);
