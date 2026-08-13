@@ -401,6 +401,24 @@ test('cookie logout requires the configured Origin and in-memory CSRF token', as
   }
 });
 
+test('logout revokes only the session and allows the same user to log in again', async () => {
+  const { app, repository } = await makeApp();
+  try {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const current = await loginAdmin(app);
+      const logout = await app.inject({ method: 'POST', url: '/auth/logout', headers: { cookie: current.cookie, origin: 'https://admin.example.test', 'x-csrf-token': current.csrfToken } });
+      assert.equal(logout.statusCode, 200);
+      const user = await repository.findUserByUsername('admin');
+      assert.ok(user);
+      assert.equal(user.enabled, true);
+      assert.equal(user.deletedAt, null);
+    }
+    const finalLogin = await loginAdmin(app);
+    assert.equal(finalLogin.response.statusCode, 200);
+    assert.equal((await repository.listSessions()).filter((session) => session.revokedAt === null).length, 1);
+  } finally { await app.close(); }
+});
+
 test('user and administrator extension bearers cannot access user management', async () => {
   const repository = new MemoryAuthRepository();
   await addUser(repository);

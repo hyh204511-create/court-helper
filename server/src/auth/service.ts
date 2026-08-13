@@ -111,6 +111,11 @@ class LoginAttemptLimiter {
     usernameBucket.count += 1;
     return null;
   }
+
+  clear(ip: string, username: string): void {
+    this.byIp.delete(ip);
+    this.byUsername.delete(username);
+  }
 }
 
 class ExtensionPairingAttemptLimiter {
@@ -225,6 +230,7 @@ export class AuthService {
     if (!(await this.verifyPassword(user.passwordHash, password))) {
       throw new AuthenticationRequiredError('Invalid credentials');
     }
+    this.loginAttemptLimiter.clear(ip, normalizedUsername);
 
     const token = newOpaqueToken();
     const session = await this.repository.createSession({
