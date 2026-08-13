@@ -65,6 +65,9 @@ let _batchRunning = false;
 let _batchPaused = false;
 let _exportInFlight = null;
 const _resumeWaiters = [];
+let _detailCaptureInFlight = null;
+let _queuedDetailRoute = null;
+let _lastDetailRoute = null;
 let _lastLoginReport = null;
 const AUTO_LOGIN_ERROR_CODES = new Set([
   "SERVICE_UNAVAILABLE",
@@ -647,6 +650,44 @@ export async function runDetailCapture({
   return true;
 }
 
+function currentDetailRoute() {
+  return isDetailPage() ? `${location.pathname}${location.search}${location.hash}` : null;
+}
+
+async function drainDetailCaptureQueue() {
+  if (_detailCaptureInFlight) return _detailCaptureInFlight;
+  _detailCaptureInFlight = (async () => {
+    while (_queuedDetailRoute) {
+      const route = _queuedDetailRoute;
+      _queuedDetailRoute = null;
+      if (currentDetailRoute() !== route || _lastDetailRoute === route) continue;
+      _lastDetailRoute = route;
+      try {
+        await runDetailCapture();
+      } catch (error) {
+        console.warn("[court-helper] detail route error", error);
+      }
+    }
+  })().finally(() => {
+    _detailCaptureInFlight = null;
+    if (_queuedDetailRoute) void drainDetailCaptureQueue();
+  });
+  return _detailCaptureInFlight;
+}
+
+function scheduleDetailCapture() {
+  const route = currentDetailRoute();
+  if (!route) {
+    _queuedDetailRoute = null;
+    _lastDetailRoute = null;
+    return Promise.resolve(false);
+  }
+  if (!_panel) initPanel();
+  if (route === _lastDetailRoute && !_detailCaptureInFlight) return Promise.resolve(false);
+  _queuedDetailRoute = route;
+  return drainDetailCaptureQueue();
+}
+
 /** 触发详情采集：登记待办 → 点击「案件空间」打开新标签 */
 async function triggerDetailCapture({ uid, kind, target }) {
   let handoff;
@@ -1145,8 +1186,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   try {
     observeLoginState();
     initPanel();
+    window.addEventListener("hashchange", () => {
+      void scheduleDetailCapture();
+    });
     if (isDetailPage()) {
-      await runDetailCapture();
+      await scheduleDetailCapture();
     } else if (isListPage()) {
       // 预校验选择器（改版检测）：列表页就绪时探测，失效则 toast 提示
       const ok = await waitFor(() => document.querySelectorAll(SELECTORS.list.row).length > 0 || document.body.innerText.includes("暂无数据"), 8000);

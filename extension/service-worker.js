@@ -342,7 +342,9 @@ const CASE_DETAIL_MESSAGE_TYPES = new Set([
 
 function isCourtContentSender(sender) {
   try {
-    return new URL(sender?.tab?.url ?? sender?.url ?? "").hostname === "zxfw.court.gov.cn";
+    const senderUrl = [sender?.tab?.url, sender?.url]
+      .find((value) => typeof value === "string" && value.trim());
+    return new URL(senderUrl ?? "").hostname === "zxfw.court.gov.cn";
   } catch {
     return false;
   }
