@@ -135,6 +135,38 @@ test("AUTO_LOGIN 非登录路由先拒绝，不触碰 DOM/fetch，且不回传 p
   cleanup(dom);
 });
 
+test("document_start waits for the SPA detail route and adopts the pending handoff once", async () => {
+  const { dom, chrome } = await loadContent({
+    hash: "#/pagesWsla/pc/home",
+    html: '<div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>',
+  });
+  const sent = [];
+  const sendMessage = chrome.runtime.sendMessage;
+  chrome.runtime.sendMessage = async (message) => {
+    if (message?.type === "CASE_DETAIL_PENDING_GET" || message?.type === "CASE_SPACE_ADOPTED") {
+      sent.push(message.type);
+    }
+    return sendMessage(message);
+  };
+  chrome.setPendingDetail({ uid: "synthetic-spa-detail", kind: "li" });
+  dom.window.history.replaceState(null, "", "#/pagesWsla/common/wsla/detail/index");
+  dom.window.dispatchEvent(new dom.window.Event("hashchange"));
+  try {
+    const deadline = Date.now() + 1_000;
+    while (!sent.includes("CASE_SPACE_ADOPTED") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    dom.window.dispatchEvent(new dom.window.Event("hashchange"));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(sent.filter((type) => type === "CASE_DETAIL_PENDING_GET").length, 1);
+    assert.equal(sent.filter((type) => type === "CASE_SPACE_ADOPTED").length, 1);
+    assert.ok(dom.window.document.getElementById("court-helper-panel-root"));
+  } finally {
+    cleanup(dom);
+  }
+});
+
 test("案件空间点击未打开详情标签时明确失败，不把点击动作当成截图成功", async () => {
   await db.resetDb();
   const uid = "synthetic-case-space-not-opened";

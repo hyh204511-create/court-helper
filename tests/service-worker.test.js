@@ -177,6 +177,23 @@ test("案件空间待办由 Worker 桥接 session storage，且只接受法院�
   }
 });
 
+test("case-space messages fall back to sender.url while the new tab URL is still empty", async () => {
+  const loaded = await loadWorker();
+  try {
+    const opened = invoke(
+      loaded.runtimeListener,
+      { type: "CASE_SPACE_OPEN", uid: "synthetic-early-sender", kind: "li" },
+      {
+        tab: { id: 17, url: "" },
+        url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/pc/list/index",
+      },
+    );
+    assert.deepEqual(await opened.readResponse(), { ok: true, phase: "opening", tabId: 17 });
+  } finally {
+    loaded.cleanup();
+  }
+});
+
 test("案件空间原标签导航到详情页时 Worker 自动确认接管", async () => {
   const loaded = await loadWorker({ tabs: [{ id: 17, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/pc/list/index" }] });
   try {
