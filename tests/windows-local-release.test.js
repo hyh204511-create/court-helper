@@ -79,6 +79,7 @@ test('installer keeps secrets off command lines and uses managed service lifecyc
   assert.match(bootstrap, /Remove-Item Env:PGPASSWORD/);
   assert.match(backend, /Remove-Item Env:DATABASE_URL/);
   assert.match(iss, /prepare-upgrade\.ps1/);
+  assert.match(iss, /Parameters:\s+"""\{app\}\\installer\\windows-local\\open-console\.mjs"""/);
 });
 
 test('runtime spreadsheet dependency survives production-only installation', () => {

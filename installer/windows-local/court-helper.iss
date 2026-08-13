@@ -30,8 +30,8 @@ Source: "{#StagingDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubd
 Source: "{#StagingDir}\installer\windows-local\prepare-upgrade.ps1"; Flags: dontcopy
 
 [Icons]
-Name: "{autodesktop}\法院查询助手"; Filename: "{app}\runtime\node.exe"; Parameters: "{app}\installer\windows-local\open-console.mjs"; WorkingDir: "{app}"
-Name: "{group}\法院查询助手"; Filename: "{app}\runtime\node.exe"; Parameters: "{app}\installer\windows-local\open-console.mjs"; WorkingDir: "{app}"
+Name: "{autodesktop}\法院查询助手"; Filename: "{app}\runtime\node.exe"; Parameters: """{app}\installer\windows-local\open-console.mjs"""; WorkingDir: "{app}"
+Name: "{group}\法院查询助手"; Filename: "{app}\runtime\node.exe"; Parameters: """{app}\installer\windows-local\open-console.mjs"""; WorkingDir: "{app}"
 Name: "{group}\诊断与修复"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\windows-local\diagnose.ps1"""; WorkingDir: "{app}"
 
 [Run]
