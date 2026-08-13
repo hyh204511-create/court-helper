@@ -25,6 +25,7 @@ async function loadWorker({
   sessionData = {},
   fetchImpl = async () => makeResponse({}),
   tabs = [],
+  sendTabMessage = async () => ({ ok: true }),
   captureVisibleTab = async () => "data:image/jpeg;base64,",
 } = {}) {
   const runtimeListeners = [];
@@ -32,6 +33,7 @@ async function loadWorker({
   const tabCreatedListeners = [];
   const tabUpdatedListeners = [];
   const fetches = [];
+  const tabMessages = [];
   const alarmCreates = [];
   const intervals = new Map();
   let nextIntervalId = 1;
@@ -89,14 +91,17 @@ async function loadWorker({
       query: async () => tabs,
       onCreated: { addListener(listener) { tabCreatedListeners.push(listener); } },
       onUpdated: { addListener(listener) { tabUpdatedListeners.push(listener); } },
-      sendMessage: async () => ({ ok: true }),
+      sendMessage: async (tabId, message) => {
+        tabMessages.push({ tabId, message });
+        return sendTabMessage(tabId, message);
+      },
       captureVisibleTab,
     },
   };
 
   try {
     const worker = await import(`../extension/service-worker.js?export-upload-test=${importSequence++}`);
-    return { worker, runtimeListener: runtimeListeners.at(-1), fetches, alarmCreates, intervals, storageData, sessionData, tabCreatedListeners, tabUpdatedListeners, notifyStorageChange(changes) {
+    return { worker, runtimeListener: runtimeListeners.at(-1), fetches, tabMessages, alarmCreates, intervals, storageData, sessionData, tabCreatedListeners, tabUpdatedListeners, notifyStorageChange(changes) {
       for (const [key, change] of Object.entries(changes)) {
         if (!Object.hasOwn(change ?? {}, "newValue")) continue;
         if (change.newValue === undefined) delete storageData[key];
@@ -268,6 +273,67 @@ test("案件空间复用点击前已有详情标签且 URL 更新时 Worker 自�
     await loaded.tabUpdatedListeners[0](18, { url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/common/wsla/detail/index?current=1" }, { id: 18, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/common/wsla/detail/index?current=1" });
     const read = invoke(loaded.runtimeListener, { type: "CASE_DETAIL_PENDING_GET" }, { tab: { id: 17, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/pc/list/index" } });
     assert.deepEqual((await read.readResponse()).handoff, { uid: "synthetic-reuse", kind: "qz", phase: "adopted" });
+  } finally {
+    loaded.cleanup();
+  }
+});
+
+test("案件空间复用 URL 未变化但由非活动变为活动的详情标签时接管并要求重新读取待办", async () => {
+  const tabs = [
+    { id: 17, active: true, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/pc/list/index" },
+    { id: 18, active: false, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/common/wsla/detail/index?synthetic=same" },
+  ];
+  const loaded = await loadWorker({ tabs });
+  try {
+    const opened = invoke(loaded.runtimeListener, { type: "CASE_SPACE_OPEN", uid: "synthetic-reactivated", kind: "li" }, { tab: tabs[0] });
+    assert.deepEqual(await opened.readResponse(), { ok: true, phase: "opening", tabId: 17 });
+    tabs[0].active = false;
+    tabs[1].active = true;
+
+    const read = invoke(loaded.runtimeListener, { type: "CASE_DETAIL_PENDING_GET" }, { tab: tabs[0] });
+    assert.deepEqual((await read.readResponse()).handoff, { uid: "synthetic-reactivated", kind: "li", phase: "adopted" });
+    assert.deepEqual(loaded.tabMessages, [{ tabId: 18, message: { type: "CASE_DETAIL_RECHECK" } }]);
+  } finally {
+    loaded.cleanup();
+  }
+});
+
+test("多个 URL 未变化的详情标签同时变为活动时保持待人工而不任选", async () => {
+  const tabs = [
+    { id: 17, active: true, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/pc/list/index" },
+    { id: 18, active: false, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/common/wsla/detail/index?synthetic=one" },
+    { id: 19, active: false, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/common/wsla/detail/index?synthetic=two" },
+  ];
+  const loaded = await loadWorker({ tabs });
+  try {
+    const opened = invoke(loaded.runtimeListener, { type: "CASE_SPACE_OPEN", uid: "synthetic-reactivated-ambiguous", kind: "li" }, { tab: tabs[0] });
+    assert.deepEqual(await opened.readResponse(), { ok: true, phase: "opening", tabId: 17 });
+    tabs[0].active = false;
+    tabs[1].active = true;
+    tabs[2].active = true;
+
+    const read = invoke(loaded.runtimeListener, { type: "CASE_DETAIL_PENDING_GET" }, { tab: tabs[0] });
+    assert.deepEqual((await read.readResponse()).handoff, { uid: "synthetic-reactivated-ambiguous", kind: "li", phase: "opening" });
+    assert.deepEqual(loaded.tabMessages, []);
+  } finally {
+    loaded.cleanup();
+  }
+});
+
+test("复用详情标签的重读消息不可达时不得提前标成已接管", async () => {
+  const tabs = [
+    { id: 17, active: true, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/pc/list/index" },
+    { id: 18, active: false, url: "https://zxfw.court.gov.cn/zxfw/index.html#/pagesWsla/common/wsla/detail/index?synthetic=unreachable" },
+  ];
+  const loaded = await loadWorker({ tabs, sendTabMessage: async () => { throw new Error("no receiver"); } });
+  try {
+    const opened = invoke(loaded.runtimeListener, { type: "CASE_SPACE_OPEN", uid: "synthetic-reactivated-unreachable", kind: "li" }, { tab: tabs[0] });
+    assert.deepEqual(await opened.readResponse(), { ok: true, phase: "opening", tabId: 17 });
+    tabs[0].active = false;
+    tabs[1].active = true;
+
+    const read = invoke(loaded.runtimeListener, { type: "CASE_DETAIL_PENDING_GET" }, { tab: tabs[0] });
+    assert.deepEqual((await read.readResponse()).handoff, { uid: "synthetic-reactivated-unreachable", kind: "li", phase: "opening" });
   } finally {
     loaded.cleanup();
   }

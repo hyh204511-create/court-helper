@@ -67,6 +67,7 @@ let _exportInFlight = null;
 const _resumeWaiters = [];
 let _detailCaptureInFlight = null;
 let _queuedDetailRoute = null;
+let _queuedDetailForce = false;
 let _lastDetailRoute = null;
 let _lastLoginReport = null;
 const AUTO_LOGIN_ERROR_CODES = new Set([
@@ -659,8 +660,10 @@ async function drainDetailCaptureQueue() {
   _detailCaptureInFlight = (async () => {
     while (_queuedDetailRoute) {
       const route = _queuedDetailRoute;
+      const force = _queuedDetailForce;
       _queuedDetailRoute = null;
-      if (currentDetailRoute() !== route || _lastDetailRoute === route) continue;
+      _queuedDetailForce = false;
+      if (currentDetailRoute() !== route || (!force && _lastDetailRoute === route)) continue;
       _lastDetailRoute = route;
       try {
         await runDetailCapture();
@@ -675,16 +678,18 @@ async function drainDetailCaptureQueue() {
   return _detailCaptureInFlight;
 }
 
-function scheduleDetailCapture() {
+function scheduleDetailCapture({ force = false } = {}) {
   const route = currentDetailRoute();
   if (!route) {
     _queuedDetailRoute = null;
+    _queuedDetailForce = false;
     _lastDetailRoute = null;
     return Promise.resolve(false);
   }
   if (!_panel) initPanel();
-  if (route === _lastDetailRoute && !_detailCaptureInFlight) return Promise.resolve(false);
+  if (!force && route === _lastDetailRoute && !_detailCaptureInFlight) return Promise.resolve(false);
   _queuedDetailRoute = route;
+  _queuedDetailForce = _queuedDetailForce || force;
   return drainDetailCaptureQueue();
 }
 
@@ -1132,6 +1137,15 @@ async function executeBrowserCommand(message) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "SYNC_STATUS") {
     _panel?.setSyncStatus(msg.payload);
+    return false;
+  }
+  if (msg?.type === "CASE_DETAIL_RECHECK") {
+    if (!isDetailPage()) {
+      sendResponse({ ok: false, error: "NOT_DETAIL_ROUTE" });
+      return false;
+    }
+    sendResponse({ ok: true });
+    void scheduleDetailCapture({ force: true });
     return false;
   }
   if (msg?.type === "AUTO_LOGIN") {

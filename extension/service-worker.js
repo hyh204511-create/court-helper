@@ -370,7 +370,7 @@ function isCourtDetailUrl(url) {
   }
 }
 
-async function adoptUpdatedCaseSpaceTab(tabId, changeInfo, tab) {
+async function adoptUpdatedCaseSpaceTab(tabId, changeInfo, tab, { allowReusedActivation = false } = {}) {
   if (!isCourtDetailUrl(changeInfo?.url ?? tab?.url)) return;
   const session = chrome.storage?.session;
   if (!session?.get || !session?.set) return;
@@ -378,10 +378,28 @@ async function adoptUpdatedCaseSpaceTab(tabId, changeInfo, tab) {
   if (!pendingDetail?.uid || caseSpaceHandoff?.phase === "adopted") return;
   const sourceTabId = caseSpaceHandoff?.sourceTabId;
   const beforeTabs = new Map((Array.isArray(caseSpaceHandoff?.beforeTabs) ? caseSpaceHandoff.beforeTabs : [])
-    .map((value) => [value?.id, String(value?.url ?? "")]));
+    .map((value) => [value?.id, {
+      url: String(value?.url ?? ""),
+      active: value?.active === true,
+    }]));
   const currentUrl = String(changeInfo?.url ?? tab?.url ?? "");
+  const previousTab = beforeTabs.get(tabId);
+  const reusedByActivation = allowReusedActivation
+    && tabId !== sourceTabId
+    && previousTab?.url === currentUrl
+    && previousTab.active === false
+    && tab?.active === true;
   if (Number.isInteger(sourceTabId) && tabId !== sourceTabId
-    && beforeTabs.has(tabId) && beforeTabs.get(tabId) === currentUrl) return;
+    && previousTab?.url === currentUrl && !reusedByActivation) return;
+  if (reusedByActivation) {
+    if (typeof chrome.tabs?.sendMessage !== "function") return;
+    try {
+      const response = await chrome.tabs.sendMessage(tabId, { type: "CASE_DETAIL_RECHECK" });
+      if (response?.ok !== true) return;
+    } catch {
+      return;
+    }
+  }
   await session.set({
     caseSpaceHandoff: {
       uid: pendingDetail.uid,
@@ -402,12 +420,35 @@ async function reconcileCaseSpaceTabs() {
   } catch {
     return;
   }
+  const { caseSpaceHandoff } = await chrome.storage.session.get("caseSpaceHandoff");
+  const sourceTabId = caseSpaceHandoff?.sourceTabId;
+  const beforeTabs = new Map((Array.isArray(caseSpaceHandoff?.beforeTabs) ? caseSpaceHandoff.beforeTabs : [])
+    .map((value) => [value?.id, {
+      url: String(value?.url ?? ""),
+      active: value?.active === true,
+    }]));
+  const reactivatedDetailTabs = (Array.isArray(tabs) ? tabs : []).filter((tab) => {
+    const currentUrl = String(tab?.pendingUrl || tab?.url || "");
+    const previousTab = beforeTabs.get(tab?.id);
+    return Number.isInteger(tab?.id)
+      && tab.id !== sourceTabId
+      && isCourtDetailUrl(currentUrl)
+      && previousTab?.url === currentUrl
+      && previousTab.active === false
+      && tab.active === true;
+  });
+  const reusableTabId = reactivatedDetailTabs.length === 1 ? reactivatedDetailTabs[0].id : null;
   for (const tab of Array.isArray(tabs) ? tabs : []) {
     if (!Number.isInteger(tab?.id)) continue;
     const currentUrl = tab.pendingUrl || tab.url;
-    await adoptUpdatedCaseSpaceTab(tab.id, { url: currentUrl }, { ...tab, url: currentUrl });
-    const { caseSpaceHandoff } = await chrome.storage.session.get("caseSpaceHandoff");
-    if (caseSpaceHandoff?.phase === "adopted") return;
+    await adoptUpdatedCaseSpaceTab(
+      tab.id,
+      { url: currentUrl },
+      { ...tab, url: currentUrl },
+      { allowReusedActivation: tab.id === reusableTabId },
+    );
+    const { caseSpaceHandoff: updatedHandoff } = await chrome.storage.session.get("caseSpaceHandoff");
+    if (updatedHandoff?.phase === "adopted") return;
   }
 }
 
@@ -457,7 +498,11 @@ function handleCaseDetailMessage(message, sender, sendResponse) {
       try {
         const tabs = await chrome.tabs.query({});
         beforeTabs = Array.isArray(tabs)
-          ? tabs.filter((tab) => Number.isInteger(tab?.id)).map((tab) => ({ id: tab.id, url: String(tab.url ?? "") }))
+          ? tabs.filter((tab) => Number.isInteger(tab?.id)).map((tab) => ({
+            id: tab.id,
+            url: String(tab.url ?? ""),
+            active: tab.active === true,
+          }))
           : [];
       } catch {
         beforeTabs = [];

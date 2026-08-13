@@ -167,6 +167,27 @@ test("document_start waits for the SPA detail route and adopts the pending hando
   }
 });
 
+test("复用且 URL 未变化的案件空间收到重读消息后再次读取待办", async () => {
+  const { dom, chrome, listener } = await loadContent({
+    hash: "#/pagesWsla/common/wsla/detail/index?synthetic=same",
+    html: '<div class="fd-header-operate"><div class="fd-user-name">demo-account</div></div>',
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  let pendingReads = 0;
+  const sendMessage = chrome.runtime.sendMessage;
+  chrome.runtime.sendMessage = async (message) => {
+    if (message?.type === "CASE_DETAIL_PENDING_GET") pendingReads += 1;
+    return sendMessage(message);
+  };
+  try {
+    const result = await dispatch(listener, { type: "CASE_DETAIL_RECHECK" });
+    assert.deepEqual(result.response, { ok: true });
+    assert.equal(pendingReads, 1);
+  } finally {
+    cleanup(dom);
+  }
+});
+
 test("案件空间点击未打开详情标签时明确失败，不把点击动作当成截图成功", async () => {
   await db.resetDb();
   const uid = "synthetic-case-space-not-opened";
