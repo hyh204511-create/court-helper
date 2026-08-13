@@ -83,6 +83,14 @@ function unavailableCause(value) {
   return !valueText || valueText === "暂无";
 }
 
+function unavailableCauseTitleMatches(row, record, plaintiff, defendant) {
+  const title = text(row?.cajmc);
+  if (title === text(record?.sourceCaseName)) return true;
+  const candidateCause = text(row?.claay);
+  return !unavailableCause(candidateCause)
+    && title === `${plaintiff}申请${defendant}${candidateCause}`;
+}
+
 function stableEvidenceError(value) {
   return typeof value === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(value) ? value : null;
 }
@@ -163,7 +171,7 @@ export function selectMyCaseApiEvidence({ record, sourceApiRow, rows = [], kind 
   stages.push(
     [
       (row) => causeUnavailable
-        ? text(row?.cajmc) === text(record.sourceCaseName)
+        ? unavailableCauseTitleMatches(row, record, plaintiff, defendant)
         : titleHasExactParties(text(row?.cajmc), sourceCause, plaintiff, defendant, kind),
       "MYCASE_PARTIES_TITLE_MISMATCH",
     ],
