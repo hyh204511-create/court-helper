@@ -146,6 +146,42 @@ test("ajlist 标题使用法院常见的诉连接词时仍按完整当事人 tok
   });
 });
 
+test("ajlist 多被告标题要求来源每个完整名称逐一精确匹配", () => {
+  const record = {
+    ...apiRecord,
+    uid: "li-api-multiple-defendants",
+    defendant: "SYNTHETIC DEFENDANT A、SYNTHETIC DEFENDANT B",
+  };
+  const source = { ...sourceApiRow, respondent: record.defendant };
+  const matchingRow = apiEvidence({
+    cajmc: `${record.plaintiff}诉SYNTHETIC DEFENDANT A、SYNTHETIC DEFENDANT B、SYNTHETIC EXTRA PARTY${record.sourceCause}一案`,
+    cah: "SYNTHETIC-LI-MULTI-001",
+  });
+
+  assert.deepEqual(selectMyCaseApiEvidence({ record, sourceApiRow: source, rows: [matchingRow] }), {
+    ok: true,
+    value: { uid: record.uid, caseNumber: "SYNTHETIC-LI-MULTI-001", filedTime: "2026-08-07" },
+  });
+
+  for (const cajmc of [
+    `${record.plaintiff}诉SYNTHETIC DEFENDANT A${record.sourceCause}一案`,
+    `${record.plaintiff}诉SYNTHETIC DEFENDANT A、SYNTHETIC DEFENDANT B BRANCH${record.sourceCause}一案`,
+  ]) {
+    assert.deepEqual(selectMyCaseApiEvidence({
+      record,
+      sourceApiRow: source,
+      rows: [{ ...matchingRow, cajmc }],
+    }), { ok: false, error: "MYCASE_PARTIES_TITLE_MISMATCH" });
+  }
+
+  const emptyTokenRecord = { ...record, defendant: "、" };
+  assert.deepEqual(selectMyCaseApiEvidence({
+    record: emptyTokenRecord,
+    sourceApiRow: { ...source, respondent: emptyTokenRecord.defendant },
+    rows: [matchingRow],
+  }), { ok: false, error: "MYCASE_PARTIES_TITLE_MISMATCH" });
+});
+
 test("ajlist 标题使用法院无分隔符的双方名称与案由严格拼接时仍可补证", () => {
   assert.deepEqual(selectMyCaseApiEvidence({
     record: apiRecord,

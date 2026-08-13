@@ -66,7 +66,28 @@ function apiDay(value) {
   return match?.[1] ?? null;
 }
 
+function compoundPartyTokens(value) {
+  return text(value)
+    .split(/,|，|、/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function containsEveryExactToken(availableTokens, expectedTokens) {
+  const remaining = new Map();
+  for (const token of availableTokens) remaining.set(token, (remaining.get(token) ?? 0) + 1);
+  return expectedTokens.every((token) => {
+    const count = remaining.get(token) ?? 0;
+    if (!count) return false;
+    remaining.set(token, count - 1);
+    return true;
+  });
+}
+
 function titleHasExactParties(title, cause, plaintiff, defendant, kind) {
+  const plaintiffTokens = compoundPartyTokens(plaintiff);
+  const defendantTokens = compoundPartyTokens(defendant);
+  if (!plaintiffTokens.length || !defendantTokens.length) return false;
   if (title === `${plaintiff}${defendant}${cause}`) return true;
   if (kind === "qz" && title === `${plaintiff}申请${defendant}${cause}`) return true;
   const suffix = `${cause}一案`;
@@ -75,7 +96,8 @@ function titleHasExactParties(title, cause, plaintiff, defendant, kind) {
     .split(/与|诉|,|，|、/)
     .map((value) => value.trim())
     .filter(Boolean);
-  return partyTokens.includes(plaintiff) && partyTokens.includes(defendant);
+  const expectedTokens = [...plaintiffTokens, ...defendantTokens];
+  return containsEveryExactToken(partyTokens, expectedTokens);
 }
 
 function unavailableCause(value) {
