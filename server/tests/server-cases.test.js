@@ -12,6 +12,9 @@ import { PgCaseRepository } from '../src/cases/repository.ts';
 import { runMigrations } from '../src/db/migrator.ts';
 import { MemoryScreenshotRepository } from '../src/screenshots/memory-repository.ts';
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
+import { BrowserCommandService } from '../src/browser-commands/service.ts';
+import { MemoryBrowserCommandRepository } from '../src/browser-commands/memory-repository.ts';
+import { MemoryImportBatchRepository } from '../src/import-batches/memory-repository.ts';
 import { bindPairedExtensionRepository, pairedExtensionTokenForApp } from './paired-extension.ts';
 
 const TEST_KEY = Buffer.alloc(32, 23).toString('base64');
@@ -19,6 +22,7 @@ const ADMIN_PASSWORD = 'Admin-pass-1';
 const WORKER_PASSWORD = 'Worker-pass-1';
 const ACCOUNT_ID = '00000000-0000-0000-0000-000000000010';
 const ADMIN_ID = '00000000-0000-0000-0000-000000000001';
+const IMPORT_BATCH_ID = '00000000-0000-0000-0000-000000000020';
 
 function config() {
   return loadConfig({
@@ -70,6 +74,22 @@ async function makeApp({ accountEnabled = true } = {}) {
   const caseRepository = new MemoryCaseRepository();
   const screenshotRepository = new MemoryScreenshotRepository();
   const storageBackend = new MemoryStorageBackend();
+  const browserCommandRepository = new MemoryBrowserCommandRepository();
+  const importBatchRepository = new MemoryImportBatchRepository([{
+    id: IMPORT_BATCH_ID,
+    fileName: 'synthetic-import.xlsx',
+    objectKey: `import-batches/${IMPORT_BATCH_ID}.xlsx`,
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    byteSize: 1,
+    sha256: 'a'.repeat(64),
+    liRows: 0,
+    qzRows: 0,
+    skippedRows: 0,
+    createdBy: ADMIN_ID,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+  }]);
   const app = buildApp({
     config: config(),
     dependencies: {
@@ -81,10 +101,12 @@ async function makeApp({ accountEnabled = true } = {}) {
     caseRepository,
     screenshotRepository,
     storageBackend,
+    browserCommandRepository,
+    importBatchRepository,
   });
   await app.ready();
   bindPairedExtensionRepository(app, authRepository);
-  await addUser(authRepository);
+  const worker = await addUser(authRepository);
   return {
     app,
     authRepository,
@@ -92,6 +114,9 @@ async function makeApp({ accountEnabled = true } = {}) {
     caseRepository,
     screenshotRepository,
     storageBackend,
+    browserCommandRepository,
+    importBatchRepository,
+    worker,
   };
 }
 
@@ -189,6 +214,82 @@ test('sync cases performs idempotent upserts and preserves newer data on conflic
     assert.equal(stored.defendant, 'newer synthetic defendant');
     assert.equal(stored.revision, 2);
     assert.equal(JSON.stringify(stored).includes('password'), false);
+  } finally {
+    await app.close();
+  }
+});
+
+test('command execution lease attributes synced cases to the command requester', async () => {
+  const { app, authRepository, caseRepository, browserCommandRepository, importBatchRepository, worker } = await makeApp();
+
+  try {
+    const administratorExtension = await pairedExtensionTokenForApp(app, 'admin');
+    const service = new BrowserCommandService(
+      browserCommandRepository,
+      importBatchRepository,
+    );
+    const command = await service.create({
+      type: 'QUERY_LI',
+      platformAccountId: ACCOUNT_ID,
+      importBatchId: IMPORT_BATCH_ID,
+      payload: {},
+      requestedBy: worker.id,
+    });
+    const claim = await service.claim(command.id, administratorExtension.deviceId);
+    const headers = {
+      authorization: `Bearer ${administratorExtension.token}`,
+      'x-browser-command-id': command.id,
+      'x-browser-command-device': administratorExtension.deviceId,
+      'x-browser-command-claim': claim.claimToken,
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/sync/cases',
+      headers,
+      payload: { batchId: 'batch-owned-by-requester', items: [caseItem()] },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal((await caseRepository.list())[0].createdBy, worker.id);
+
+    const spoofed = await app.inject({
+      method: 'POST',
+      url: '/sync/cases',
+      headers: { ...headers, 'x-browser-command-device': 'spoofed-device' },
+      payload: { batchId: 'batch-spoofed', items: [caseItem({ eventId: 'event-spoofed' })] },
+    });
+    assert.equal(spoofed.statusCode, 403);
+    assert.equal((await caseRepository.list()).length, 1);
+
+    await service.writeResult(command.id, {
+      deviceId: administratorExtension.deviceId,
+      claimToken: claim.claimToken,
+      status: 'succeeded',
+      resultCode: 'SUCCESS',
+      resultSummary: 'done',
+      progress: 100,
+    });
+    const loginCommand = await service.create({
+      type: 'LOGIN',
+      platformAccountId: ACCOUNT_ID,
+      payload: {},
+      requestedBy: worker.id,
+    });
+    const loginClaim = await service.claim(loginCommand.id, administratorExtension.deviceId);
+    const wrongCommandType = await app.inject({
+      method: 'POST',
+      url: '/sync/cases',
+      headers: {
+        authorization: `Bearer ${administratorExtension.token}`,
+        'x-browser-command-id': loginCommand.id,
+        'x-browser-command-device': administratorExtension.deviceId,
+        'x-browser-command-claim': loginClaim.claimToken,
+      },
+      payload: { batchId: 'batch-login-lease', items: [caseItem({ eventId: 'event-login-lease' })] },
+    });
+    assert.equal(wrongCommandType.statusCode, 403);
+    assert.equal((await caseRepository.list()).length, 1);
+    assert.ok(await authRepository.findUserById(worker.id));
   } finally {
     await app.close();
   }

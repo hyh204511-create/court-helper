@@ -10,6 +10,8 @@ import { MemoryScreenshotRepository } from '../src/screenshots/memory-repository
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
 import { MemoryWecomNotificationRepository } from '../src/wecom-notifications/memory-repository.ts';
 import { WecomNotificationService } from '../src/wecom-notifications/service.ts';
+import { buildApp, loadConfig } from '../src/app.ts';
+import { MemoryAuthRepository } from '../src/auth/memory-repository.ts';
 
 const ACCOUNT_ID = '00000000-0000-0000-0000-000000000010';
 const USER_ID = '00000000-0000-0000-0000-000000000020';
@@ -84,7 +86,7 @@ async function fixture({ status = '已驳回', kind = 'li', contacts = true, tra
     storage,
     transport ?? (async (url, payload) => { calls.push({ url, payload }); return { errcode: 0 }; }),
   );
-  return { service, calls, notifications, caseValue, screenshot };
+  return { service, calls, notifications, caseValue, screenshot, cases, accounts };
 }
 
 test('migration adds platform contacts and a reversible unique automatic-notification ledger', async () => {
@@ -169,4 +171,96 @@ test('failed delivery stays failed until one explicit retry and never loops auto
   assert.equal(record.status, 'sent');
   assert.equal(record.attemptCount, 2);
   assert.equal(state.calls.length, 3);
+});
+
+test('a failed manual retry reaches a stable retry limit and cannot send a third time', async () => {
+  const state = await fixture({ transport: async (_url, payload) => {
+    state.calls.push({ payload });
+    return { errcode: 93000 };
+  } });
+  const created = await state.service.enqueueAutomatic(state.caseValue.id, state.screenshot.id);
+  await state.service.waitForIdle();
+  await assert.rejects(
+    state.service.retry(created.notification.id, { userId: USER_ID, role: 'user' }),
+    (error) => error.code === 'WECOM_DELIVERY_FAILED',
+  );
+  assert.equal((await state.notifications.findById(created.notification.id)).attemptCount, 2);
+  const callsAfterRetry = state.calls.length;
+  await assert.rejects(
+    state.service.retry(created.notification.id, { userId: USER_ID, role: 'user' }),
+    (error) => error.code === 'WECOM_RETRY_LIMIT',
+  );
+  assert.equal(state.calls.length, callsAfterRetry);
+});
+
+test('notification delivery rejects a changed case status instead of mixing old evidence with new text', async () => {
+  const state = await fixture({ status: '立案成功', kind: 'li' });
+  const pending = await state.notifications.createPending({
+    caseId: state.caseValue.id,
+    platformAccountId: ACCOUNT_ID,
+    resultStatus: '立案成功',
+    screenshotId: state.screenshot.id,
+  });
+  await state.notifications.markFailed(pending.record.id, 'WECOM_DELIVERY_FAILED');
+  await state.cases.update(state.caseValue.id, { ...state.caseValue, status: '已驳回' });
+  await assert.rejects(
+    state.service.retry(pending.record.id, { userId: USER_ID, role: 'user' }),
+    (error) => error.code === 'WECOM_SOURCE_CHANGED',
+  );
+  assert.equal(state.calls.length, 0);
+});
+
+test('a precondition failure permits only one manual delivery attempt', async () => {
+  const state = await fixture({ contacts: false, transport: async (_url, payload) => {
+    state.calls.push({ payload });
+    return { errcode: 93000 };
+  } });
+  const created = await state.service.enqueueAutomatic(state.caseValue.id, state.screenshot.id);
+  await state.accounts.update(ACCOUNT_ID, { salespersonMobile: '13800138000', assistantMobile: '13900139000' });
+  await assert.rejects(
+    state.service.retry(created.notification.id, { userId: USER_ID, role: 'user' }),
+    (error) => error.code === 'WECOM_DELIVERY_FAILED',
+  );
+  await assert.rejects(
+    state.service.retry(created.notification.id, { userId: USER_ID, role: 'user' }),
+    (error) => error.code === 'WECOM_RETRY_LIMIT',
+  );
+});
+
+test('screenshot upload triggers automatic delivery and repeated upload stays idempotent', async () => {
+  const authRepository = new MemoryAuthRepository();
+  const cases = new MemoryCaseRepository();
+  const accounts = new MemoryPlatformAccountRepository([account()]);
+  const screenshots = new MemoryScreenshotRepository();
+  const storage = new MemoryStorageBackend();
+  const notifications = new MemoryWecomNotificationRepository();
+  const createPending = notifications.createPending.bind(notifications);
+  let notificationLedgerAttempted = false;
+  notifications.createPending = async (input) => {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    notificationLedgerAttempted = true;
+    return createPending(input);
+  };
+  const calls = [];
+  const config = loadConfig({ PORT: '3121', DATABASE_URL: 'postgres://test:test@localhost/test', CREDENTIAL_MASTER_KEY: Buffer.alloc(32, 5).toString('base64'), CORS_EXTENSION_ORIGINS: 'chrome-extension://test', CORS_ADMIN_ORIGINS: 'https://admin.example.test', OBJECT_STORAGE_ENDPOINT: 'https://storage.example.test', OBJECT_STORAGE_BUCKET: 'test', ADMIN_INITIAL_PASSWORD: 'Admin-pass-1', WECOM_WEBHOOK_URL: WEBHOOK });
+  const app = buildApp({ config, authRepository, platformAccountRepository: accounts, caseRepository: cases, screenshotRepository: screenshots, wecomNotificationRepository: notifications, storageBackend: storage, dependencies: { database: { check: async () => true }, objectStorage: storage }, wecomTransport: async (_url, payload) => { calls.push(payload); return { errcode: 0 }; } });
+  await app.ready();
+  try {
+    const admin = await authRepository.findUserByUsername('admin');
+    const caseValue = await cases.create({ createdBy: admin.id, clientUid: 'upload-auto', platformAccountId: ACCOUNT_ID, kind: 'li', plaintiff: '脱敏原告', defendant: '脱敏被告', status: '已驳回', filedTime: null, caseNumber: null, rejectTime: '2026-08-12', rejectReason: '脱敏内容', queryTime: new Date('2026-08-12T01:00:00Z'), needsHuman: false, errorCode: null, sourceEventId: 'upload-event', sourceUpdatedAt: new Date('2026-08-12T01:00:00Z') });
+    const login = await app.inject({ method: 'POST', url: '/auth/login', headers: { origin: 'https://admin.example.test' }, payload: { username: 'admin', password: 'Admin-pass-1', clientType: 'admin_ui' } });
+    const cookie = (Array.isArray(login.headers['set-cookie']) ? login.headers['set-cookie'][0] : login.headers['set-cookie']).split(';', 1)[0];
+    const boundary = '----wecom-auto';
+    const hash = createHash('sha256').update(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')).digest('hex');
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+    const body = Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="eventId"\r\n\r\nevent-auto\r\n--${boundary}\r\nContent-Disposition: form-data; name="type"\r\n\r\nreject\r\n--${boundary}\r\nContent-Disposition: form-data; name="capturedAt"\r\n\r\n2026-08-12T01:00:00.000Z\r\n--${boundary}\r\nContent-Disposition: form-data; name="sha256"\r\n\r\n${hash}\r\n--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="evidence.png"\r\nContent-Type: image/png\r\n\r\n`), png, Buffer.from(`\r\n--${boundary}--\r\n`)]);
+    for (let index = 0; index < 2; index += 1) {
+      const response = await app.inject({ method: 'POST', url: `/cases/${caseValue.id}/screenshots`, headers: { origin: 'https://admin.example.test', cookie, 'x-csrf-token': login.json().csrfToken, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body });
+      assert.ok([200, 201].includes(response.statusCode));
+      assert.equal(notificationLedgerAttempted, true);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(calls.length, 2);
+    assert.equal((await notifications.listByCaseId(caseValue.id)).length, 1);
+  } finally { await app.close(); }
 });

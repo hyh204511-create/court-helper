@@ -36,9 +36,15 @@ const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 let syncCoordinator = null;
 let remoteClient = null;
 let syncGeneration = 0;
+let activeExecutionLease = null;
 export let syncInitialization = Promise.resolve(null);
 const debuggerDriver = createDebuggerDriver();
-const browserCommandPoller = createBrowserCommandPoller();
+const browserCommandPoller = createBrowserCommandPoller({
+  onExecutionStart: (lease) => { activeExecutionLease = lease; },
+  onExecutionEnd: (commandId) => {
+    if (activeExecutionLease?.commandId === commandId) activeExecutionLease = null;
+  },
+});
 const caseSyncBridge = createCaseSyncBridge({
   ensureCoordinator: ensureSyncCoordinator,
   outbox: syncOutbox,
@@ -147,6 +153,11 @@ export async function initializeSyncCoordinator({
     baseUrl: config.baseUrl,
     token: config.token,
     fetchImpl,
+    defaultHeaders: () => activeExecutionLease ? {
+      "x-browser-command-id": activeExecutionLease.commandId,
+      "x-browser-command-device": activeExecutionLease.deviceId,
+      "x-browser-command-claim": activeExecutionLease.claimToken,
+    } : {},
   });
   if (!client) return null;
   if (generation !== syncGeneration) return null;

@@ -262,8 +262,10 @@ test('running migrations twice is harmless and explicit rollback restores a clea
       VALUES ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', $1, 'extension', '00000000-0000-0000-0000-000000000002', NOW() + INTERVAL '30 days')
     `, ['a'.repeat(64)]);
     const applied = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
-    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands', '006_import_batches', '007_extension_devices', '008_query_all_export', '009_report_exports_platform_account']);
+    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands', '006_import_batches', '007_extension_devices', '008_query_all_export', '009_report_exports_platform_account', '010_platform_account_label_reuse', '011_wecom_automatic_notifications']);
 
+    assert.equal(await rollbackLastMigration(pool), '011_wecom_automatic_notifications');
+    await rollbackLastMigration(pool);
     await rollbackLastMigration(pool);
     await rollbackLastMigration(pool);
     await rollbackLastMigration(pool);
@@ -280,6 +282,9 @@ test('running migrations twice is harmless and explicit rollback restores a clea
     assert.deepEqual(appliedAfterRollback.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands', '006_import_batches']);
 
     // pg-mem retains this primary-key relation after DROP TABLE; PostgreSQL removes it.
+    await pool.query('DROP INDEX IF EXISTS wecom_notifications_pkey');
+    await pool.query('DROP INDEX IF EXISTS wecom_notifications_case_id_result_status_key');
+    await pool.query('DROP INDEX IF EXISTS wecom_notifications_status_idx');
     await pool.query('DROP INDEX IF EXISTS browser_commands_pkey');
     await pool.query('DROP INDEX IF EXISTS extension_devices_pkey');
     await pool.query('DROP INDEX IF EXISTS extension_devices_device_id_key');

@@ -50,6 +50,7 @@
 
 - 同一平台账号同时最多一个 `pending`/`executing` 活动任务；重复创建返回 `409 DUPLICATE_PENDING`。
 - 领取与回写必须幂等；错误 claimant 回写返回 `403 FORBIDDEN`，已完成任务重复回写返回原终态。
+- 扩展在命令执行期间写入案件、截图和报表时，必须携带命令 ID、设备 ID 与一次性 claim token；服务端以 `requested_by` 作为资源归属，而不是以执行设备的配对用户作为归属。案件与截图只接受 `QUERY_LI`、`QUERY_QZ`、`QUERY_ALL_EXPORT` 租约，报表只接受 `EXPORT_REPORT`、`QUERY_ALL_EXPORT` 租约；`LOGIN` 等错误命令类型必须返回 `403 FORBIDDEN`。
 - 旧 `login_commands` 在迁移期间保留兼容；本模块不直接删除旧表。
 
 ## 3. 指令类型契约

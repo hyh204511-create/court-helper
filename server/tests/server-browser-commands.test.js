@@ -340,6 +340,8 @@ test('005 browser command migration creates a reversible secure queue and keeps 
       '007_extension_devices',
       '008_query_all_export',
       '009_report_exports_platform_account',
+      '010_platform_account_label_reuse',
+      '011_wecom_automatic_notifications',
     ]);
 
     const columns = await pool.query(`
@@ -383,6 +385,8 @@ test('005 browser command migration creates a reversible secure queue and keeps 
       VALUES ($1, 'QUERY_QZ', $2, $3, $4, now() + interval '5 minutes')
     `, [randomUUID(), ACCOUNT_ID, ADMIN_ID, JSON.stringify({ batchId: 'batch-safe-2' })]));
 
+    assert.equal(await rollbackLastMigration(pool), '011_wecom_automatic_notifications');
+    assert.equal(await rollbackLastMigration(pool), '010_platform_account_label_reuse');
     assert.equal(await rollbackLastMigration(pool), '009_report_exports_platform_account');
     assert.equal(await rollbackLastMigration(pool), '008_query_all_export');
     assert.equal(await rollbackLastMigration(pool), '007_extension_devices');
@@ -556,6 +560,18 @@ test('browser command claim is single-device, returns a one-time token, and stor
   const retried = await service.claim(command.id, 'device-a');
   assert.equal(retried.command.id, command.id);
   assert.equal(retried.claimToken, null);
+  assert.equal(
+    await service.authorizeExecutionOwner(command.id, 'device-a', first.claimToken, ['LOGIN']),
+    command.requestedBy,
+  );
+  await assert.rejects(
+    service.authorizeExecutionOwner(command.id, 'device-a', 'wrong-claim-token', ['LOGIN']),
+    (error) => error?.code === 'FORBIDDEN',
+  );
+  await assert.rejects(
+    service.authorizeExecutionOwner(command.id, 'device-a', first.claimToken, ['QUERY_LI']),
+    (error) => error?.code === 'FORBIDDEN',
+  );
   await assert.rejects(
     service.claim(command.id, 'device-b'),
     (error) => error?.code === 'ALREADY_CLAIMED' && error?.statusCode === 409,

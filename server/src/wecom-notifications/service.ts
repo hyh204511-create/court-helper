@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { AppError, ConflictError, DependencyUnavailableError, ForbiddenError, NotFoundError } from '../errors.ts';
+import { AppError, ConflictError, ForbiddenError, NotFoundError } from '../errors.ts';
 import { ownerIdFor, type CaseAccess, type CaseRecord, type CaseRepository } from '../cases/types.ts';
 import type { PlatformAccountRepository } from '../platform-accounts/types.ts';
 import type { ScreenshotRecord, ScreenshotRepository, ScreenshotType } from '../screenshots/types.ts';
@@ -106,6 +106,9 @@ export class WecomNotificationService {
   private async source(record: WecomNotificationRecord): Promise<{ caseValue: CaseRecord; screenshot: ScreenshotRecord; mobiles: string[] }> {
     const [caseValue, screenshot, account] = await Promise.all([this.cases.findById(record.caseId), this.screenshots.findById(record.screenshotId), this.accounts.findById(record.platformAccountId)]);
     if (!caseValue || !screenshot || !account) throw new NotFoundError('WeCom notification source not found');
+    if (caseValue.status !== record.resultStatus || screenshot.caseId !== record.caseId || screenshot.type !== screenshotType(caseValue)) {
+      throw new ConflictError('WeCom notification source changed', 'WECOM_SOURCE_CHANGED');
+    }
     if (!account.salespersonMobile || !account.assistantMobile) throw new ConflictError('WeCom contacts are not configured', 'CONTACTS_NOT_CONFIGURED');
     return { caseValue, screenshot, mobiles: [...new Set([account.salespersonMobile, account.assistantMobile])] };
   }
@@ -140,24 +143,30 @@ export class WecomNotificationService {
     const caseValue = await this.cases.findById(record.caseId, ownerIdFor(access));
     if (!caseValue) throw new ForbiddenError();
     if (record.status !== 'failed') throw new ConflictError('WeCom notification is not retryable', 'WECOM_NOT_RETRYABLE');
+    const preconditionFailure = record.errorCode === 'CONTACTS_NOT_CONFIGURED' || record.errorCode === 'WECOM_NOT_CONFIGURED';
+    const maximumAttempts = preconditionFailure ? 1 : 2;
+    if (record.attemptCount >= maximumAttempts) throw new ConflictError('WeCom notification retry limit reached', 'WECOM_RETRY_LIMIT');
     await this.deliver(id);
-    const updated = await this.notifications.findById(id);
+    let updated = await this.notifications.findById(id);
+    if (preconditionFailure && updated?.status === 'failed' && updated.attemptCount < 2) {
+      await this.notifications.markSending(id);
+      updated = await this.notifications.markFailed(id, updated.errorCode ?? 'WECOM_DELIVERY_FAILED');
+    }
     if (updated?.status !== 'sent') throw new AppError('WeCom delivery failed', updated?.errorCode ?? 'WECOM_DELIVERY_FAILED', 502, false);
   }
 
-  async send(caseId: string, mobiles: string[], access: CaseAccess): Promise<void> {
-    if (!this.webhookUrl) throw new DependencyUnavailableError('WeCom webhook is not configured', 'WECOM_NOT_CONFIGURED');
+  async listForCase(caseId: string, access: CaseAccess) {
     const caseValue = await this.cases.findById(caseId, ownerIdFor(access));
-    if (!caseValue) throw new ConflictError('Case or evidence is unavailable', 'WECOM_SCREENSHOT_MISSING');
-    const screenshot = await this.screenshots.findByCaseIdAndType(caseId, screenshotType(caseValue));
-    if (!screenshot) throw new ConflictError('Matching screenshot is missing', 'WECOM_SCREENSHOT_MISSING');
-    const stream = await this.storage.get(screenshot.objectKey);
-    if (!stream) throw new ConflictError('Matching screenshot is missing', 'WECOM_SCREENSHOT_MISSING');
-    const image = await streamBuffer(stream, screenshot.byteSize);
-    try {
-      for (const payload of [{ msgtype: 'image', image: { base64: image.toString('base64'), md5: createHash('md5').update(image).digest('hex') } }, { msgtype: 'text', text: { content: resultText(caseValue), mentioned_mobile_list: [...new Set(mobiles)] } }] as WecomPayload[]) {
-        const response = await this.transport(this.webhookUrl, payload); if (response.errcode !== 0) throw new Error();
-      }
-    } catch { throw new AppError('WeCom delivery failed', 'WECOM_DELIVERY_FAILED', 502, true); }
+    if (!caseValue) throw new NotFoundError('Case not found');
+    return (await this.notifications.listByCaseId(caseId)).map((record) => ({
+      id: record.id,
+      resultStatus: record.resultStatus,
+      status: record.status,
+      errorCode: record.errorCode,
+      attemptCount: record.attemptCount,
+      updatedAt: record.updatedAt.toISOString(),
+      sentAt: record.sentAt?.toISOString() ?? null,
+    }));
   }
+
 }

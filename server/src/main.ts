@@ -14,6 +14,7 @@ import { createPostgresHealthDependency } from './health.ts';
 import { runMigrations } from './db/migrator.ts';
 import { createLocalLoginHelper } from './local-login-helper.ts';
 import { startBoundBackend } from './backend-startup.ts';
+import { PgWecomNotificationRepository } from './wecom-notifications/repository.ts';
 
 const config = loadConfig();
 const pool = new Pool({ connectionString: config.databaseUrl });
@@ -38,6 +39,7 @@ const app = buildApp({
   importBatchRepository: new PgImportBatchRepository(pool),
   storageBackend,
   localLoginHelper,
+  wecomNotificationRepository: new PgWecomNotificationRepository(pool),
   dependencies: {
     database: createPostgresHealthDependency(pool),
     objectStorage: storageBackend,

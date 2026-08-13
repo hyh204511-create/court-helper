@@ -285,6 +285,8 @@ let appliedReportPlatformAccountId = null;
 let caseAccountValidationMessage = null;
 let reportAccountValidationMessage = null;
 let browserControlImportBatches = [];
+let platformAccountLoadGeneration = 0;
+let importBatchLoadGeneration = 0;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -379,7 +381,7 @@ function errorMessage(error) {
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   const method = String(options.method || 'GET').toUpperCase();
-  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   if (csrfToken && ['POST', 'PATCH', 'DELETE'].includes(method)) headers.set('X-CSRF-Token', csrfToken);
   const response = await fetch(API_BASE + path, {
     ...options,
@@ -388,6 +390,8 @@ async function api(path, options = {}) {
   });
   const body = await response.json().catch(() => null);
   if (response.status === 401) {
+    csrfToken = null;
+    currentSessionUser = null;
     window.location.assign('/admin/login');
     throw new ApiError(401, 'AUTH_REQUIRED', body?.error?.requestId);
   }
@@ -459,6 +463,8 @@ function installLogout() {
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) return;
     }
+    csrfToken = null;
+    currentSessionUser = null;
     window.location.assign('/admin/login');
   });
 }
@@ -774,13 +780,17 @@ function resetPlatformForm() {
   $('#platform-form-title').textContent = '新增平台账号';
   $('#credential-state').textContent = '未设置';
   $('#platform-enabled').value = 'true';
+  $('#platform-salesperson-mobile').value = '';
+  $('#platform-assistant-mobile').value = '';
 }
 
 async function loadPlatformAccounts() {
+  const generation = ++platformAccountLoadGeneration;
   const target = $('#platform-rows');
   const message = $('[data-platform-message]');
   try {
     const result = await api('/platform-accounts');
+    if (generation !== platformAccountLoadGeneration) return;
     const accounts = result.platformAccounts || [];
     fillPlatformAccountLabelList($('#platform-list-account'), $('#platform-list-account-menu'), accounts, false, true);
     clear(target);
@@ -789,12 +799,15 @@ async function loadPlatformAccounts() {
       row.dataset.id = account.id;
       row.dataset.enabled = String(account.enabled);
       row.dataset.accountLabel = account.label || '';
+      row.dataset.contactsConfigured = String(account.contactsConfigured === true);
       row.appendChild(element('td', account.label));
       row.appendChild(element('td', account.enabled ? '启用' : '停用'));
+      row.appendChild(element('td', account.contactsConfigured ? '已配置' : '未配置'));
       row.appendChild(element('td', dateLabel(account.updatedAt)));
       const actions = element('td', null, 'row-actions');
       actions.append(
         actionButton('编辑', 'edit-account', account.id),
+        ...(account.contactsConfigured ? [actionButton('清除联系人', 'clear-account-contacts', account.id)] : []),
         actionButton(account.enabled ? '停用' : '启用', 'toggle-account', account.id),
         actionButton('删除', 'delete-account', account.id, 'small-button danger'),
       );
@@ -812,24 +825,48 @@ function initPlatformAccounts() {
   const form = $('#platform-form');
   const list = $('#platform-rows');
   const cancel = $('#platform-cancel');
+  const importForm = $('#platform-import-form');
   const listFilter = $('#platform-list-filters');
   const listAccount = $('#platform-list-account');
   bindAccountPicker(listAccount, $('#platform-list-account-picker'), $('#platform-list-account-toggle'), $('#platform-list-account-menu'));
   listAccount?.addEventListener('input', filterPlatformAccountRows);
   listFilter?.addEventListener('submit', (event) => { event.preventDefault(); filterPlatformAccountRows(); });
+  if (importForm) importForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const file = $('#platform-import-file').files?.[0];
+    if (!file) return;
+    setFormBusy(importForm, true);
+    try {
+      const result = await api('/platform-accounts/import', { method: 'POST', body: new FormData(importForm) });
+      const skipped = Number(result.skipped || 0);
+      setMessage($('[data-platform-import-message]'), '导入完成：成功 ' + Number(result.imported || 0) + ' 条，跳过 ' + skipped + ' 条', skipped ? '' : 'success');
+      importForm.reset();
+      await loadPlatformAccounts();
+    } catch (error) {
+      setMessage($('[data-platform-import-message]'), errorMessage(error));
+    } finally {
+      setFormBusy(importForm, false);
+    }
+  });
   if (cancel) cancel.addEventListener('click', resetPlatformForm);
   if (form) form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const label = $('#platform-label').value.trim();
     const account = $('#platform-account').value;
     const password = $('#platform-password').value;
-    if (!label || (!form.dataset.editId && (!account || !password)) || (account && !password) || (!account && password)) {
+    const salespersonMobile = $('#platform-salesperson-mobile').value.trim();
+    const assistantMobile = $('#platform-assistant-mobile').value.trim();
+    if (!label || (!form.dataset.editId && (!account || !password)) || (account && !password) || (!account && password) || Boolean(salespersonMobile) !== Boolean(assistantMobile)) {
       setMessage($('[data-platform-message]'), '请完整填写标签和凭据');
       return;
     }
     setFormBusy(form, true);
     try {
       const payload = { label, enabled: $('#platform-enabled').value === 'true' };
+      if (!form.dataset.editId || salespersonMobile || assistantMobile) {
+        payload.salespersonMobile = salespersonMobile || null;
+        payload.assistantMobile = assistantMobile || null;
+      }
       if (account && password) { payload.account = account; payload.password = password; }
       const path = form.dataset.editId ? '/platform-accounts/' + encodeURIComponent(form.dataset.editId) : '/platform-accounts';
       await api(path, { method: form.dataset.editId ? 'PATCH' : 'POST', body: JSON.stringify(payload) });
@@ -853,6 +890,8 @@ function initPlatformAccounts() {
         $('#platform-enabled').value = row.dataset.enabled === 'true' ? 'true' : 'false';
         $('#platform-account').value = '';
         $('#platform-password').value = '';
+        $('#platform-salesperson-mobile').value = '';
+        $('#platform-assistant-mobile').value = '';
         $('#platform-form').dataset.editId = id;
         $('#platform-form-title').textContent = '编辑平台账号';
         $('#credential-state').textContent = '已设置';
@@ -861,6 +900,9 @@ function initPlatformAccounts() {
       }
       if (button.dataset.action === 'toggle-account') {
         await api('/platform-accounts/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify({ enabled: row.dataset.enabled !== 'true' }) });
+      } else if (button.dataset.action === 'clear-account-contacts') {
+        if (!window.confirm('确认清除该平台账号绑定的业务员和助理手机号？')) return;
+        await api('/platform-accounts/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify({ salespersonMobile: null, assistantMobile: null }) });
       } else if (button.dataset.action === 'delete-account') {
         if (!window.confirm('确认软删除该平台账号？')) return;
         await api('/platform-accounts/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -1168,11 +1210,13 @@ async function loadBrowserControlUserNames() {
 }
 
 async function loadImportBatches() {
+  const generation = ++importBatchLoadGeneration;
   const target = $('#import-batch-rows');
   const select = $('#browser-command-batch');
   if (!target || !select) return;
   try {
     const result = await api('/import-batches?limit=100');
+    if (generation !== importBatchLoadGeneration) return;
     const importBatches = Array.isArray(result.importBatches) ? result.importBatches : [];
     browserControlImportBatches = importBatches;
     clear(target); clear(select);
@@ -1600,34 +1644,37 @@ async function loadCaseDetail() {
   }
 }
 
-function initWecomNotification() {
-  const form = $('#wecom-notification-form');
-  if (!form) return;
+async function loadWecomNotifications() {
+  const list = $('#wecom-notification-list');
+  if (!list) return;
   const message = $('[data-wecom-message]');
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (!form.reportValidity()) return;
-    if (!window.confirm('确认将当前案件截图、原被告及结果内容发送到已配置的企业微信群，并 @业务员和@助理？')) return;
-    const button = form.querySelector('button[type="submit"]');
-    const salesperson = $('#wecom-salesperson-mobile');
-    const assistant = $('#wecom-assistant-mobile');
-    button.disabled = true;
-    try {
-      await api('/cases/' + encodeURIComponent(document.body.dataset.caseId) + '/wecom-notifications', {
-        method: 'POST',
-        body: JSON.stringify({
-          salespersonMobile: salesperson.value.trim(),
-          assistantMobile: assistant.value.trim(),
-        }),
-      });
-      form.reset();
-      setMessage(message, '已推送到企业微信群', 'success');
-    } catch (error) {
-      setMessage(message, errorMessage(error));
-    } finally {
-      button.disabled = false;
-    }
+  const result = await api('/cases/' + encodeURIComponent(document.body.dataset.caseId) + '/wecom-notifications');
+  clear(list);
+  const notifications = result.notifications || [];
+  if (!notifications.length) { setMessage(message, '当前案件尚无自动推送记录'); return; }
+  notifications.forEach((notification) => {
+    const item = element('div', null, 'detail-item');
+    item.appendChild(element('dt', notification.resultStatus));
+    const retryable = notification.status === 'failed' && notification.attemptCount < 2;
+    const status = notification.status === 'sent' ? '已推送' : retryable ? '推送失败，待人工重试' : notification.status === 'failed' ? '推送失败，已达重试上限' : '正在处理';
+    item.appendChild(element('dd', status));
+    if (retryable) item.appendChild(actionButton('人工重试', 'retry-wecom', notification.id));
+    list.appendChild(item);
   });
+}
+
+function initWecomNotification() {
+  const list = $('#wecom-notification-list');
+  if (!list) return;
+  list.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-action="retry-wecom"]');
+    if (!button || !window.confirm('确认人工重试本条企业微信通知？')) return;
+    button.disabled = true;
+    try { await api('/wecom-notifications/' + encodeURIComponent(button.dataset.id) + '/retry', { method: 'POST' }); await loadWecomNotifications(); }
+    catch (error) { setMessage($('[data-wecom-message]'), errorMessage(error)); }
+    finally { button.disabled = false; }
+  });
+  void loadWecomNotifications();
 }
 
 async function initPage() {

@@ -508,6 +508,27 @@ export class BrowserCommandService {
     return { command, importBatchId };
   }
 
+  async authorizeExecutionOwner(
+    commandId: string,
+    deviceId: string,
+    claimToken: string,
+    allowedTypes: readonly BrowserCommandType[],
+  ): Promise<string> {
+    assertUuid(commandId, 'commandId');
+    assertNonEmptyString(deviceId, 'deviceId', 200);
+    assertNonEmptyString(claimToken, 'claimToken', 512);
+    const command = await this.get(commandId);
+    if (
+      command.status !== 'executing'
+      || command.claimedBy !== deviceId
+      || command.claimTokenHash !== hashToken(claimToken)
+      || !allowedTypes.includes(command.type)
+    ) {
+      throw new ForbiddenError('Browser command lease is not valid');
+    }
+    return command.requestedBy;
+  }
+
   async cancel(id: string, requestedBy: string): Promise<BrowserCommandRecord> {
     assertUuid(id, 'id');
     assertUuid(requestedBy, 'requestedBy');

@@ -5,6 +5,8 @@ import { publicCase, CaseService } from './service.ts';
 import { AuthService } from '../auth/service.ts';
 import { authenticateRequest } from '../auth/routes.ts';
 import { ValidationError } from '../errors.ts';
+import type { BrowserCommandService } from '../browser-commands/service.ts';
+import { executionOwnedAccess } from '../browser-commands/execution-owner.ts';
 
 interface RequestBody {
   [key: string]: unknown;
@@ -27,6 +29,7 @@ interface RegisterCaseOptions {
   service: CaseService;
   authService: AuthService;
   prefix: string;
+  browserCommandService?: BrowserCommandService;
 }
 
 const SYNC_ITEM_FIELDS = new Set([
@@ -257,7 +260,12 @@ export function registerCaseRoutes(app: FastifyInstance, options: RegisterCaseOp
       throw new ValidationError([{ field: 'items', code: 'maximum_exceeded' }]);
     }
     const items = body.items.map((item, index) => parseSyncItem(item, index));
-    return service.sync(items, accessOf(request));
+    return service.sync(items, await executionOwnedAccess(
+      request,
+      options.browserCommandService,
+      accessOf(request),
+      ['QUERY_LI', 'QUERY_QZ', 'QUERY_ALL_EXPORT'],
+    ));
   });
 
   app.get(route(prefix, '/cases'), { preHandler: protectedPreHandler }, async (request) => {

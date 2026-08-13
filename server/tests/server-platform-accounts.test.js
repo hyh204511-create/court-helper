@@ -10,6 +10,7 @@ import { MemoryPlatformAccountRepository } from '../src/platform-accounts/memory
 import { bindPairedExtensionRepository, pairedExtensionTokenForApp } from './paired-extension.ts';
 import { PgPlatformAccountRepository } from '../src/platform-accounts/repository.ts';
 import { runMigrations } from '../src/db/migrator.ts';
+import ExcelJS from 'exceljs';
 
 const TEST_KEY = Buffer.alloc(32, 17).toString('base64');
 const ADMIN_PASSWORD = 'Admin-pass-1';
@@ -103,6 +104,22 @@ function tokenFromCookie(cookie) {
   return cookie.slice(separator + 1);
 }
 
+async function multipartWorkbook(rows) {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Sheet1');
+  sheet.addRow(['原告', '被告', '账号', '密码']);
+  rows.forEach((row) => sheet.addRow(row));
+  return workbook.xlsx.writeBuffer();
+}
+
+function multipartBody(buffer, boundary = 'platform-import-test') {
+  return Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="accounts.xlsx"\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n`),
+    Buffer.from(buffer),
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+}
+
 function assertCredentialError(response, {
   statusCode,
   code,
@@ -129,7 +146,7 @@ test('platform accounts hide credentials, enforce role visibility, and re-encryp
     });
 
     assert.equal(created.statusCode, 201);
-    assert.deepEqual(Object.keys(created.json()).sort(), ['enabled', 'id', 'label', 'updatedAt']);
+    assert.deepEqual(Object.keys(created.json()).sort(), ['contactsConfigured', 'enabled', 'id', 'label', 'updatedAt']);
     assert.equal(created.body.includes('court-user'), false);
     assert.equal(created.body.includes('court-pass'), false);
 
@@ -173,6 +190,61 @@ test('platform accounts hide credentials, enforce role visibility, and re-encryp
   } finally {
     await app.close();
   }
+});
+
+test('管理员可导入 Excel 平台账号，原告作为标签且重复标签逐行跳过', async () => {
+  const { app } = await makeApp();
+  try {
+    const admin = await loginAdmin(app);
+    const existing = await app.inject({
+      method: 'POST', url: '/platform-accounts', headers: adminHeaders(admin),
+      payload: { label: '原告甲', account: 'old-account', password: 'old-password' },
+    });
+    assert.equal(existing.statusCode, 201);
+    const body = multipartBody(await multipartWorkbook([
+      ['原告甲', '被告甲', 'new-account', 'new-password'],
+      ['原告乙', '被告乙', 'account-b', 'password-b'],
+      ['原告丙', '被告丙', 'account-c', ''],
+    ]));
+    const response = await app.inject({
+      method: 'POST', url: '/platform-accounts/import', headers: {
+        ...adminHeaders(admin),
+        'content-type': 'multipart/form-data; boundary=platform-import-test',
+      }, payload: body,
+    });
+    assert.equal(response.statusCode, 201);
+    assert.deepEqual(response.json(), {
+      imported: 1,
+      skipped: 2,
+      reasons: [
+        { rowNumber: 4, code: 'REQUIRED_FIELD' },
+        { rowNumber: 2, code: 'DUPLICATE_LABEL' },
+      ],
+    });
+    assert.equal(response.body.includes('new-account'), false);
+    const credential = await app.inject({
+      method: 'GET', url: `/api/v1/platform-accounts/${existing.json().id}/credential-view`,
+      headers: { cookie: admin.cookie, origin: 'https://admin.example.test' },
+    });
+    assert.deepEqual(credential.json(), { account: 'old-account', password: 'old-password' });
+  } finally {
+    await app.close();
+  }
+});
+
+test('soft-deleted platform account labels can be imported again', async () => {
+  const { app } = await makeApp();
+  try {
+    const admin = await loginAdmin(app);
+    const created = await app.inject({ method: 'POST', url: '/platform-accounts', headers: adminHeaders(admin), payload: { label: 'reimport-label', account: 'old-account', password: 'old-password' } });
+    assert.equal(created.statusCode, 201);
+    const removed = await app.inject({ method: 'DELETE', url: `/platform-accounts/${created.json().id}`, headers: adminHeaders(admin) });
+    assert.equal(removed.statusCode, 200);
+    const body = multipartBody(await multipartWorkbook([['reimport-label', 'defendant', 'new-account', 'new-password']]));
+    const imported = await app.inject({ method: 'POST', url: '/platform-accounts/import', headers: { ...adminHeaders(admin), 'content-type': 'multipart/form-data; boundary=platform-import-test' }, payload: body });
+    assert.equal(imported.statusCode, 201);
+    assert.deepEqual(imported.json(), { imported: 1, skipped: 0, reasons: [] });
+  } finally { await app.close(); }
 });
 
 test('credential view accepts only same-origin admin_ui cookies for both roles and is never cacheable', async () => {
@@ -488,6 +560,54 @@ test('admins see disabled accounts, users do not, and deletion is soft', async (
   }
 });
 
+test('platform account contacts are paired, stored by account, and never returned as phone values', async () => {
+  const { app, platformAccountRepository } = await makeApp();
+  try {
+    const admin = await loginAdmin(app);
+    const invalid = await app.inject({
+      method: 'POST',
+      url: '/api/v1/platform-accounts',
+      headers: adminHeaders(admin),
+      payload: { label: 'contact-invalid', account: 'user-a', password: 'pass-a', salespersonMobile: '13800000001' },
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(invalid.json().error.details[0].code, 'pair_required');
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/platform-accounts',
+      headers: adminHeaders(admin),
+      payload: {
+        label: 'contact-bound', account: 'user-b', password: 'pass-b',
+        salespersonMobile: '13800000001', assistantMobile: '13900000002',
+      },
+    });
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().contactsConfigured, true);
+    assert.equal(created.body.includes('13800000001'), false);
+    assert.equal(created.body.includes('13900000002'), false);
+    const stored = await platformAccountRepository.findById(created.json().id);
+    assert.equal(stored.salespersonMobile, '13800000001');
+    assert.equal(stored.assistantMobile, '13900000002');
+
+    const listed = await app.inject({ method: 'GET', url: '/api/v1/platform-accounts', headers: { cookie: admin.cookie } });
+    assert.equal(listed.json().platformAccounts[0].contactsConfigured, true);
+    assert.equal(listed.body.includes('13800000001'), false);
+    assert.equal(listed.body.includes('13900000002'), false);
+
+    const cleared = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/platform-accounts/${created.json().id}`,
+      headers: adminHeaders(admin),
+      payload: { salespersonMobile: null, assistantMobile: null },
+    });
+    assert.equal(cleared.statusCode, 200);
+    assert.equal(cleared.json().contactsConfigured, false);
+  } finally {
+    await app.close();
+  }
+});
+
 test('credential decryption failures never disclose secrets and are not cacheable', async () => {
   const { app, platformAccountRepository } = await makeApp();
 
@@ -572,6 +692,17 @@ test('postgres platform-account repository persists encrypted columns and soft d
     assert.equal(removed.enabled, false);
     assert.ok(removed.deletedAt instanceof Date);
     assert.equal((await repository.list({ enabledOnly: true })).length, 0);
+    const replacement = await repository.create({
+      label: 'pg-primary',
+      secretCiphertext: Buffer.from('replacement-ciphertext'),
+      secretIv: Buffer.alloc(12, 3),
+      secretTag: Buffer.alloc(16, 4),
+      secretVersion: 1,
+      enabled: true,
+      createdBy: userId,
+    });
+    assert.notEqual(replacement.id, created.id);
+    assert.equal((await repository.list({ enabledOnly: true })).length, 1);
     assert.ok(now <= created.createdAt);
   } finally {
     await pool.end();

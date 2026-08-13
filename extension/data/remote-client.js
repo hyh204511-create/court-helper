@@ -121,6 +121,7 @@ export function createRemoteClient(options = {}) {
   const defaultTimeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
     ? options.timeoutMs
     : DEFAULT_TIMEOUT_MS;
+  const defaultHeaders = typeof options.defaultHeaders === "function" ? options.defaultHeaders : () => ({});
 
   async function request(path, {
     method = "GET",
@@ -136,6 +137,7 @@ export function createRemoteClient(options = {}) {
     const headers = {
       Accept: "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...defaultHeaders(),
       ...extraHeaders,
     };
     let requestBody = body;

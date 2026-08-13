@@ -48,6 +48,27 @@ test("同步请求附加 API 前缀、Bearer 与稳定 Idempotency-Key", async (
   assert.deepEqual(JSON.parse(requests[0].init.body), { batchId: "batch-1", items: [] });
 });
 
+test("执行期默认头会附加到远端写请求", async () => {
+  const calls = [];
+  const client = createRemoteClient({
+    baseUrl: "https://example.test",
+    token: "device-token",
+    defaultHeaders: () => ({
+      "x-browser-command-id": "command-id",
+      "x-browser-command-device": "device-id",
+      "x-browser-command-claim": "claim-token",
+    }),
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return new Response(JSON.stringify({ accepted: [], conflicts: [], cursor: 0 }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  await client.syncCases({ batchId: "batch-lease", items: [] });
+  assert.equal(calls[0].options.headers["x-browser-command-id"], "command-id");
+  assert.equal(calls[0].options.headers["x-browser-command-device"], "device-id");
+  assert.equal(calls[0].options.headers["x-browser-command-claim"], "claim-token");
+});
+
 test("服务端错误映射为可判定 RemoteError，409 不可重试", async () => {
   const client = createRemoteClient({
     baseUrl: "https://sync.example.test/api/v1",

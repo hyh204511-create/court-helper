@@ -49,6 +49,7 @@ import type { LocalLoginHelper } from './local-login-helper.ts';
 import { registerWecomNotificationRoutes } from './wecom-notifications/routes.ts';
 import { WecomNotificationService, type WecomTransport } from './wecom-notifications/service.ts';
 import type { WecomNotificationRepository } from './wecom-notifications/types.ts';
+import { MemoryWecomNotificationRepository } from './wecom-notifications/memory-repository.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -254,14 +255,26 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         authService,
         prefix: '',
         service: caseService,
+        browserCommandService,
       });
       registerCaseRoutes(app, {
         authService,
         prefix: '/api/v1',
         service: caseService,
+        browserCommandService,
       });
     }
     if (options.caseRepository && options.platformAccountRepository && options.screenshotRepository && options.storageBackend) {
+      const notificationRepository = options.wecomNotificationRepository ?? new MemoryWecomNotificationRepository();
+      const wecomNotificationService = new WecomNotificationService(
+        config.wecom.webhookUrl,
+        options.caseRepository,
+        options.platformAccountRepository,
+        options.screenshotRepository,
+        notificationRepository,
+        options.storageBackend,
+        options.wecomTransport,
+      );
       const screenshotService = new ScreenshotService(
         options.screenshotRepository,
         options.caseRepository,
@@ -273,29 +286,24 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         config,
         prefix: '',
         service: screenshotService,
+        onStored: (caseId, screenshotId) => wecomNotificationService.enqueueAutomatic(caseId, screenshotId).then(() => undefined),
+        browserCommandService,
       });
       registerScreenshotRoutes(app, {
         authService,
         config,
         prefix: '/api/v1',
         service: screenshotService,
+        onStored: (caseId, screenshotId) => wecomNotificationService.enqueueAutomatic(caseId, screenshotId).then(() => undefined),
+        browserCommandService,
       });
-      const wecomNotificationService = options.wecomNotificationRepository ? new WecomNotificationService(
-        config.wecom.webhookUrl,
-        options.caseRepository,
-        options.platformAccountRepository,
-        options.screenshotRepository,
-        options.wecomNotificationRepository,
-        options.storageBackend,
-        options.wecomTransport,
-      ) : undefined;
-      if (wecomNotificationService) registerWecomNotificationRoutes(app, {
+      registerWecomNotificationRoutes(app, {
         authService,
         config,
         prefix: '',
         service: wecomNotificationService,
       });
-      if (wecomNotificationService) registerWecomNotificationRoutes(app, {
+      registerWecomNotificationRoutes(app, {
         authService,
         config,
         prefix: '/api/v1',
@@ -314,12 +322,14 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         config,
         prefix: '',
         service: reportExportService,
+        browserCommandService,
       });
       registerReportExportRoutes(app, {
         authService,
         config,
         prefix: '/api/v1',
         service: reportExportService,
+        browserCommandService,
       });
     }
     if (options.importBatchRepository && options.storageBackend) {

@@ -340,6 +340,8 @@ export function createBrowserCommandPoller({
   contentRouteRetryAttempts = 8,
   contentRoutePingTimeoutMs = CONTENT_ROUTE_PING_TIMEOUT_MS,
   initialActivePlatformAccountId = null,
+  onExecutionStart,
+  onExecutionEnd,
 } = {}) {
   let intervalId = null;
   let inFlight = false;
@@ -558,11 +560,16 @@ export function createBrowserCommandPoller({
       });
       if (!isCurrentGeneration(generation)) return configurationChanged();
       if (!claim?.claimToken) return { ok: false, reason: "CLAIM_TOKEN_UNAVAILABLE" };
-      const response = await execute(runtime.client, claim.command, claim.claimToken, runtime.deviceId, { generation, signal: controller.signal });
-      if (!isCurrentGeneration(generation)) return configurationChanged();
-      await writeResult(runtime.client, claim.command.id, claim.claimToken, runtime.deviceId, response, controller.signal);
-      if (!isCurrentGeneration(generation)) return configurationChanged();
-      return { ...response, commandId: claim.command.id };
+      onExecutionStart?.({ commandId: claim.command.id, deviceId: runtime.deviceId, claimToken: claim.claimToken });
+      try {
+        const response = await execute(runtime.client, claim.command, claim.claimToken, runtime.deviceId, { generation, signal: controller.signal });
+        if (!isCurrentGeneration(generation)) return configurationChanged();
+        await writeResult(runtime.client, claim.command.id, claim.claimToken, runtime.deviceId, response, controller.signal);
+        if (!isCurrentGeneration(generation)) return configurationChanged();
+        return { ...response, commandId: claim.command.id };
+      } finally {
+        onExecutionEnd?.(claim.command.id);
+      }
     } catch (error) {
       if (!isCurrentGeneration(generation)) return configurationChanged();
       if (error?.status === 401 || error?.code === "AUTH_REQUIRED") {

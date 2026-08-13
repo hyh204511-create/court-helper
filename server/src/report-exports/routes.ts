@@ -16,12 +16,15 @@ import {
   ReportExportService,
 } from './service.ts';
 import { REPORT_EXPORT_CONTENT_TYPE } from './types.ts';
+import type { BrowserCommandService } from '../browser-commands/service.ts';
+import { executionOwnedAccess } from '../browser-commands/execution-owner.ts';
 
 interface RegisterReportExportOptions {
   service: ReportExportService;
   authService: AuthService;
   config: ServerConfig;
   prefix: string;
+  browserCommandService?: BrowserCommandService;
 }
 
 interface MultipartFileData {
@@ -187,7 +190,15 @@ export function registerReportExportRoutes(
 
   app.post(route(prefix, '/report-exports'), { preHandler: protectedPreHandler }, async (request, reply) => {
     assertCookieWrite(request, authService, config);
-    const result = await service.upload(await multipartUpload(request), accessOf(request));
+    const result = await service.upload(
+      await multipartUpload(request),
+      await executionOwnedAccess(
+        request,
+        options.browserCommandService,
+        accessOf(request),
+        ['EXPORT_REPORT', 'QUERY_ALL_EXPORT'],
+      ),
+    );
     reply.code(result.created ? 201 : 200);
     return publicReportExportUpload(result.reportExport, result.created);
   });

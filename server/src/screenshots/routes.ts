@@ -22,12 +22,16 @@ import {
   type ScreenshotType,
 } from './types.ts';
 import type { CaseAccess } from '../cases/types.ts';
+import type { BrowserCommandService } from '../browser-commands/service.ts';
+import { executionOwnedAccess } from '../browser-commands/execution-owner.ts';
 
 interface RegisterScreenshotOptions {
   service: ScreenshotService;
   authService: AuthService;
   config: ServerConfig;
   prefix: string;
+  onStored?: (caseId: string, screenshotId: string) => Promise<void>;
+  browserCommandService?: BrowserCommandService;
 }
 
 const FIELD_NAMES = new Set(['eventId', 'type', 'capturedAt', 'sha256']);
@@ -174,7 +178,16 @@ export function registerScreenshotRoutes(
   app.post(route(prefix, '/cases/:id/screenshots'), { preHandler: protectedPreHandler }, async (request, reply) => {
     assertCookieWrite(request, authService, config);
     const caseId = (request.params as { id: string }).id;
-    const result = await service.upload(await multipartUpload(request, caseId), accessOf(request));
+    const result = await service.upload(
+      await multipartUpload(request, caseId),
+      await executionOwnedAccess(
+        request,
+        options.browserCommandService,
+        accessOf(request),
+        ['QUERY_LI', 'QUERY_QZ', 'QUERY_ALL_EXPORT'],
+      ),
+    );
+    await options.onStored?.(caseId, result.screenshot.id);
     reply.code(result.created ? 201 : 200);
     return publicScreenshot(result.screenshot, prefix);
   });

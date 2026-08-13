@@ -4,12 +4,13 @@ import assert from 'node:assert/strict';
 import { renderAdminPage } from '../server/src/admin/pages.ts';
 import { ADMIN_SCRIPT } from '../server/src/admin/assets.ts';
 
-test('case detail provides a one-shot WeCom form for salesperson and assistant mentions', () => {
+test('platform accounts bind contacts and case detail exposes automatic status with manual retry', () => {
+  const platformHtml = renderAdminPage('platform-accounts', 'admin');
+  assert.match(platformHtml, /id="platform-salesperson-mobile"/);
+  assert.match(platformHtml, /id="platform-assistant-mobile"/);
   const html = renderAdminPage('case-detail', 'admin', 'synthetic-case-id');
-  assert.match(html, /id="wecom-notification-form"/);
-  assert.match(html, />业务员手机号</);
-  assert.match(html, />助理手机号</);
-  assert.match(html, /手机号仅用于本次推送，不保存/);
+  assert.match(html, /id="wecom-notification-list"/);
+  assert.match(html, /终态截图入库后自动推送一次/);
   assert.match(ADMIN_SCRIPT, /wecom-notifications/);
-  assert.match(ADMIN_SCRIPT, /form\.reset\(\)/);
+  assert.match(ADMIN_SCRIPT, /retry-wecom/);
 });

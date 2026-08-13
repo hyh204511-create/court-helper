@@ -140,17 +140,26 @@ function platformAccountsPage(): string {
             <div class="field"><label for="platform-account">平台账号</label><input id="platform-account" type="text" autocomplete="new-password" maxlength="200"></div>
             <div class="field"><label for="platform-password">平台密码</label><input id="platform-password" type="password" autocomplete="new-password" maxlength="200"></div>
             <div class="field"><label for="platform-enabled">状态</label><select id="platform-enabled"><option value="true">启用</option><option value="false">停用</option></select></div>
+            <div class="field"><label for="platform-salesperson-mobile">业务员手机号</label><input id="platform-salesperson-mobile" type="tel" inputmode="numeric" autocomplete="off" maxlength="11" pattern="1[0-9]{10}" placeholder="与助理手机号同时填写"></div>
+            <div class="field"><label for="platform-assistant-mobile">助理手机号</label><input id="platform-assistant-mobile" type="tel" inputmode="numeric" autocomplete="off" maxlength="11" pattern="1[0-9]{10}" placeholder="与业务员手机号同时填写"></div>
           </div>
           <div class="form-actions"><button class="primary" type="submit">保存平台账号</button><button id="platform-cancel" class="secondary" type="button">清空</button></div>
         </form>
         <p class="message" data-platform-message aria-live="polite"></p>
       </div>
     </section>
+    <section class="panel" aria-labelledby="platform-import-title">
+      <div class="panel-head"><div><h3 id="platform-import-title">Excel 批量导入</h3><p>读取 Sheet1：A 列原告作为标签，C/D 列作为平台账号和密码；重复标签与缺失字段逐行跳过。</p></div></div>
+      <div class="panel-body">
+        <form id="platform-import-form" enctype="multipart/form-data"><div class="field"><label for="platform-import-file">账号 Excel（.xlsx）</label><input id="platform-import-file" name="file" type="file" accept=".xlsx" required></div><div class="form-actions"><button class="primary" type="submit">一键导入账号</button></div></form>
+        <p class="message" data-platform-import-message aria-live="polite"></p>
+      </div>
+    </section>
     <section class="panel" aria-labelledby="platform-list-title">
       <div class="panel-head"><div><h3 id="platform-list-title">账号列表</h3><p>列表和普通响应只返回标签、状态与更新时间。</p></div></div>
       <div class="panel-body">
         <form id="platform-list-filters" class="filters"><div class="field"><label for="platform-list-account">账号标签</label><div class="account-picker" id="platform-list-account-picker"><input id="platform-list-account" type="search" autocomplete="off" placeholder="手动输入标签或从列表选择" role="combobox" aria-autocomplete="list" aria-controls="platform-list-account-menu" aria-expanded="false"><button id="platform-list-account-toggle" class="account-picker-toggle" type="button" aria-label="展开平台账号列表" aria-controls="platform-list-account-menu" aria-expanded="false">▼</button><div id="platform-list-account-menu" class="account-picker-menu" role="listbox" hidden></div></div></div><div class="filter-actions"><button class="primary" type="submit">应用筛选</button></div></form>
-        <div class="table-wrap"><table class="data-table"><thead><tr><th>标签</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="platform-rows"></tbody></table></div>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>标签</th><th>状态</th><th>企业微信联系人</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="platform-rows"></tbody></table></div>
       </div>
     </section>`);
 }
@@ -198,13 +207,9 @@ function caseDetailPage(role: AdminRole, caseId: string): string {
       <div class="panel-body"><div id="screenshot-list" class="screenshot-grid"></div></div>
     </section>
     <section class="panel" aria-labelledby="wecom-title">
-      <div class="panel-head"><div><h3 id="wecom-title">推送到企业微信群</h3><p>发送对应结果截图、原被告和结果内容，并同时 @业务员与@助理。手机号仅用于本次推送，不保存。</p></div></div>
+      <div class="panel-head"><div><h3 id="wecom-title">企业微信群自动推送</h3><p>终态截图入库后自动推送一次；联系人来自平台账号绑定。失败不会自动循环重试。</p></div></div>
       <div class="panel-body">
-        <form id="wecom-notification-form" class="filters">
-          <div class="field"><label for="wecom-salesperson-mobile">业务员手机号</label><input id="wecom-salesperson-mobile" name="salespersonMobile" type="tel" inputmode="numeric" autocomplete="off" maxlength="11" pattern="1[0-9]{10}" required></div>
-          <div class="field"><label for="wecom-assistant-mobile">助理手机号</label><input id="wecom-assistant-mobile" name="assistantMobile" type="tel" inputmode="numeric" autocomplete="off" maxlength="11" pattern="1[0-9]{10}" required></div>
-          <div class="filter-actions"><button class="primary" type="submit">确认并推送</button></div>
-        </form>
+        <div id="wecom-notification-list" class="detail-grid"></div>
         <p class="message" data-wecom-message aria-live="polite"></p>
       </div>
     </section>`, caseId);
