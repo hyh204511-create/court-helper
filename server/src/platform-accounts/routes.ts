@@ -1,3 +1,4 @@
+import type { MultipartFile } from '@fastify/multipart';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import type { ServerConfig } from '../config.ts';
@@ -9,6 +10,10 @@ import {
 } from '../auth/routes.ts';
 import { AuthService } from '../auth/service.ts';
 import { publicPlatformAccount, PlatformAccountService } from './service.ts';
+import {
+  parsePlatformAccountWorkbook,
+  PlatformAccountImportError,
+} from './import.ts';
 
 interface RequestBody {
   [key: string]: unknown;
@@ -64,6 +69,31 @@ function isUniqueViolation(error: unknown): boolean {
 
 function route(prefix: string, path: string): string {
   return `${prefix}${path}`;
+}
+
+const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+
+async function importWorkbook(request: FastifyRequest): Promise<Buffer> {
+  if (!request.isMultipart()) throw new ValidationError([{ field: 'body', code: 'multipart_required' }]);
+  let buffer: Buffer | null = null;
+  for await (const part of request.parts({ limits: { fileSize: MAX_IMPORT_BYTES, files: 1, fields: 0, parts: 1 } })) {
+    if (part.type !== 'file' || part.fieldname !== 'file' || buffer !== null) {
+      throw new ValidationError([{ field: part.type === 'file' ? part.fieldname : 'body', code: 'unexpected_file' }]);
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of (part as MultipartFile).file) {
+      const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += value.length;
+      if (size <= MAX_IMPORT_BYTES) chunks.push(value);
+    }
+    if ((part.file as typeof part.file & { truncated?: boolean }).truncated || size > MAX_IMPORT_BYTES) {
+      throw new ValidationError([{ field: 'file', code: 'maximum_exceeded' }]);
+    }
+    buffer = Buffer.concat(chunks, size);
+  }
+  if (!buffer) throw new ValidationError([{ field: 'file', code: 'file_required' }]);
+  return buffer;
 }
 
 export function registerPlatformAccountRoutes(
@@ -122,6 +152,34 @@ export function registerPlatformAccountRoutes(
       if (isUniqueViolation(error)) throw new ConflictError('Platform account label already exists');
       throw error;
     }
+  });
+
+  app.post(route(prefix, '/platform-accounts/import'), { preHandler: adminPreHandler }, async (request, reply) => {
+    assertCookieWrite(request, authService, config);
+    let workbook;
+    try {
+      workbook = await parsePlatformAccountWorkbook(await importWorkbook(request));
+    } catch (error) {
+      if (error instanceof PlatformAccountImportError) {
+        const code = error.code === 'ROW_LIMIT_EXCEEDED' ? 'maximum_exceeded' : error.code.toLowerCase();
+        throw new ValidationError([{ field: 'file', code }]);
+      }
+      throw error;
+    }
+    const reasons = [...workbook.reasons];
+    let imported = 0;
+    const createdBy = (request.auth as NonNullable<typeof request.auth>).user.id;
+    for (const row of workbook.rows) {
+      try {
+        await service.create(createdBy, row.label, { account: row.account, password: row.password }, true);
+        imported += 1;
+      } catch (error) {
+        if (isUniqueViolation(error)) reasons.push({ rowNumber: row.rowNumber, code: 'DUPLICATE_LABEL' });
+        else throw error;
+      }
+    }
+    reply.code(201);
+    return { imported, skipped: reasons.length, reasons };
   });
 
   app.patch(route(prefix, '/platform-accounts/:id'), { preHandler: adminPreHandler }, async (request) => {

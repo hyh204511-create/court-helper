@@ -49,7 +49,7 @@ export class MemoryPlatformAccountRepository implements PlatformAccountRepositor
   }
 
   async create(input: NewPlatformAccount): Promise<PlatformAccountRecord> {
-    if ([...this.accounts.values()].some((account) => account.label === input.label)) {
+    if ([...this.accounts.values()].some((account) => account.deletedAt === null && account.label === input.label)) {
       throw duplicateError();
     }
     const now = new Date();
@@ -75,7 +75,7 @@ export class MemoryPlatformAccountRepository implements PlatformAccountRepositor
   async update(id: string, patch: PlatformAccountPatch): Promise<PlatformAccountRecord | null> {
     const account = this.accounts.get(id);
     if (!account) return null;
-    if (patch.label !== undefined && [...this.accounts.values()].some((candidate) => candidate.id !== id && candidate.label === patch.label)) {
+    if (patch.label !== undefined && [...this.accounts.values()].some((candidate) => candidate.id !== id && candidate.deletedAt === null && candidate.label === patch.label)) {
       throw duplicateError();
     }
     if (patch.label !== undefined) account.label = patch.label;
