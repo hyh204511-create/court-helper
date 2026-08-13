@@ -91,6 +91,7 @@
    - 状态列：状态词原样；UNKNOWN → 留空 + 该行状态单元格填充浅红（`FFFFC7CE`）+ 字体深红（`9C0006`）提示待人工；
    - 日期列：JS Date 写入 + numberFormat `mm-dd-yy`；
    - 强执驳回时间 Q 列必须显式设置宽度 `12.87`，与旧版驳回时间 I 列保持一致；日期值在默认显示比例下不得因列宽缺失而显示为 `########`；
+   - 立案与强执记录的合并键优先使用稳定的 `platformAccountId + 原告 + 被告`；仅兼容没有 `platformAccountId` 的旧记录时才回退到页面账号文本。页面顶栏身份与真实登录账号文本不同，不得把同一后台账号绑定的数据拆成两行。
    - 账号/密码列：由 Service Worker 按本次命令绑定的 `platformAccountId` 从服务端专用凭据出口临时读取；C/D 对本次导出的全部行统一写入该真实平台账号和密码，必须覆盖本地记录或旧模板中的值。凭据不得写入 IndexedDB、extension storage、命令 payload/result、日志或后台元数据。
    - `QUERY_ALL_EXPORT` 导出前必须已由 Service Worker 证明同运行期成功 `LOGIN` 绑定的 `platformAccountId` 与命令一致；绑定缺失在采集前返回 `ACCOUNT_BINDING_REQUIRED`，绑定冲突返回 `ACCOUNT_MISMATCH`。绑定已确认时，不比较页面顶栏显示身份与临时凭据 `account` 的字符串值；两者可能分别是姓名/昵称与登录用户名。凭据不可用仍拒绝下载与上传。兼容 `EXPORT_REPORT` 未携带绑定证明时继续失败关闭。
    - 业务员列：控制台本次“一键查询并导出”任务的自由文本输入经首尾空白清理后写入 U 列；同一工作簿所有业务数据行使用同一个值。业务员不从导入模板、平台页面或案件记录推断，不写入 IndexedDB；空白预留行的 U 列保持空白。

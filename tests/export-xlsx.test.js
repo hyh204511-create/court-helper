@@ -164,6 +164,17 @@ test("导出凭据统一覆盖所有行的账号密码且不修改本地记录",
   assert.equal(source.password, "旧模板密码");
 });
 
+test("同一平台账号绑定下页面身份文本不同仍合并立案与强执", async () => {
+  const wb = await buildExportWorkbook({
+    cases: [rec({ account: "页面显示姓名", platformAccountId: "stable-account-id", status: "立案成功" })],
+    enforcementCases: [rec({ account: "真实登录账号", platformAccountId: "stable-account-id", status: "强执成功" })],
+  });
+  const ws = wb.getWorksheet("Sheet1");
+  assert.equal(ws.getCell("E2").value, "立案成功");
+  assert.equal(ws.getCell("M2").value, "强执成功");
+  assert.equal(ws.getCell("A3").value, null);
+});
+
 test("样式复刻：表头加粗/填充/行高、数据行高（ExcelJS 读回）", async () => {
   const wb = await buildExportWorkbook({ cases: [rec()] });
   const ws = wb.getWorksheet("Sheet1");

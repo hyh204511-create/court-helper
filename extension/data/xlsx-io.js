@@ -117,7 +117,8 @@ function writeResult(ws, row, rec, statusColumn, imageJobs, imageStyle) {
 }
 
 function recordKey(rec) {
-  return [rec?.account, rec?.plaintiff, rec?.defendant].map((value) => String(value ?? "").trim()).join("\u0000");
+  const accountIdentity = rec?.platformAccountId || rec?.account;
+  return [accountIdentity, rec?.plaintiff, rec?.defendant].map((value) => String(value ?? "").trim()).join("\u0000");
 }
 
 function combinedRows(cases, enforcementCases) {
