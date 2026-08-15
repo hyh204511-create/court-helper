@@ -158,7 +158,8 @@ export async function runQueryAllExport({ switchCategory, queryKind, exportRepor
       return { ok: false, error: queried?.error ?? "NEEDS_HUMAN" };
     }
     if (incompleteEvidence(queried)) return { ok: false, error: "EVIDENCE_INCOMPLETE" };
+    if (queried.evidenceClosed !== true) return { ok: false, error: "EVIDENCE_NOT_CLOSED" };
   }
   const exported = await exportReport();
-  return { ...exported, needsHuman: false };
+  return { ...exported, evidenceClosed: true, needsHuman: false };
 }

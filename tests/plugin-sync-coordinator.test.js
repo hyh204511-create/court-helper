@@ -397,7 +397,9 @@ test("服务器不可达暂停批量且保留 outbox；重试恢复后自动续�
   const recovered = await coordinator.retry();
   assert.equal(recovered.status, "online");
   assert.equal(resumed.length, 1);
-  assert.equal(await getOutbox("outbox-retry").then((item) => item.status), "sent");
+  const recoveredEvent = await getOutbox("outbox-retry");
+  assert.equal(recoveredEvent.status, "sent");
+  assert.deepEqual(recoveredEvent.receipt, { caseAccepted: true, screenshotStored: false });
 });
 
 test("不可达后的自动恢复探测失败一次后停止定时重试，等待人工重试", async () => {
@@ -519,7 +521,9 @@ test("带 rejectImage blobRef 的案件同步在 ACK 后上传 reject 截图", a
   assert.equal(uploads[0].input.blob.type, rejectImage.type);
   assert.equal(await uploads[0].input.blob.text(), await rejectImage.text());
   assert.match(uploads[0].input.sha256, /^[a-f0-9]{64}$/);
-  assert.equal((await getOutbox(event.id)).status, "sent");
+  const stored = await getOutbox(event.id);
+  assert.equal(stored.status, "sent");
+  assert.deepEqual(stored.receipt, { caseAccepted: true, screenshotStored: true });
 });
 
 test("带截图的案件收到 200 conflicts 时转人工且不上传截图", async () => {

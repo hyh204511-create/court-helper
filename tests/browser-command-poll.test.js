@@ -351,6 +351,62 @@ test("QUERY_ALL_EXPORT 分类切换超时按待人工回写", async () => {
   assert.equal(harness.resultBody().resultCode, "QUERY_TAB_TIMEOUT");
 });
 
+test("QUERY_ALL_EXPORT 报表已上传但证据未闭环时按待人工回写", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000128",
+    type: "QUERY_ALL_EXPORT",
+    platformAccountId: "00000000-0000-4000-8000-000000000328",
+    clientBatchId: "00000000-0000-4000-8000-000000000228",
+  };
+  const harness = platformDiscoveryHarness(command);
+  const chromeApi = chromeMock(async (_tabId, message) => (
+    message.type === "PING"
+      ? { ok: true, route: "#/pagesWsla/pc/list/index", ready: true }
+      : { ok: true, status: "uploaded" }
+  ));
+
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl: harness.fetchImpl,
+    initialActivePlatformAccountId: command.platformAccountId,
+  }).pollOnce();
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(harness.resultBody(), {
+    deviceId: "device-test",
+    claimToken: "claim-once",
+    status: "manual_required",
+    resultCode: "EVIDENCE_NOT_CLOSED",
+    resultSummary: "证据未完成服务器闭环",
+    progress: null,
+  });
+});
+
+test("QUERY_ALL_EXPORT 仅在报表上传且证据闭环时回写成功", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-000000000129",
+    type: "QUERY_ALL_EXPORT",
+    platformAccountId: "00000000-0000-4000-8000-000000000329",
+    clientBatchId: "00000000-0000-4000-8000-000000000229",
+  };
+  const harness = platformDiscoveryHarness(command);
+  const chromeApi = chromeMock(async (_tabId, message) => (
+    message.type === "PING"
+      ? { ok: true, route: "#/pagesWsla/pc/list/index", ready: true }
+      : { ok: true, status: "uploaded", evidenceClosed: true }
+  ));
+
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl: harness.fetchImpl,
+    initialActivePlatformAccountId: command.platformAccountId,
+  }).pollOnce();
+
+  assert.equal(result.ok, true);
+  assert.equal(harness.resultBody().status, "succeeded");
+  assert.equal(harness.resultBody().resultCode, "SUCCESS");
+});
+
 test("多个非活动法院列表标签时选择最近使用标签并在执行前显式激活", async () => {
   const command = {
     id: "00000000-0000-4000-8000-000000000121",

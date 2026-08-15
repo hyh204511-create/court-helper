@@ -36,6 +36,11 @@ function failure(event, fallbackCode = "CASE_SYNC_NOT_ACKNOWLEDGED") {
   };
 }
 
+function evidenceClosed(event) {
+  return event?.receipt?.caseAccepted === true
+    && event.receipt.screenshotStored === Boolean(event.blobRef);
+}
+
 function evidenceField(payload) {
   if (payload?.status === "已驳回") return "rejectImage";
   if (["立案成功", "强执成功"].includes(payload?.status)) return "successImage";
@@ -100,8 +105,8 @@ export function createCaseSyncBridge({ ensureCoordinator, outbox, db = defaultDb
       blobRef,
     };
     const queued = await outbox.enqueue(input);
-    if (queued.status === "sent") {
-      return { ok: true, status: "sent", clientMutationId: queued.clientMutationId };
+    if (queued.status === "sent" && evidenceClosed(queued)) {
+      return { ok: true, status: "sent", clientMutationId: queued.clientMutationId, evidenceClosed: true };
     }
     if (TERMINAL_FAILURES.has(queued.status)) return failure(queued);
 
@@ -112,9 +117,10 @@ export function createCaseSyncBridge({ ensureCoordinator, outbox, db = defaultDb
     if (typeof outbox.retry === "function") await outbox.retry(queued.id);
     const syncState = await coordinator.retry();
     const current = await outbox.getOutbox(queued.id);
-    if (current?.status === "sent") {
-      return { ok: true, status: "sent", clientMutationId: current.clientMutationId };
+    if (current?.status === "sent" && evidenceClosed(current)) {
+      return { ok: true, status: "sent", clientMutationId: current.clientMutationId, evidenceClosed: true };
     }
+    if (current?.status === "sent") return failure(current, "EVIDENCE_NOT_CLOSED");
     return failure(current ?? queued, syncState?.errorCode);
   }
 

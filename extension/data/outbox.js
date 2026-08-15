@@ -72,6 +72,14 @@ function sanitizeBlobRef(value) {
   return Object.keys(ref).length ? ref : null;
 }
 
+function sanitizeReceipt(value) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    caseAccepted: value.caseAccepted === true,
+    screenshotStored: value.screenshotStored === true,
+  };
+}
+
 function normalizeNow(now) {
   const value = typeof now === "function" ? now() : now;
   return Number.isFinite(value) ? value : Date.now();
@@ -98,15 +106,24 @@ export async function enqueue({
   const mutationId = typeof clientMutationId === "string" && clientMutationId.trim()
     ? clientMutationId
     : eventId;
+  const normalizedBlobRef = sanitizeBlobRef(blobRef);
   const existing = await findByMutationId(mutationId);
-  if (existing) return existing;
+  if (existing) {
+    if (!existing.blobRef && normalizedBlobRef) {
+      const upgraded = { ...existing, blobRef: normalizedBlobRef, receipt: null };
+      await put(STORE_OUTBOX, upgraded);
+      return upgraded;
+    }
+    return existing;
+  }
 
   const event = {
     id: eventId,
     clientMutationId: mutationId,
     type,
     payload: sanitizeValue(payload) ?? {},
-    blobRef: sanitizeBlobRef(blobRef),
+    blobRef: normalizedBlobRef,
+    receipt: null,
     status: "pending",
     attempts: 0,
     nextRetryAt: 0,
@@ -164,6 +181,7 @@ export async function retry(id) {
     nextRetryAt: 0,
     lastErrorCode: null,
     conflicts: [],
+    receipt: null,
   });
 }
 
@@ -212,7 +230,12 @@ export async function drain({
         await markConflict(event.id, result.conflicts ?? []);
         summary.conflict += 1;
       } else {
-        await update(event.id, { status: "sent", nextRetryAt: 0, sentAt: currentTime });
+        await update(event.id, {
+          status: "sent",
+          nextRetryAt: 0,
+          sentAt: currentTime,
+          receipt: sanitizeReceipt(result?.receipt),
+        });
         summary.sent += 1;
       }
     } catch (error) {

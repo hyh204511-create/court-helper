@@ -1034,7 +1034,7 @@ async function startPlatformDiscovery(kind, { platformAccountId = null, allowEmp
     const confirmedEmpty = apiResult.total === 0 && rows.length === 0;
     if (confirmedEmpty && (allowEmpty || Number(apiResult.rawTotal) > 0)) {
       await db.replaceAccountRecords(store, account, [], { platformAccountId });
-      return { ok: true, stats: { total: 0, completed: 0, needsHuman: 0 } };
+      return { ok: true, evidenceClosed: true, stats: { total: 0, completed: 0, needsHuman: 0 } };
     }
     discoveryRows = rows.map((row, index) => ({
       ...row,
@@ -1051,7 +1051,7 @@ async function startPlatformDiscovery(kind, { platformAccountId = null, allowEmp
         && (!record.caseNumber || !record.filedTime));
     return pendingEvidence
       ? { ok: false, error: "MYCASE_PAGE_REQUIRED", stats: initial.stats }
-      : { ok: true, stats: initial.stats };
+      : { ok: true, evidenceClosed: true, stats: initial.stats };
   }
   _batchRunning = true;
   try {
@@ -1073,7 +1073,7 @@ async function startPlatformDiscovery(kind, { platformAccountId = null, allowEmp
         stats: initial.stats,
         evidence,
       }
-      : { ok: true, stats: initial.stats, evidence };
+      : { ok: true, evidenceClosed: true, stats: initial.stats, evidence };
   } finally {
     _batchRunning = false;
   }

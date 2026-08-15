@@ -25,6 +25,7 @@ function makeChrome(sendMessage) {
             ok: true,
             status: "sent",
             clientMutationId: message.event?.clientMutationId,
+            evidenceClosed: true,
           };
         }
         return undefined;
@@ -675,7 +676,11 @@ test("QUERY_LI 原始列表全为未批准状态时确认零行并清理旧记�
       platformAccountId,
     });
 
-    assert.deepEqual(response, { ok: true, stats: { total: 0, completed: 0, needsHuman: 0 } });
+    assert.deepEqual(response, {
+      ok: true,
+      evidenceClosed: true,
+      stats: { total: 0, completed: 0, needsHuman: 0 },
+    });
     assert.equal((await db.query(db.STORE_CASES, { account: "PLATFORM-ACCOUNT", platformAccountId })).length, 0);
   } finally {
     cleanup(dom);

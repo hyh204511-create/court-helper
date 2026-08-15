@@ -61,10 +61,16 @@ export function createRuntimeCaseOutbox({
           ...(evidence ? { evidence } : {}),
         },
       });
-      if (response?.ok !== true || response?.status !== "sent") throw syncError(response);
+      if (response?.ok !== true || response?.status !== "sent" || response?.evidenceClosed !== true) {
+        if (response?.ok === true && response?.status === "sent") {
+          throw syncError({ ...response, code: "EVIDENCE_NOT_CLOSED" });
+        }
+        throw syncError(response);
+      }
       return {
         status: "sent",
         clientMutationId: response.clientMutationId,
+        evidenceClosed: true,
       };
     },
   };

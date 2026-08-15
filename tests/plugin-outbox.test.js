@@ -56,13 +56,43 @@ test("同一 clientMutationId 幂等入队，成功 drain 后标记 sent", async
     now: () => 1000,
     send: async (event, context) => {
       calls.push({ event, context });
-      return { accepted: [{ clientUid: "uid-1" }], conflicts: [], cursor: 2 };
+      return {
+        accepted: [{ clientUid: "uid-1" }],
+        conflicts: [],
+        cursor: 2,
+        receipt: { caseAccepted: true, screenshotStored: false },
+      };
     },
   });
 
   assert.equal(result.sent, 1);
   assert.equal(calls[0].context.idempotencyKey, "same");
-  assert.equal((await getOutbox(first.id)).status, "sent");
+  const stored = await getOutbox(first.id);
+  assert.equal(stored.status, "sent");
+  assert.deepEqual(stored.receipt, { caseAccepted: true, screenshotStored: false });
+});
+
+test("幂等重放会补齐旧事件缺失的截图引用", async () => {
+  const first = await enqueue({
+    id: "outbox-evidence-upgrade-first",
+    clientMutationId: "mutation-evidence-upgrade",
+    type: "case.sync",
+    payload: { clientUid: "uid-evidence-upgrade" },
+  });
+  const replayed = await enqueue({
+    id: "outbox-evidence-upgrade-second",
+    clientMutationId: "mutation-evidence-upgrade",
+    type: "case.sync",
+    payload: { clientUid: "uid-evidence-upgrade" },
+    blobRef: { storeName: "cases", uid: "uid-evidence-upgrade", field: "successImage" },
+  });
+
+  assert.equal(replayed.id, first.id);
+  assert.deepEqual(replayed.blobRef, {
+    storeName: "cases",
+    uid: "uid-evidence-upgrade",
+    field: "successImage",
+  });
 });
 
 test("大量终态事件不占满 drain 切片，少量到期 pending 仍会发送", async () => {

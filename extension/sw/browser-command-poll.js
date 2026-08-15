@@ -301,7 +301,16 @@ async function ensureQueryContentVersion(chromeApi, tabId, scheduler, delayMs, a
   return waitForQueryAllExportContent(chromeApi, tabId, scheduler, delayMs, attempts, timeoutMs);
 }
 
-function resultFor(response) {
+function resultFor(response, commandType) {
+  if (commandType === "QUERY_ALL_EXPORT"
+    && (response?.status === "uploaded" || response?.ok === true)
+    && response?.evidenceClosed !== true) {
+    return {
+      status: "manual_required",
+      resultCode: "EVIDENCE_NOT_CLOSED",
+      resultSummary: "证据未完成服务器闭环",
+    };
+  }
   if (response?.status === "uploaded") {
     return { status: "succeeded", resultCode: "SUCCESS", resultSummary: "报表已上传服务器" };
   }
@@ -371,10 +380,10 @@ export function createBrowserCommandPoller({
     return { client: createRemoteClient({ baseUrl: serverUrl, token, fetchImpl }), deviceId };
   }
 
-  async function writeResult(client, commandId, claimToken, deviceId, response, signal) {
+  async function writeResult(client, commandId, claimToken, deviceId, response, signal, commandType) {
     return client.request(`/browser-commands/${path(commandId)}/result`, {
       method: "POST",
-      body: { deviceId, claimToken, ...resultFor(response), progress: response?.progress ?? null },
+      body: { deviceId, claimToken, ...resultFor(response, commandType), progress: response?.progress ?? null },
       signal,
     });
   }
@@ -564,7 +573,15 @@ export function createBrowserCommandPoller({
       try {
         const response = await execute(runtime.client, claim.command, claim.claimToken, runtime.deviceId, { generation, signal: controller.signal });
         if (!isCurrentGeneration(generation)) return configurationChanged();
-        await writeResult(runtime.client, claim.command.id, claim.claimToken, runtime.deviceId, response, controller.signal);
+        await writeResult(
+          runtime.client,
+          claim.command.id,
+          claim.claimToken,
+          runtime.deviceId,
+          response,
+          controller.signal,
+          claim.command.type,
+        );
         if (!isCurrentGeneration(generation)) return configurationChanged();
         return { ...response, commandId: claim.command.id };
       } finally {

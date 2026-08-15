@@ -42,7 +42,12 @@ test("case sync bridge waits for the server-backed outbox event to be acknowledg
     ensureCoordinator: async () => ({
       async retry() {
         calls.push("retry-coordinator");
-        stored = { ...stored, status: "sent", sentAt: Date.now() };
+        stored = {
+          ...stored,
+          status: "sent",
+          sentAt: Date.now(),
+          receipt: { caseAccepted: true, screenshotStored: false },
+        };
         return { status: "online" };
       },
     }),
@@ -66,7 +71,12 @@ test("case sync bridge waits for the server-backed outbox event to be acknowledg
 
   const response = await bridge.handle({ type: CASE_SYNC_ENQUEUE, event: caseEvent() }, courtSender);
 
-  assert.deepEqual(response, { ok: true, status: "sent", clientMutationId: "case-event-1" });
+  assert.deepEqual(response, {
+    ok: true,
+    status: "sent",
+    clientMutationId: "case-event-1",
+    evidenceClosed: true,
+  });
   assert.deepEqual(calls, ["enqueue", "retry-outbox-1", "retry-coordinator", "read-result"]);
   assert.equal(stored.blobRef, null);
 });
@@ -105,28 +115,87 @@ test("case sync bridge rejects non-court senders and reports an unacknowledged w
   );
 });
 
-test("case sync bridge returns existing sent events without writing them twice", async () => {
-  let retries = 0;
+test("case sync bridge replays legacy sent events without a durable receipt", async () => {
+  const calls = [];
+  let stored;
   const bridge = createCaseSyncBridge({
-    ensureCoordinator: async () => ({ async retry() { retries += 1; } }),
+    ensureCoordinator: async () => ({
+      async retry() {
+        calls.push("coordinator-retry");
+        stored = {
+          ...stored,
+          status: "sent",
+          receipt: { caseAccepted: true, screenshotStored: false },
+        };
+      },
+    }),
     outbox: {
       async enqueue(input) {
-        return { id: "outbox-sent", status: "sent", ...input };
+        stored = { id: "outbox-sent", status: "sent", ...input };
+        return stored;
       },
-      async retry() {
-        retries += 1;
+      async retry(id) {
+        calls.push(`retry-${id}`);
+        stored = { ...stored, status: "pending", receipt: null };
       },
       async getOutbox() {
-        throw new Error("already-sent event must not be re-read");
+        calls.push("read-result");
+        return stored;
       },
     },
   });
 
   assert.deepEqual(
     await bridge.handle({ type: CASE_SYNC_ENQUEUE, event: caseEvent() }, courtSender),
-    { ok: true, status: "sent", clientMutationId: "case-event-1" },
+    { ok: true, status: "sent", clientMutationId: "case-event-1", evidenceClosed: true },
   );
-  assert.equal(retries, 0);
+  assert.deepEqual(calls, ["retry-outbox-sent", "coordinator-retry", "read-result"]);
+});
+
+test("case sync bridge refuses a terminal sent receipt without screenshot acknowledgement", async () => {
+  let stored;
+  const bridge = createCaseSyncBridge({
+    ensureCoordinator: async () => ({ async retry() {} }),
+    outbox: {
+      async enqueue(input) {
+        stored = {
+          id: "outbox-terminal-incomplete",
+          status: "sent",
+          receipt: { caseAccepted: true, screenshotStored: false },
+          ...input,
+        };
+        return stored;
+      },
+      async retry() { stored = { ...stored, status: "pending" }; },
+      async getOutbox() {
+        return {
+          ...stored,
+          status: "sent",
+          receipt: { caseAccepted: true, screenshotStored: false },
+        };
+      },
+    },
+    db: {
+      STORE_CASES: "cases",
+      STORE_ENFORCEMENT: "enforcementCases",
+      async getByUid() { return null; },
+      async upsertByUid(_storeName, _uid, record) { return record; },
+    },
+  });
+  const payload = { ...caseEvent().payload, status: "立案成功" };
+  const response = await bridge.handle({
+    type: CASE_SYNC_ENQUEUE,
+    event: {
+      ...caseEvent({ payload }),
+      evidence: {
+        field: "successImage",
+        mimeType: "image/png",
+        base64: Buffer.from("synthetic-terminal-image").toString("base64"),
+      },
+    },
+  }, courtSender);
+
+  assert.deepEqual(response, { ok: false, code: "EVIDENCE_NOT_CLOSED", status: "sent" });
 });
 
 test("case sync bridge restores terminal evidence in the worker database before syncing", async () => {
@@ -139,8 +208,12 @@ test("case sync bridge restores terminal evidence in the worker database before 
     let storedEvidence = null;
     const bridge = createCaseSyncBridge({
       ensureCoordinator: async () => ({
-        async retry() {
-          queued = { ...queued, status: "sent" };
+      async retry() {
+          queued = {
+            ...queued,
+            status: "sent",
+            receipt: { caseAccepted: true, screenshotStored: true },
+          };
           return { status: "online" };
         },
       }),
@@ -192,7 +265,11 @@ test("case sync bridge still syncs terminal text when capture failed and no evid
   const bridge = createCaseSyncBridge({
     ensureCoordinator: async () => ({
       async retry() {
-        queued = { ...queued, status: "sent" };
+        queued = {
+          ...queued,
+          status: "sent",
+          receipt: { caseAccepted: true, screenshotStored: false },
+        };
         return { status: "online" };
       },
     }),
@@ -223,7 +300,12 @@ test("runtime case outbox sends a serializable event and requires the database a
   const outbox = createRuntimeCaseOutbox({
     async sendMessage(message) {
       sent.push(message);
-      return { ok: true, status: "sent", clientMutationId: message.event.clientMutationId };
+      return {
+        ok: true,
+        status: "sent",
+        clientMutationId: message.event.clientMutationId,
+        evidenceClosed: true,
+      };
     },
   });
 
@@ -231,7 +313,11 @@ test("runtime case outbox sends a serializable event and requires the database a
     ...caseEvent(),
   });
 
-  assert.deepEqual(queued, { status: "sent", clientMutationId: "case-event-1" });
+  assert.deepEqual(queued, {
+    status: "sent",
+    clientMutationId: "case-event-1",
+    evidenceClosed: true,
+  });
   assert.deepEqual(sent, [{
     type: CASE_SYNC_ENQUEUE,
     event: {
@@ -258,7 +344,12 @@ test("runtime case outbox transfers terminal success evidence without putting th
   const outbox = createRuntimeCaseOutbox({
     async sendMessage(message) {
       sent.push(message);
-      return { ok: true, status: "sent", clientMutationId: message.event.clientMutationId };
+      return {
+        ok: true,
+        status: "sent",
+        clientMutationId: message.event.clientMutationId,
+        evidenceClosed: true,
+      };
     },
     db: {
       async getByUid(storeName, uid) {

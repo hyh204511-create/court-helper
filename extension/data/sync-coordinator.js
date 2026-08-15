@@ -468,7 +468,14 @@ export function createSyncCoordinator({
       error.retryable = false;
       throw error;
     }
-    return uploadEventScreenshot(event, accepted, response);
+    await uploadEventScreenshot(event, accepted, response);
+    return {
+      ...response,
+      receipt: {
+        caseAccepted: true,
+        screenshotStored: Boolean(event.blobRef),
+      },
+    };
   }
 
   async function markConflictsNeedsHuman() {
