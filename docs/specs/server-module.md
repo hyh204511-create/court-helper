@@ -76,7 +76,7 @@ needsHuman, errorCode, sourceUpdatedAt
 - `clientUid` 沿用 `db.js` 的唯一键语义；服务器不得重新猜测合并键。由于插件现有唯一键使用 U+0000 作为分隔符，同步边界将其中的 U+0000 编码为字面量 `%00` 后再落库，并在后续同步中继续使用同一编码；其他标识符仍严格校验，不做静默改写。
 - `batch-runner.js` 的 `filedDate` 在同步边界明确映射为 `filedTime`，IndexedDB 数字型 `updatedAt` 转为 ISO 8601 `sourceUpdatedAt`；`image` 不进 JSON，由状态映射到独立截图类型后上传。
 - `plaintiff / defendant / caseNumber / rejectReason / errorCode` 是可能来自平台或采集链路的数据库文本；路由解析时统一移除 U+0000 后再进入幂等比较和写库。不得因单个不可存储空字符返回 `INTERNAL_ERROR`，也不得删除正常中文、空格、制表或换行。`eventId / platformAccountId` 等标识符仍严格校验，不做静默改写。
-- 带本地 `blobRef` 的 outbox 事件只有在案件同步响应 `accepted[]` 返回对应服务器案件 `id` 后，才读取 IndexedDB 中指定的 `successImage` / `rejectImage` Blob，计算 SHA-256 并调用 `uploadScreenshot`。类型固定映射：立案成功=`success`、强执成功=`enforcement_success`、驳回=`reject`；截图上传成功后事件才可标记 sent。上传失败必须保留事件供既有有界重试/人工接管，不得把案件 ACK 误当作截图 ACK。
+- 每个案件 outbox 事件只有在同步响应 `accepted[]` 中找到 `clientUid + eventId` 精确匹配且含非空服务器案件 `id` 的逐项 ACK 后，才可标记 `sent`；HTTP 200、空 `accepted[]` 或不相关条目的 ACK 均返回稳定错误 `CASE_SYNC_NOT_ACCEPTED`，不得伪报成功。带本地 `blobRef` 的事件在取得案件 ACK 后，才读取 IndexedDB 中指定的 `successImage` / `rejectImage` Blob，计算 SHA-256 并调用 `uploadScreenshot`。类型固定映射：立案成功=`success`、强执成功=`enforcement_success`、驳回=`reject`；截图上传成功后事件才可标记 sent。上传失败必须保留事件供既有有界重试/人工接管，不得把案件 ACK 误当作截图 ACK。
 - content script 与 service worker 的 IndexedDB 分属不同来源上下文。终态同步时，content script 仅通过受信法院页面到扩展 worker 的一次性 runtime 消息传递经 Base64 编码的图片证据；worker 必须按案件状态校验图片字段、MIME 与大小，立即解码写入 worker IndexedDB。持久化 outbox 仍只保存 `blobRef`，案件同步 JSON、日志和响应均不得包含图片字节。
 - 只接受规格枚举；未知平台文本必须由插件上传为 `UNKNOWN + needsHuman=true`。原始异常只归一为稳定 `errorCode`，不上传可能含业务明文的错误栈。
 - `kind=li` 不接受 `强执成功`，`kind=qz` 不接受 `立案成功`；状态与类型不一致按逐项校验错误拒收，服务器不自动改写。

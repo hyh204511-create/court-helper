@@ -234,6 +234,45 @@ test("409 冲突转为 needs_human，并在同步状态中列出", async () => {
   assert.equal(result.conflicts[0].id, event.id);
 });
 
+test("服务端未在 accepted 中确认案件时不得把 outbox 标成 sent", async () => {
+  const event = await enqueue({
+    id: "outbox-not-accepted",
+    type: "case.sync",
+    clientMutationId: "mutation-not-accepted",
+    payload: {
+      clientUid: "uid-not-accepted",
+      platformAccountId: "platform-1",
+      kind: "li",
+      status: "审核中",
+      sourceUpdatedAt: "2026-08-15T00:00:00.000Z",
+    },
+  });
+  const coordinator = createSyncCoordinator({
+    client: {
+      async healthCheck() { return { ok: true }; },
+      async listPlatformAccounts() { return { platformAccounts: [] }; },
+      async pullChanges() { return { cases: [], nextCursor: 0 }; },
+      async syncCases() {
+        return {
+          accepted: [{
+            id: "00000000-0000-4000-8000-000000000503",
+            clientUid: "uid-not-accepted",
+            eventId: "different-mutation",
+            revision: 1,
+          }],
+          conflicts: [],
+          cursor: 0,
+        };
+      },
+    },
+  });
+
+  await coordinator.syncNow();
+  const stored = await getOutbox(event.id);
+  assert.notEqual(stored.status, "sent");
+  assert.equal(stored.lastErrorCode, "CASE_SYNC_NOT_ACCEPTED");
+});
+
 test("同步先 drain 再 pull，冲突时保留本地编辑并标记 needs_human", async () => {
   const uid = "uid-local-edit";
   const event = await enqueue({
@@ -318,7 +357,7 @@ test("服务器不可达暂停批量且保留 outbox；重试恢复后自动续�
   let online = false;
   const paused = [];
   const resumed = [];
-  await enqueue({
+  const retryEvent = await enqueue({
     id: "outbox-retry",
     type: "case.sync",
     payload: { clientUid: "uid-retry", platformAccountId: "platform-1", kind: "li", status: "审核中" },
@@ -331,7 +370,18 @@ test("服务器不可达暂停批量且保留 outbox；重试恢复后自动续�
       }
       if (url.includes("/platform-accounts")) return jsonResponse({ platformAccounts: [] });
       if (url.includes("/sync/changes")) return jsonResponse({ cases: [], nextCursor: 0 });
-      if (url.includes("/sync/cases")) return jsonResponse({ accepted: [], conflicts: [], cursor: 1 });
+      if (url.includes("/sync/cases")) {
+        return jsonResponse({
+          accepted: [{
+            id: "00000000-0000-4000-8000-000000000502",
+            clientUid: "uid-retry",
+            eventId: retryEvent.clientMutationId,
+            revision: 1,
+          }],
+          conflicts: [],
+          cursor: 1,
+        });
+      }
       throw new Error(`unexpected request: ${url}`);
     }),
     onPauseBatch: (reason) => paused.push(reason),

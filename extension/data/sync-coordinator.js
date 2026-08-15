@@ -208,6 +208,19 @@ function eventClientUid(event) {
   return typeof value === "string" ? value : "";
 }
 
+function acceptedCaseFor(event, response) {
+  const uid = eventClientUid(event);
+  const eventIds = [event?.clientMutationId, event?.payload?.eventId]
+    .filter((value) => typeof value === "string" && value !== "");
+  if (!uid || eventIds.length === 0) return null;
+  return (Array.isArray(response?.accepted) ? response.accepted : []).find((item) => (
+    typeof item?.id === "string"
+    && item.id !== ""
+    && item.clientUid === uid
+    && eventIds.includes(item.eventId)
+  )) ?? null;
+}
+
 function eventSourceUpdatedAt(event) {
   const payload = event?.payload && typeof event.payload === "object" ? event.payload : {};
   return asIso(payload.sourceUpdatedAt ?? payload.updatedAt);
@@ -408,18 +421,8 @@ export function createSyncCoordinator({
     return { changes: changes.length, cursor: nextCursor };
   }
 
-  async function uploadEventScreenshot(event, response) {
+  async function uploadEventScreenshot(event, accepted, response) {
     if (!event?.blobRef) return response;
-    const accepted = (Array.isArray(response?.accepted) ? response.accepted : []).find((item) => (
-      item?.clientUid === eventClientUid(event)
-      && (item?.eventId === event.clientMutationId || item?.eventId === event.payload?.eventId)
-    ));
-    if (typeof accepted?.id !== "string" || !accepted.id) {
-      const error = new Error("SCREENSHOT_CASE_UNAVAILABLE");
-      error.code = "SCREENSHOT_CASE_UNAVAILABLE";
-      error.retryable = false;
-      throw error;
-    }
     const local = await db.getByUid(event.blobRef.storeName, event.blobRef.uid);
     const blob = local?.[event.blobRef.field];
     const type = screenshotType(event);
@@ -458,7 +461,14 @@ export function createSyncCoordinator({
     if (Array.isArray(response?.conflicts) && response.conflicts.length > 0) {
       return { ...response, conflicts: conflictsOf(response.conflicts) };
     }
-    return uploadEventScreenshot(event, response);
+    const accepted = acceptedCaseFor(event, response);
+    if (!accepted) {
+      const error = new Error("CASE_SYNC_NOT_ACCEPTED");
+      error.code = "CASE_SYNC_NOT_ACCEPTED";
+      error.retryable = false;
+      throw error;
+    }
+    return uploadEventScreenshot(event, accepted, response);
   }
 
   async function markConflictsNeedsHuman() {

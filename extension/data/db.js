@@ -139,6 +139,7 @@ async function upsertAtUid(storeName, uid, record, { keepImages = true } = {}) {
   const tx = db.transaction(storeName, "readwrite");
   const store = tx.objectStore(storeName);
   const cleaned = withoutPassword(record);
+  let saved;
   store.get(uid).onsuccess = (e) => {
     const existing = e.target.result;
     if (existing && keepImages) {
@@ -146,10 +147,11 @@ async function upsertAtUid(storeName, uid, record, { keepImages = true } = {}) {
         if (cleaned[f] == null && existing[f] != null) cleaned[f] = existing[f];
       }
     }
-    store.put({ ...cleaned, uid, updatedAt: Date.now() });
+    saved = { ...cleaned, uid, updatedAt: Date.now() };
+    store.put(saved);
   };
   await txDone(tx);
-  return { ...cleaned, uid };
+  return saved;
 }
 
 /**

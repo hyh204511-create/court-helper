@@ -15,6 +15,7 @@ import {
   resetDb,
   uidOf,
   upsert,
+  upsertByUid,
 } from "../extension/data/db.js";
 
 const IMG = () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" });
@@ -61,6 +62,15 @@ test("upsert 后 getByUid 读回；同 uid 再 upsert 覆盖并保持唯一", as
 
   const all = await query(STORE_CASES);
   assert.equal(all.length, 2, "不同 uid 是两条记录");
+});
+
+test("upsertByUid 返回值与实际提交的新 updatedAt 一致", async () => {
+  const uid = "synthetic-stable-uid";
+  const returned = await upsertByUid(STORE_CASES, uid, caseRec({ updatedAt: 1 }));
+  const stored = await getByUid(STORE_CASES, uid);
+
+  assert.ok(returned.updatedAt > 1);
+  assert.equal(returned.updatedAt, stored.updatedAt);
 });
 
 test("query：按账号 / 客户名模糊 / 状态 / 组合过滤", async () => {
