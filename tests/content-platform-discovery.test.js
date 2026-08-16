@@ -679,6 +679,7 @@ test("QUERY_LI 原始列表全为未批准状态时确认零行并清理旧记�
     assert.deepEqual(response, {
       ok: true,
       evidenceClosed: true,
+      evidenceEventIds: [],
       stats: { total: 0, completed: 0, needsHuman: 0 },
     });
     assert.equal((await db.query(db.STORE_CASES, { account: "PLATFORM-ACCOUNT", platformAccountId })).length, 0);

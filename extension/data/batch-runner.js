@@ -46,7 +46,8 @@ function fingerprint(value) {
  * 本地结果先落库，再进入远端 outbox；图片只保留本地引用，不进 JSON 载荷。
  * `persistence` 可注入测试替身，默认仅在浏览器存在 IndexedDB 时启用。
  */
-export async function persistSyncRecord(record, { db = defaultDb, outbox = defaultOutbox } = {}) {
+export async function persistSyncRecord(record, persistence = {}) {
+  const { db = defaultDb, outbox = defaultOutbox } = persistence;
   const storeName = record.kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
   const uid = typeof record.uid === "string" && record.uid ? record.uid : db.uidOf(record);
   const existing = await db.getByUid(storeName, uid);
@@ -95,7 +96,7 @@ export async function persistSyncRecord(record, { db = defaultDb, outbox = defau
     sourceUpdatedAt: new Date(local.updatedAt ?? Date.now()).toISOString(),
   };
   const mutationId = `case-${fingerprint(payload)}`;
-  await outbox.enqueue({
+  const queued = await outbox.enqueue({
     type: "case.sync",
     clientMutationId: mutationId,
     payload,
@@ -107,6 +108,10 @@ export async function persistSyncRecord(record, { db = defaultDb, outbox = defau
         }
       : null,
   });
+  if (persistence?.evidenceReceipts instanceof Map
+    && typeof queued?.clientMutationId === "string" && queued.clientMutationId) {
+    persistence.evidenceReceipts.set(uid, queued.clientMutationId);
+  }
   return local;
 }
 

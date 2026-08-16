@@ -105,9 +105,6 @@ export function createCaseSyncBridge({ ensureCoordinator, outbox, db = defaultDb
       blobRef,
     };
     const queued = await outbox.enqueue(input);
-    if (queued.status === "sent" && evidenceClosed(queued)) {
-      return { ok: true, status: "sent", clientMutationId: queued.clientMutationId, evidenceClosed: true };
-    }
     if (TERMINAL_FAILURES.has(queued.status)) return failure(queued);
 
     const coordinator = await ensureCoordinator();

@@ -102,6 +102,7 @@ async function browserModule() {
 async function makeService(
   now = new Date('2026-08-06T10:00:00.000Z'),
   importBatchRecords = [importBatchRecord()],
+  verifyEvidence = async () => true,
 ) {
   const {
     BrowserCommandService,
@@ -112,6 +113,7 @@ async function makeService(
   let currentNow = new Date(now);
   const service = new BrowserCommandService(repository, importBatchRepository, {
     now: () => new Date(currentNow),
+    verifyEvidence,
   });
   return {
     repository,
@@ -619,7 +621,12 @@ test('browser command results require the claimant token and are idempotent', as
 });
 
 test('QUERY_ALL_EXPORT success requires an explicit evidence closure proof', async () => {
-  const { service } = await makeService();
+  const verificationCalls = [];
+  const { service } = await makeService(
+    undefined,
+    undefined,
+    async (input) => { verificationCalls.push(input); return input.evidenceEventIds[0] === 'case-proof-current'; },
+  );
   const legacy = await service.create(commandInput('QUERY_ALL_EXPORT'));
   const legacyClaim = await service.claim(legacy.id, 'device-legacy');
   const rejectedSuccess = await service.writeResult(legacy.id, {
@@ -646,9 +653,30 @@ test('QUERY_ALL_EXPORT success requires an explicit evidence closure proof', asy
     resultSummary: '报表已上传服务器',
     progress: null,
     evidenceClosed: true,
+    evidenceEventIds: ['case-proof-current'],
   });
   assert.equal(acceptedSuccess.status, 'succeeded');
   assert.equal(acceptedSuccess.resultCode, 'SUCCESS');
+  assert.deepEqual(verificationCalls, [{
+    platformAccountId: closed.platformAccountId,
+    requestedBy: closed.requestedBy,
+    evidenceEventIds: ['case-proof-current'],
+  }]);
+
+  const stale = await service.create(commandInput('QUERY_ALL_EXPORT', { platformAccountId: randomUUID() }));
+  const staleClaim = await service.claim(stale.id, 'device-stale');
+  const staleResult = await service.writeResult(stale.id, {
+    deviceId: 'device-stale',
+    claimToken: staleClaim.claimToken,
+    status: 'succeeded',
+    resultCode: 'SUCCESS',
+    resultSummary: '报表已上传服务器',
+    progress: null,
+    evidenceClosed: true,
+    evidenceEventIds: ['case-proof-from-another-server'],
+  });
+  assert.equal(staleResult.status, 'manual_required');
+  assert.equal(staleResult.resultCode, 'EVIDENCE_NOT_CLOSED');
 });
 
 test('browser command service expires stale pending and executing commands', async () => {

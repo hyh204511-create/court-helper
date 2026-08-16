@@ -46,12 +46,12 @@ test("一键流程证据完整时查询两类后导出", async () => {
     queryKind: async (kind) => {
       calls.push(`query:${kind}`);
       return kind === "li"
-        ? { ok: true, evidenceClosed: true, records: [{ status: "立案成功", filedTime: "2026-08-12", caseNumber: "SYNTHETIC-LI-001", successImage: {} }] }
-        : { ok: true, evidenceClosed: true, records: [{ status: "审核中" }] };
+        ? { ok: true, evidenceClosed: true, evidenceEventIds: ["case-li-final"], records: [{ status: "立案成功", filedTime: "2026-08-12", caseNumber: "SYNTHETIC-LI-001", successImage: {} }] }
+        : { ok: true, evidenceClosed: true, evidenceEventIds: ["case-qz-final"], records: [{ status: "审核中" }] };
     },
     exportReport: async () => { calls.push("export"); return { ok: true }; },
   });
-  assert.deepEqual(result, { ok: true, evidenceClosed: true, needsHuman: false });
+  assert.deepEqual(result, { ok: true, evidenceClosed: true, evidenceEventIds: ["case-li-final", "case-qz-final"], needsHuman: false });
   assert.deepEqual(calls, ["switch:li", "query:li", "switch:qz", "query:qz", "export"]);
 });
 
@@ -77,8 +77,8 @@ test("一键流程允许仅一类有记录：另一类切换超时但结构化�
     queryKind: async (kind) => {
       calls.push(`query:${kind}`);
       return kind === "li"
-        ? { ok: true, evidenceClosed: true, stats: { total: 0, completed: 0, needsHuman: 0 } }
-        : { ok: true, evidenceClosed: true, stats: { total: 1, completed: 1, needsHuman: 0 } };
+        ? { ok: true, evidenceClosed: true, evidenceEventIds: [], stats: { total: 0, completed: 0, needsHuman: 0 } }
+        : { ok: true, evidenceClosed: true, evidenceEventIds: ["case-qz-final"], stats: { total: 1, completed: 1, needsHuman: 0 } };
     },
     exportReport: async () => {
       calls.push("export");
@@ -87,7 +87,19 @@ test("一键流程允许仅一类有记录：另一类切换超时但结构化�
   });
 
   assert.equal(result.ok, true);
+  assert.deepEqual(result.evidenceEventIds, ["case-qz-final"]);
   assert.deepEqual(calls, ["switch:li", "query:li", "switch:qz", "query:qz", "export"]);
+});
+
+test("一键流程非空结果缺少服务器事件索引时不得导出", async () => {
+  let exported = 0;
+  const result = await runQueryAllExport({
+    switchCategory: async () => ({ ok: true }),
+    queryKind: async (kind) => ({ ok: true, evidenceClosed: true, evidenceEventIds: [], stats: { total: kind === "li" ? 1 : 0 } }),
+    exportReport: async () => { exported += 1; return { ok: true }; },
+  });
+  assert.deepEqual(result, { ok: false, error: "EVIDENCE_NOT_CLOSED" });
+  assert.equal(exported, 0);
 });
 
 test("一键流程查询成功但服务器证据未闭环时不得导出", async () => {

@@ -7,6 +7,7 @@ import {
   ValidationError,
 } from '../errors.ts';
 import type { ImportBatchRepository } from '../import-batches/types.ts';
+import type { BrowserCommandEvidenceVerifier } from './evidence-verifier.ts';
 import {
   BROWSER_COMMAND_RESULT_STATUSES,
   BROWSER_COMMAND_STATUSES,
@@ -46,6 +47,7 @@ const TERMINAL_STATUSES = new Set<BrowserCommandStatus>([
 
 export interface BrowserCommandServiceOptions {
   now?: () => Date;
+  verifyEvidence?: BrowserCommandEvidenceVerifier;
 }
 
 export interface BrowserCommandCreateInput {
@@ -86,6 +88,7 @@ export interface BrowserCommandResultRequest {
   resultSummary?: unknown;
   progress?: unknown;
   evidenceClosed?: unknown;
+  evidenceEventIds?: unknown;
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -268,6 +271,7 @@ function normalizeResult(input: BrowserCommandResultRequest): BrowserCommandResu
   deviceId: string;
   claimToken: string;
   evidenceClosed: boolean;
+  evidenceEventIds: string[];
 } {
   assertNonEmptyString(input.deviceId, 'deviceId', 200);
   assertNonEmptyString(input.claimToken, 'claimToken', 512);
@@ -275,6 +279,18 @@ function normalizeResult(input: BrowserCommandResultRequest): BrowserCommandResu
   if (input.evidenceClosed !== undefined && input.evidenceClosed !== null
     && typeof input.evidenceClosed !== 'boolean') {
     throw new ValidationError([{ field: 'evidenceClosed', code: 'boolean_required' }]);
+  }
+  if (input.evidenceEventIds !== undefined && !Array.isArray(input.evidenceEventIds)) {
+    throw new ValidationError([{ field: 'evidenceEventIds', code: 'array_required' }]);
+  }
+  const evidenceEventIds = (input.evidenceEventIds ?? []).map((value, index) => {
+    if (typeof value !== 'string' || value.trim() === '' || value.length > 200 || !/^[A-Za-z0-9._:-]+$/.test(value)) {
+      throw new ValidationError([{ field: `evidenceEventIds.${index}`, code: 'invalid' }]);
+    }
+    return value;
+  });
+  if (evidenceEventIds.length > 100) {
+    throw new ValidationError([{ field: 'evidenceEventIds', code: 'maximum_exceeded' }]);
   }
   return {
     deviceId: input.deviceId,
@@ -284,6 +300,7 @@ function normalizeResult(input: BrowserCommandResultRequest): BrowserCommandResu
     resultSummary: resultSummary(input.resultSummary),
     progress: resultProgress(input.progress),
     evidenceClosed: input.evidenceClosed === true,
+    evidenceEventIds,
   };
 }
 
@@ -340,6 +357,7 @@ export class BrowserCommandService {
   public readonly repository: BrowserCommandRepository;
   private readonly importBatchRepository: ImportBatchRepository;
   private readonly now: () => Date;
+  private readonly verifyEvidence?: BrowserCommandEvidenceVerifier;
 
   constructor(
     repository: BrowserCommandRepository,
@@ -349,6 +367,7 @@ export class BrowserCommandService {
     this.repository = repository;
     this.importBatchRepository = importBatchRepository;
     this.now = options.now ?? (() => new Date());
+    this.verifyEvidence = options.verifyEvidence;
   }
 
   async create(input: BrowserCommandCreateInput): Promise<BrowserCommandRecord> {
@@ -467,9 +486,19 @@ export class BrowserCommandService {
       throw new ForbiddenError('Browser command claimed by another session');
     }
 
+    const evidenceVerified = current.type !== 'QUERY_ALL_EXPORT' || normalized.status !== 'succeeded'
+      ? true
+      : normalized.evidenceClosed === true
+        && normalized.evidenceEventIds.length > 0
+        && new Set(normalized.evidenceEventIds).size === normalized.evidenceEventIds.length
+        && await this.verifyEvidence?.({
+          platformAccountId: current.platformAccountId,
+          requestedBy: current.requestedBy,
+          evidenceEventIds: normalized.evidenceEventIds,
+        }) === true;
     const result = current.type === 'QUERY_ALL_EXPORT'
       && normalized.status === 'succeeded'
-      && normalized.evidenceClosed !== true
+      && !evidenceVerified
       ? {
         ...normalized,
         status: 'manual_required' as const,

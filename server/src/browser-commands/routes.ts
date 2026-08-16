@@ -51,6 +51,7 @@ const RESULT_FIELDS = new Set([
   'resultSummary',
   'progress',
   'evidenceClosed',
+  'evidenceEventIds',
 ]);
 
 function route(prefix: string, path: string): string {
@@ -183,6 +184,7 @@ function resultInput(body: RequestBody): BrowserCommandResultRequest {
     resultSummary: body.resultSummary,
     progress: body.progress,
     evidenceClosed: body.evidenceClosed,
+    evidenceEventIds: body.evidenceEventIds,
   };
 }
 

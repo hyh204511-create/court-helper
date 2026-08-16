@@ -49,6 +49,7 @@ import type { LocalLoginHelper } from './local-login-helper.ts';
 import { registerWecomNotificationRoutes } from './wecom-notifications/routes.ts';
 import { WecomNotificationService, type WecomTransport } from './wecom-notifications/service.ts';
 import type { WecomNotificationRepository } from './wecom-notifications/types.ts';
+import { createBrowserCommandEvidenceVerifier } from './browser-commands/evidence-verifier.ts';
 import { MemoryWecomNotificationRepository } from './wecom-notifications/memory-repository.ts';
 
 declare module 'fastify' {
@@ -230,11 +231,24 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       });
     }
     let browserCommandService: BrowserCommandService | undefined;
+    const browserCommandNotificationRepository = options.caseRepository
+      && options.screenshotRepository
+      ? options.wecomNotificationRepository ?? new MemoryWecomNotificationRepository()
+      : undefined;
     if (options.browserCommandRepository && options.importBatchRepository) {
       browserCommandService = new BrowserCommandService(
         options.browserCommandRepository,
         options.importBatchRepository,
-        { now: clock },
+        {
+          now: clock,
+          verifyEvidence: options.caseRepository && options.screenshotRepository && browserCommandNotificationRepository
+            ? createBrowserCommandEvidenceVerifier(
+              options.caseRepository,
+              options.screenshotRepository,
+              browserCommandNotificationRepository,
+            )
+            : undefined,
+        },
       );
       registerBrowserCommandRoutes(app, {
         config,
@@ -265,7 +279,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       });
     }
     if (options.caseRepository && options.platformAccountRepository && options.screenshotRepository && options.storageBackend) {
-      const notificationRepository = options.wecomNotificationRepository ?? new MemoryWecomNotificationRepository();
+      const notificationRepository = browserCommandNotificationRepository
+        ?? options.wecomNotificationRepository
+        ?? new MemoryWecomNotificationRepository();
       const wecomNotificationService = new WecomNotificationService(
         config.wecom.webhookUrl,
         options.caseRepository,

@@ -380,6 +380,7 @@ test("QUERY_ALL_EXPORT 报表已上传但证据未闭环时按待人工回写", 
     resultSummary: "证据未完成服务器闭环",
     progress: null,
     evidenceClosed: false,
+    evidenceEventIds: [],
   });
 });
 
@@ -394,7 +395,7 @@ test("QUERY_ALL_EXPORT 仅在报表上传且证据闭环时回写成功", async 
   const chromeApi = chromeMock(async (_tabId, message) => (
     message.type === "PING"
       ? { ok: true, route: "#/pagesWsla/pc/list/index", ready: true }
-      : { ok: true, status: "uploaded", evidenceClosed: true }
+      : { ok: true, status: "uploaded", evidenceClosed: true, evidenceEventIds: ["case-proof-current"] }
   ));
 
   const result = await createBrowserCommandPoller({
@@ -407,6 +408,7 @@ test("QUERY_ALL_EXPORT 仅在报表上传且证据闭环时回写成功", async 
   assert.equal(harness.resultBody().status, "succeeded");
   assert.equal(harness.resultBody().resultCode, "SUCCESS");
   assert.equal(harness.resultBody().evidenceClosed, true);
+  assert.deepEqual(harness.resultBody().evidenceEventIds, ["case-proof-current"]);
 });
 
 test("多个非活动法院列表标签时选择最近使用标签并在执行前显式激活", async () => {

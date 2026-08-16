@@ -388,7 +388,10 @@ export function createBrowserCommandPoller({
         claimToken,
         ...resultFor(response, commandType),
         progress: response?.progress ?? null,
-        ...(commandType === "QUERY_ALL_EXPORT" ? { evidenceClosed: response?.evidenceClosed === true } : {}),
+        ...(commandType === "QUERY_ALL_EXPORT" ? {
+          evidenceClosed: response?.evidenceClosed === true,
+          evidenceEventIds: Array.isArray(response?.evidenceEventIds) ? response.evidenceEventIds : [],
+        } : {}),
       },
       signal,
     });

@@ -144,6 +144,7 @@ function incompleteEvidence(result) {
 }
 
 export async function runQueryAllExport({ switchCategory, queryKind, exportReport }) {
+  const evidenceEventIds = [];
   for (const kind of ["li", "qz"]) {
     const switched = await switchCategory(kind);
     const canProbeAfterTimeout = switched?.ok !== true && switched?.error === "QUERY_TAB_TIMEOUT";
@@ -159,7 +160,12 @@ export async function runQueryAllExport({ switchCategory, queryKind, exportRepor
     }
     if (incompleteEvidence(queried)) return { ok: false, error: "EVIDENCE_INCOMPLETE" };
     if (queried.evidenceClosed !== true) return { ok: false, error: "EVIDENCE_NOT_CLOSED" };
+    const stageEventIds = Array.isArray(queried.evidenceEventIds) ? queried.evidenceEventIds : [];
+    if (Number(queried?.stats?.total ?? queried?.records?.length ?? 0) > 0 && stageEventIds.length === 0) {
+      return { ok: false, error: "EVIDENCE_NOT_CLOSED" };
+    }
+    evidenceEventIds.push(...stageEventIds);
   }
   const exported = await exportReport();
-  return { ...exported, evidenceClosed: true, needsHuman: false };
+  return { ...exported, evidenceClosed: true, evidenceEventIds: [...new Set(evidenceEventIds)], needsHuman: false };
 }
