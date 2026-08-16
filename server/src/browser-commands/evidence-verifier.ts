@@ -1,6 +1,5 @@
 import type { CaseRepository, CaseStatus } from '../cases/types.ts';
 import type { ScreenshotRepository, ScreenshotType } from '../screenshots/types.ts';
-import type { WecomNotificationRepository } from '../wecom-notifications/types.ts';
 
 export interface BrowserCommandEvidenceInput {
   platformAccountId: string | null;
@@ -20,7 +19,6 @@ function screenshotType(kind: 'li' | 'qz', status: CaseStatus): ScreenshotType {
 export function createBrowserCommandEvidenceVerifier(
   cases: CaseRepository,
   screenshots: ScreenshotRepository,
-  notifications: WecomNotificationRepository,
 ): BrowserCommandEvidenceVerifier {
   return async ({ platformAccountId, requestedBy, evidenceEventIds }) => {
     if (!platformAccountId || evidenceEventIds.length === 0) return false;
@@ -38,13 +36,6 @@ export function createBrowserCommandEvidenceVerifier(
         screenshotType(caseValue.kind, caseValue.status),
       );
       if (!screenshot) return false;
-      const records = await notifications.listByCaseId(caseValue.id);
-      if (!records.some((record) => (
-        record.platformAccountId === platformAccountId
-        && record.resultStatus === caseValue.status
-        && record.screenshotId === screenshot.id
-        && record.status === 'sent'
-      ))) return false;
     }
     return true;
   };

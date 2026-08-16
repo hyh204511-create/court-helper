@@ -257,11 +257,10 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         options.importBatchRepository,
         {
           now: clock,
-          verifyEvidence: options.caseRepository && options.screenshotRepository && browserCommandNotificationRepository
+          verifyEvidence: options.caseRepository && options.screenshotRepository
             ? createBrowserCommandEvidenceVerifier(
               options.caseRepository,
               options.screenshotRepository,
-              browserCommandNotificationRepository,
             )
             : undefined,
           repeatEvidence: options.caseRepository && options.platformAccountRepository && options.screenshotRepository && options.storageBackend
