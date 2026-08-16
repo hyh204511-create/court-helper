@@ -11,6 +11,7 @@
 > v0.9 变更：`QUERY_ALL_EXPORT` 必须在查询开始前确认本运行期最近一次成功 `LOGIN` 绑定的是同一 `platformAccountId`；未建立绑定返回 `ACCOUNT_BINDING_REQUIRED`，绑定到其他账号返回 `ACCOUNT_MISMATCH`。绑定已确认时，导出不得再把法院页顶栏显示身份与登录用户名做字符串全等比较，因为两者可能分别是姓名/昵称与登录账号。
 > v1.1 变更：服务器不再仅凭扩展回写的 `status=succeeded/resultCode=SUCCESS` 接受一键任务成功；`QUERY_ALL_EXPORT` 成功回写必须额外携带 `evidenceClosed=true`。缺失或为 false（包括未重载的旧扩展）由服务器强制归一为 `manual_required/EVIDENCE_NOT_CLOSED`。
 > v1.2 变更：`evidenceClosed` 不再作为可独立采信的客户端声明。成功回写还必须携带本次查询每条记录最终同步所取得的非敏感 `evidenceEventIds`；服务器按账号、任务创建者、案件 `source_event_id`、终态截图和通知台账逐项核验，任一缺失均强制转人工。
+> v1.3 变更：`QUERY_ALL_EXPORT` 可从新版导入表取得逐案件业务员/助理映射，并仅在生成工作簿时按账号、原告、被告关联写入 U/V；平台发现、采集记录与案件存储不增加这两个字段。
 
 ## 1. 目标与最终职责
 
@@ -97,9 +98,9 @@
 
 ### `QUERY_ALL_EXPORT`
 
-- 控制台必须同时提交 `platformAccountId` 与未过期的 `importBatchId`；该批次的立案、强执业务行必须同时为 0，否则以 `TEMPLATE_NOT_EMPTY` 拒绝。命令沿用 `client_batch_id`、账号活动唯一约束和敏感 payload 禁止规则，不新增工作流表或业务快照。
-- 控制台同时提交 `payload.salesperson`：字符串首尾空白清理后长度为 1–100 个字符。Service Worker 只把它传给本次受信 content 导出调用；content 将其写入所有业务数据行 U 列。不得从模板、平台 DOM 或案件字段回填，且不得写入 IndexedDB、任务结果、进度或报表元数据。
-- Service Worker 只领取和下发一次命令，并只读取一次受 claim 约束的批次执行数据；命令执行租约为 40 分钟。页面刷新、Worker 中断或浏览器关闭不做中途断点续跑，命令按既有规则过期后由用户显式重试并从立案阶段重新执行。
+- 控制台必须同时提交 `platformAccountId` 与未过期的 `importBatchId`。`QUERY_ALL_EXPORT` 允许合并模板含业务行，但只读取其 A/B/C/U/V 形成本次导出的临时业务归属映射；查询继续使用平台发现模式，不用导入行驱动查询或覆盖平台事实。`QUERY_LI` / `QUERY_QZ` 的非空模板仍以 `TEMPLATE_NOT_EMPTY` 拒绝。
+- 控制台同时提交 `payload.salesperson`：字符串首尾空白清理后长度为 1–100 个字符，仅作为旧模板没有逐案件映射时的 U 列兼容回退。导入映射命中时必须优先使用该案件 U/V，且二者都不得从平台 DOM 或案件字段推断，也不得写入 IndexedDB、任务结果、进度或报表元数据。
+- Service Worker 只领取和下发一次命令，并只读取一次受 claim 约束的批次执行数据；响应中的业务归属映射只随本次受信 content 调用进入工作簿生成函数，不写入 IndexedDB、平台采集记录、命令结果或进度。命令执行租约为 40 分钟。页面刷新、Worker 中断或浏览器关闭不做中途断点续跑，命令按既有规则过期后由用户显式重试并从立案阶段重新执行。
 - content 在精确网上立案列表路由中依次执行：精确切换“审判”分类并点击查询 → 立案平台发现/采集 → 精确切换“执行”分类并点击查询 → 强执平台发现/采集 → 按同一页面账号和 `platformAccountId` 生成、下载、上传报表。
 - tab 文字必须修剪后全等，目标元素和查询按钮必须唯一、可见、可点；切换后等待列表稳定最多 10 秒，每个切换/查询动作最多重试 1 次。元素缺失/重复、列表未稳定、会话/账号/路由错误、选择器变化、API/DOM 不一致等硬失败立即停止且不得导出。
 - 单条案件 `UNKNOWN`、证据缺失或截图失败继续保留 `needsHuman` 和精确错误码，不阻断另一类型采集及最终导出；报表继续按既有红色待人工规则呈现，不得猜测补齐。只有经结构化总数与当前分类 DOM 一致确认的 0 条结果可原子清空该账号该类型旧记录并作为成功空阶段；两类最终均为 0 时仍由导出层返回 `REPORT_EMPTY` 且不下载、不上传。

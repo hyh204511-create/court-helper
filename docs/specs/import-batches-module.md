@@ -58,13 +58,15 @@ admin_ui Cookie 会话
 使用 ExcelJS 读取 `Sheet1`，但不向普通响应持久化或回传解析行。
 
 - 最大 2 个工作表；目标 Sheet 仅为 `Sheet1`。缺少目标 sheet 返回 `400 VALIDATION_ERROR(sheet_required)`。
-- 最大 5,000 行、20 列；超过返回 `400 VALIDATION_ERROR(template_limit_exceeded)`。
+- 最大 5,000 行、22 列；超过返回 `400 VALIDATION_ERROR(template_limit_exceeded)`。
 - 兼容两种已确认布局：
   - 旧版双区块 12 列：第一行与 excel-module 中立案 12 列表头逐列完全匹配；强执表头为首个 `A=原告 且 E=强执状态` 的行，缺失返回 `400 VALIDATION_ERROR(enforcement_header_required)`。
-  - 新版合并 20 列：第一行依次为 12 个立案字段（第 12 列为“立案查询时间”）与 8 个强执字段（“强执状态”至“强执查询时间”），不再要求第二个强执表头。
-- 两种布局均逐列完全匹配；否则返回 `400 VALIDATION_ERROR(template_mismatch)`。不接受介于两者之间的自定义扩展列。
+  - 合并模板：A–T 为 20 个既有字段；21 列兼容格式追加 U=`业务员`；新版 22 列格式继续追加 V=`助理`，不再要求第二个强执表头。
+- 各布局均逐列完全匹配；否则返回 `400 VALIDATION_ERROR(template_mismatch)`。不接受自定义扩展列。
 - 旧版立案/强执行计数按各自区块计算；新版合并布局中，A（原告）与 C（账号）均非空的同一行同时计入 `liRows` 与 `qzRows`。缺任一项计入一次 `skippedRows`；全空白行不计跳过。
 - D 列密码可被解析器读取以完成模板检查，但不得进入响应、日志、错误细节或持久化解析 JSON。
+- U/V 只作为 `QUERY_ALL_EXPORT` 本次生成工作簿的临时业务归属映射：首尾空白清理、各自最大 100 个字符，可独立为空。普通上传/列表响应、日志和持久化元数据不回传或复制姓名；只有已领取且 claim、设备、批次均匹配的扩展读取端点可取得最小字段 `{account,plaintiff,defendant,salesperson,assistant}`。
+- 合并模板的非空业务行不改变平台发现模式。`QUERY_ALL_EXPORT` 可使用这些行的 U/V 做导出关联；`QUERY_LI` / `QUERY_QZ` 仍按既有规则拒绝非空模板。模板内状态、时间、案号、图片与驳回内容不得进入法院查询或覆盖平台采集事实。
 - 仅校验模板结构和摘要；案件状态、案号、当事人等业务字段不进入本切片数据库列。
 
 ### 4.3 双写顺序
@@ -99,7 +101,7 @@ admin_ui Cookie 会话
 - 迁移可重复、回滚只移除 `import_batches`、保留既有 001–005。
 - admin/user Cookie 成功上传、extension Bearer 和伪装 Cookie 被拒绝、写操作缺 Origin/CSRF 被拒绝。
 - 成功上传保存私有对象，返回安全摘要且响应中没有测试账号/密码。
-- MIME、magic、multipart 字段、哈希、文件大小、模板/Sheet/强执表头/行列上限均按稳定错误码拒绝；旧版 12 列与新版合并 20 列模板均可上传。
+- MIME、magic、multipart 字段、哈希、文件大小、模板/Sheet/强执表头/行列上限均按稳定错误码拒绝；旧版 12/20/21 列与新版合并 22 列模板均可上传。
 - 下载流的 SHA256、content disposition、`private, no-store`；列表/上传不泄露 objectKey 或业务行。
 - 游标分页、非法 UUID/cursor、对象缺失、对象写入后数据库失败的补偿删除。
 - admin 删除任意批次、user 删除自有批次、user 删除他人批次被拒绝；人工删除保持对象先删、元数据后删，且页面二次确认后同步移除文件行与任务批次选项。
@@ -111,7 +113,7 @@ admin_ui Cookie 会话
 
 ## 8. 范围外
 
-- 不实现 browser command 与批次的绑定，不实现 extension-data。
+- 不新增独立 browser command 业务数据表；批次 execution-data 只沿用既有 claim 绑定，并最小化返回本次导出所需的业务归属映射。
 - 本模块不单独定义或实现后台页面；批次上传由 Phase 11 的 `/admin/browser-control` 唯一业务入口承载，扩展侧不保留第二套上传入口。
 - 不存解析后的完整行、账号、密码、案号、当事人或截图。
-- 不支持 xls、csv、宏工作簿、多个业务 Sheet、超过 20 MiB、超过 5,000 行或超过 20 列的文件。
+- 不支持 xls、csv、宏工作簿、多个业务 Sheet、超过 20 MiB、超过 5,000 行或超过 22 列的文件。
