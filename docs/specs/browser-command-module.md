@@ -9,6 +9,7 @@
 > v0.7 变更：导出阶段按绑定账号 UUID 临时取得账号标签与真实凭据，校验页面账号后生成账号命名报表；凭据仍不进入持久命令或回执。
 > v0.8 变更：`QUERY_ALL_EXPORT` payload 允许且仅使用非敏感 `salesperson` 自由文本，把本次控制台输入传递给报表 U 列；不写入案件库或报表元数据。
 > v0.9 变更：`QUERY_ALL_EXPORT` 必须在查询开始前确认本运行期最近一次成功 `LOGIN` 绑定的是同一 `platformAccountId`；未建立绑定返回 `ACCOUNT_BINDING_REQUIRED`，绑定到其他账号返回 `ACCOUNT_MISMATCH`。绑定已确认时，导出不得再把法院页顶栏显示身份与登录用户名做字符串全等比较，因为两者可能分别是姓名/昵称与登录账号。
+> v1.1 变更：服务器不再仅凭扩展回写的 `status=succeeded/resultCode=SUCCESS` 接受一键任务成功；`QUERY_ALL_EXPORT` 成功回写必须额外携带 `evidenceClosed=true`。缺失或为 false（包括未重载的旧扩展）由服务器强制归一为 `manual_required/EVIDENCE_NOT_CLOSED`。
 
 ## 1. 目标与最终职责
 
@@ -50,6 +51,7 @@
 
 - 同一平台账号同时最多一个 `pending`/`executing` 活动任务；重复创建返回 `409 DUPLICATE_PENDING`。
 - 领取与回写必须幂等；错误 claimant 回写返回 `403 FORBIDDEN`，已完成任务重复回写返回原终态。
+- `QUERY_ALL_EXPORT` 的结果请求仅在 `status=succeeded` 时强制要求布尔证明 `evidenceClosed=true`。服务器必须在写入终态前执行该检查；缺失或 false 不得保存成功，统一改写为 `manual_required`、`result_code=EVIDENCE_NOT_CLOSED`、安全摘要“证据未完成服务器闭环”。该字段不得用于 `LOGIN`、单类型查询或独立 `EXPORT_REPORT` 的成功判定，也不得携带案件、截图或联系人内容。
 - 扩展在命令执行期间写入案件、截图和报表时，必须携带命令 ID、设备 ID 与一次性 claim token；服务端以 `requested_by` 作为资源归属，而不是以执行设备的配对用户作为归属。案件与截图只接受 `QUERY_LI`、`QUERY_QZ`、`QUERY_ALL_EXPORT` 租约，报表只接受 `EXPORT_REPORT`、`QUERY_ALL_EXPORT` 租约；`LOGIN` 等错误命令类型必须返回 `403 FORBIDDEN`。
 - 旧 `login_commands` 在迁移期间保留兼容；本模块不直接删除旧表。
 
