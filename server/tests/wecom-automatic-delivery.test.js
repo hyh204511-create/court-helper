@@ -9,6 +9,7 @@ import { MemoryPlatformAccountRepository } from '../src/platform-accounts/memory
 import { MemoryScreenshotRepository } from '../src/screenshots/memory-repository.ts';
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
 import { MemoryWecomNotificationRepository } from '../src/wecom-notifications/memory-repository.ts';
+import { PgWecomNotificationRepository } from '../src/wecom-notifications/repository.ts';
 import { WecomNotificationService } from '../src/wecom-notifications/service.ts';
 import { buildApp, loadConfig } from '../src/app.ts';
 import { MemoryAuthRepository } from '../src/auth/memory-repository.ts';
@@ -105,6 +106,32 @@ test('migration adds platform contacts and a reversible unique automatic-notific
   assert.equal(await rollbackLastMigration(pool), '011_wecom_automatic_notifications');
   const rolledBack = await pool.query(`SELECT table_name FROM information_schema.tables WHERE table_name = 'wecom_notifications'`);
   assert.equal(rolledBack.rows.length, 0);
+  await pool.end();
+});
+
+test('postgres notification repository explicitly creates a pending ledger record', async () => {
+  const database = newDb({ autoCreateForeignKeyIndices: true });
+  const adapter = database.adapters.createPg();
+  const pool = new adapter.Pool();
+  await runMigrations(pool);
+  const caseId = '00000000-0000-0000-0000-000000000030';
+  const screenshotId = '00000000-0000-0000-0000-000000000040';
+  await pool.query(`INSERT INTO users (id,username,password_hash) VALUES ($1,'synthetic-user','synthetic-hash')`, [USER_ID]);
+  await pool.query(`INSERT INTO platform_accounts (id,label,secret_ciphertext,secret_iv,secret_tag,created_by) VALUES ($1,'synthetic-account',$2,$3,$4,$5)`, [ACCOUNT_ID, Buffer.from('ciphertext'), Buffer.alloc(12, 1), Buffer.alloc(16, 2), USER_ID]);
+  await pool.query(`INSERT INTO cases (id,client_uid,platform_account_id,kind,status) VALUES ($1,'synthetic-client',$2,'li','立案成功')`, [caseId, ACCOUNT_ID]);
+  await pool.query(`INSERT INTO screenshots (id,case_id,type,object_key,content_type,byte_size,sha256,captured_at) VALUES ($1,$2,'success','screenshots/synthetic/pending.png','image/png',1,$3,NOW())`, [screenshotId, caseId, '0'.repeat(64)]);
+
+  const repository = new PgWecomNotificationRepository(pool);
+  const created = await repository.createPending({
+    caseId,
+    platformAccountId: ACCOUNT_ID,
+    resultStatus: '立案成功',
+    screenshotId,
+  });
+
+  assert.equal(created.created, true);
+  assert.equal(created.record.status, 'pending');
+  assert.equal(created.record.attemptCount, 0);
   await pool.end();
 });
 
