@@ -814,9 +814,12 @@ async function loadPlatformAccounts() {
       row.dataset.enabled = String(account.enabled);
       row.dataset.accountLabel = account.label || '';
       row.dataset.contactsConfigured = String(account.contactsConfigured === true);
+      row.dataset.salespersonName = account.salespersonName || '';
+      row.dataset.assistantName = account.assistantName || '';
       row.appendChild(element('td', account.label));
       row.appendChild(element('td', account.enabled ? '启用' : '停用'));
-      row.appendChild(element('td', account.contactsConfigured ? '已配置' : '未配置'));
+      row.appendChild(element('td', account.salespersonName || '未配置'));
+      row.appendChild(element('td', account.assistantName || '未配置'));
       row.appendChild(element('td', dateLabel(account.updatedAt)));
       const actions = element('td', null, 'row-actions');
       actions.append(
@@ -904,8 +907,8 @@ function initPlatformAccounts() {
         $('#platform-enabled').value = row.dataset.enabled === 'true' ? 'true' : 'false';
         $('#platform-account').value = '';
         $('#platform-password').value = '';
-        $('#platform-salesperson-name').value = '';
-        $('#platform-assistant-name').value = '';
+        $('#platform-salesperson-name').value = row.dataset.salespersonName || '';
+        $('#platform-assistant-name').value = row.dataset.assistantName || '';
         $('#platform-form').dataset.editId = id;
         $('#platform-form-title').textContent = '编辑平台账号';
         $('#credential-state').textContent = '已设置';

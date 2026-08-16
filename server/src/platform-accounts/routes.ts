@@ -129,8 +129,12 @@ export function registerPlatformAccountRoutes(
   };
 
   app.get(route(prefix, '/platform-accounts'), { preHandler: protectedPreHandler }, async (request) => {
-    const accounts = await service.list((request.auth as NonNullable<typeof request.auth>).user.role);
-    return { platformAccounts: accounts.map(publicPlatformAccount) };
+    const context = request.auth as NonNullable<typeof request.auth>;
+    const accounts = await service.list(context.user.role);
+    const includeContactNames = context.user.role === 'admin'
+      && context.mechanism === 'cookie'
+      && context.session.clientType === 'admin_ui';
+    return { platformAccounts: accounts.map((account) => publicPlatformAccount(account, includeContactNames)) };
   });
 
   app.post(route(prefix, '/platform-accounts'), { preHandler: adminPreHandler }, async (request, reply) => {
@@ -176,7 +180,13 @@ export function registerPlatformAccountRoutes(
     const createdBy = (request.auth as NonNullable<typeof request.auth>).user.id;
     for (const row of workbook.rows) {
       try {
-        await service.create(createdBy, row.label, { account: row.account, password: row.password }, true);
+        await service.create(
+          createdBy,
+          row.label,
+          { account: row.account, password: row.password },
+          true,
+          { salespersonName: row.salespersonName, assistantName: row.assistantName },
+        );
         imported += 1;
       } catch (error) {
         if (isUniqueViolation(error)) reasons.push({ rowNumber: row.rowNumber, code: 'DUPLICATE_LABEL' });

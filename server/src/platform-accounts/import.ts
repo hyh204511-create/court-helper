@@ -7,11 +7,13 @@ export interface PlatformAccountImportRow {
   label: string;
   account: string;
   password: string;
+  salespersonName: string | null;
+  assistantName: string | null;
 }
 
 export interface PlatformAccountImportReason {
   rowNumber: number;
-  code: 'REQUIRED_FIELD' | 'DUPLICATE_LABEL';
+  code: 'REQUIRED_FIELD' | 'CONTACT_PAIR_REQUIRED' | 'INVALID_CONTACT_NAME' | 'DUPLICATE_LABEL';
 }
 
 export interface PlatformAccountWorkbookResult {
@@ -37,6 +39,15 @@ function cellText(value: unknown): string {
   return String(value).trim();
 }
 
+const SALESPERSON_COLUMN = 21;
+const ASSISTANT_COLUMN = 22;
+const CONTACT_NAME_LIMIT = 64;
+
+function validContactName(value: string): boolean {
+  return Array.from(value).length <= CONTACT_NAME_LIMIT
+    && !/[\u0000-\u001f\u007f-\u009f]/u.test(value);
+}
+
 export async function parsePlatformAccountWorkbook(input: Buffer | Uint8Array): Promise<PlatformAccountWorkbookResult> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(input as unknown as any);
@@ -47,6 +58,13 @@ export async function parsePlatformAccountWorkbook(input: Buffer | Uint8Array): 
   if (headers.join('\u0000') !== ['原告', '被告', '账号', '密码'].join('\u0000')) {
     throw new PlatformAccountImportError('INVALID_HEADER');
   }
+  const hasContactColumns = sheet.columnCount >= SALESPERSON_COLUMN;
+  if (hasContactColumns && (
+    cellText(sheet.getCell(1, SALESPERSON_COLUMN).value) !== '业务员'
+    || cellText(sheet.getCell(1, ASSISTANT_COLUMN).value) !== '助理'
+  )) {
+    throw new PlatformAccountImportError('INVALID_HEADER');
+  }
 
   const rows: PlatformAccountImportRow[] = [];
   const reasons: PlatformAccountImportReason[] = [];
@@ -54,7 +72,9 @@ export async function parsePlatformAccountWorkbook(input: Buffer | Uint8Array): 
   sheet.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return;
     const values = [1, 2, 3, 4].map((column) => cellText(row.getCell(column).value));
-    if (values.every((value) => value === '')) return;
+    const salespersonName = hasContactColumns ? cellText(row.getCell(SALESPERSON_COLUMN).value) : '';
+    const assistantName = hasContactColumns ? cellText(row.getCell(ASSISTANT_COLUMN).value) : '';
+    if (values.every((value) => value === '') && !salespersonName && !assistantName) return;
     nonEmptyRows += 1;
     if (nonEmptyRows > MAX_PLATFORM_ACCOUNT_IMPORT_ROWS) {
       throw new PlatformAccountImportError('ROW_LIMIT_EXCEEDED');
@@ -63,7 +83,22 @@ export async function parsePlatformAccountWorkbook(input: Buffer | Uint8Array): 
       reasons.push({ rowNumber, code: 'REQUIRED_FIELD' });
       return;
     }
-    rows.push({ rowNumber, label: values[0], account: values[2], password: values[3] });
+    if (Boolean(salespersonName) !== Boolean(assistantName)) {
+      reasons.push({ rowNumber, code: 'CONTACT_PAIR_REQUIRED' });
+      return;
+    }
+    if ((salespersonName && !validContactName(salespersonName)) || (assistantName && !validContactName(assistantName))) {
+      reasons.push({ rowNumber, code: 'INVALID_CONTACT_NAME' });
+      return;
+    }
+    rows.push({
+      rowNumber,
+      label: values[0],
+      account: values[2],
+      password: values[3],
+      salespersonName: salespersonName || null,
+      assistantName: assistantName || null,
+    });
   });
   return { rows, reasons };
 }

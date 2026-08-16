@@ -149,17 +149,17 @@ function platformAccountsPage(): string {
       </div>
     </section>
     <section class="panel" aria-labelledby="platform-import-title">
-      <div class="panel-head"><div><h3 id="platform-import-title">Excel 批量导入</h3><p>读取 Sheet1：A 列原告作为标签，C/D 列作为平台账号和密码；重复标签与缺失字段逐行跳过。</p></div></div>
+      <div class="panel-head"><div><h3 id="platform-import-title">Excel 批量导入</h3><p>读取 Sheet1：A 列原告作为标签，C/D 列作为平台账号和密码，22 列报表的 U/V 作为固定业务员和助理；重复标签与缺失字段逐行跳过。</p></div></div>
       <div class="panel-body">
         <form id="platform-import-form" enctype="multipart/form-data"><div class="field"><label for="platform-import-file">账号 Excel（.xlsx）</label><input id="platform-import-file" name="file" type="file" accept=".xlsx" required></div><div class="form-actions"><button class="primary" type="submit">一键导入账号</button></div></form>
         <p class="message" data-platform-import-message aria-live="polite"></p>
       </div>
     </section>
     <section class="panel" aria-labelledby="platform-list-title">
-      <div class="panel-head"><div><h3 id="platform-list-title">账号列表</h3><p>列表和普通响应只返回标签、状态与更新时间。</p></div></div>
+      <div class="panel-head"><div><h3 id="platform-list-title">账号列表</h3><p>管理员列表显示账号绑定的业务员和助理姓名；凭据仍不会回显。</p></div></div>
       <div class="panel-body">
         <form id="platform-list-filters" class="filters"><div class="field"><label for="platform-list-account">账号标签</label><div class="account-picker" id="platform-list-account-picker"><input id="platform-list-account" type="search" autocomplete="off" placeholder="手动输入标签或从列表选择" role="combobox" aria-autocomplete="list" aria-controls="platform-list-account-menu" aria-expanded="false"><button id="platform-list-account-toggle" class="account-picker-toggle" type="button" aria-label="展开平台账号列表" aria-controls="platform-list-account-menu" aria-expanded="false">▼</button><div id="platform-list-account-menu" class="account-picker-menu" role="listbox" hidden></div></div></div><div class="filter-actions"><button class="primary" type="submit">应用筛选</button></div></form>
-        <div class="table-wrap"><table class="data-table"><thead><tr><th>标签</th><th>状态</th><th>企业微信联系人</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="platform-rows"></tbody></table></div>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>标签</th><th>状态</th><th>业务员</th><th>助理</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="platform-rows"></tbody></table></div>
       </div>
     </section>`);
 }

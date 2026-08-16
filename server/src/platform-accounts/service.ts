@@ -15,13 +15,17 @@ export class CredentialUnavailableError extends AppError {
   }
 }
 
-export function publicPlatformAccount(account: PlatformAccountRecord) {
+export function publicPlatformAccount(account: PlatformAccountRecord, includeContactNames = false) {
   return {
     id: account.id,
     label: account.label,
     enabled: account.enabled,
     updatedAt: account.updatedAt.toISOString(),
     contactsConfigured: account.salespersonName !== null && account.assistantName !== null,
+    ...(includeContactNames ? {
+      salespersonName: account.salespersonName,
+      assistantName: account.assistantName,
+    } : {}),
   };
 }
 
