@@ -3,7 +3,7 @@ import * as defaultDb from "../data/db.js";
 export const CASE_SYNC_ENQUEUE = "CASE_SYNC_ENQUEUE";
 
 const COURT_HOST = "zxfw.court.gov.cn";
-const TERMINAL_FAILURES = new Set(["conflict", "needs_human"]);
+const TERMINAL_FAILURES = new Set(["conflict"]);
 const MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024;
 
 function isCourtSender(sender) {

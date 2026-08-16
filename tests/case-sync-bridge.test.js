@@ -182,6 +182,36 @@ test("case sync bridge replays a complete historical receipt against the current
   assert.deepEqual(calls, ["retry-outbox-current-server", "coordinator-retry", "read-result"]);
 });
 
+test("case sync bridge treats a new query as an explicit retry of needs_human", async () => {
+  const calls = [];
+  let stored;
+  const bridge = createCaseSyncBridge({
+    ensureCoordinator: async () => ({
+      async retry() {
+        calls.push("coordinator-retry");
+        stored = { ...stored, status: "sent", receipt: { caseAccepted: true, screenshotStored: false } };
+      },
+    }),
+    outbox: {
+      async enqueue(input) {
+        stored = { id: "outbox-needs-human", status: "needs_human", lastErrorCode: "EVIDENCE_NOT_CLOSED", ...input };
+        return stored;
+      },
+      async retry(id) {
+        calls.push(`retry-${id}`);
+        stored = { ...stored, status: "pending", lastErrorCode: null, receipt: null };
+      },
+      async getOutbox() { calls.push("read-result"); return stored; },
+    },
+  });
+
+  assert.deepEqual(
+    await bridge.handle({ type: CASE_SYNC_ENQUEUE, event: caseEvent() }, courtSender),
+    { ok: true, status: "sent", clientMutationId: "case-event-1", evidenceClosed: true },
+  );
+  assert.deepEqual(calls, ["retry-outbox-needs-human", "coordinator-retry", "read-result"]);
+});
+
 test("case sync bridge refuses a terminal sent receipt without screenshot acknowledgement", async () => {
   let stored;
   const bridge = createCaseSyncBridge({
