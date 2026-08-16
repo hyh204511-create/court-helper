@@ -1265,7 +1265,7 @@ async function loadBrowserCommands() {
     clear(target);
     (result.commands || []).forEach((command) => {
       const accountLabel = browserAccountLabel(command.platformAccountId);
-      const row = element('tr'); row.dataset.id = command.id; row.dataset.type = command.type; row.dataset.account = command.platformAccountId || ''; row.dataset.accountLabel = accountLabel; row.dataset.batch = command.clientBatchId || '';
+      const row = element('tr'); row.dataset.id = command.id; row.dataset.type = command.type; row.dataset.account = command.platformAccountId || ''; row.dataset.accountLabel = accountLabel; row.dataset.batch = command.clientBatchId || ''; row.dataset.payload = JSON.stringify(command.payload || {});
       const accountCell = element('td', accountLabel); accountCell.dataset.commandAccount = 'true';
       const creator = element('td', userNames.get(command.requestedBy) || '未知用户');
       creator.dataset.commandCreator = 'true';
@@ -1522,7 +1522,8 @@ function initBrowserControl() {
         await api('/browser-commands/' + encodeURIComponent(id) + '/cancel', { method: 'POST', body: '{}' });
       } else if (button.dataset.action === 'retry-browser-command') {
         const row = button.closest('tr');
-        await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: row.dataset.type, platformAccountId: row.dataset.account || null, importBatchId: row.dataset.batch || null }) });
+        const payload = JSON.parse(row.dataset.payload || '{}');
+        await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: row.dataset.type, platformAccountId: row.dataset.account || null, importBatchId: row.dataset.batch || null, ...(Object.keys(payload).length ? { payload } : {}) }) });
       } else if (button.dataset.action === 'delete-browser-command') {
         if (!window.confirm('确认物理删除此一键查询并导出任务记录？')) return;
         await api('/browser-commands/' + encodeURIComponent(id), { method: 'DELETE' });
