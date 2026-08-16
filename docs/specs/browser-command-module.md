@@ -10,6 +10,7 @@
 > v0.8 变更：`QUERY_ALL_EXPORT` payload 允许且仅使用非敏感 `salesperson` 自由文本，把本次控制台输入传递给报表 U 列；不写入案件库或报表元数据。
 > v0.9 变更：`QUERY_ALL_EXPORT` 必须在查询开始前确认本运行期最近一次成功 `LOGIN` 绑定的是同一 `platformAccountId`；未建立绑定返回 `ACCOUNT_BINDING_REQUIRED`，绑定到其他账号返回 `ACCOUNT_MISMATCH`。绑定已确认时，导出不得再把法院页顶栏显示身份与登录用户名做字符串全等比较，因为两者可能分别是姓名/昵称与登录账号。
 > v1.1 变更：服务器不再仅凭扩展回写的 `status=succeeded/resultCode=SUCCESS` 接受一键任务成功；`QUERY_ALL_EXPORT` 成功回写必须额外携带 `evidenceClosed=true`。缺失或为 false（包括未重载的旧扩展）由服务器强制归一为 `manual_required/EVIDENCE_NOT_CLOSED`。
+> v1.2 变更：`evidenceClosed` 不再作为可独立采信的客户端声明。成功回写还必须携带本次查询每条记录最终同步所取得的非敏感 `evidenceEventIds`；服务器按账号、任务创建者、案件 `source_event_id`、终态截图和通知台账逐项核验，任一缺失均强制转人工。
 
 ## 1. 目标与最终职责
 
@@ -51,7 +52,7 @@
 
 - 同一平台账号同时最多一个 `pending`/`executing` 活动任务；重复创建返回 `409 DUPLICATE_PENDING`。
 - 领取与回写必须幂等；错误 claimant 回写返回 `403 FORBIDDEN`，已完成任务重复回写返回原终态。
-- `QUERY_ALL_EXPORT` 的结果请求仅在 `status=succeeded` 时强制要求布尔证明 `evidenceClosed=true`。服务器必须在写入终态前执行该检查；缺失或 false 不得保存成功，统一改写为 `manual_required`、`result_code=EVIDENCE_NOT_CLOSED`、安全摘要“证据未完成服务器闭环”。该字段不得用于 `LOGIN`、单类型查询或独立 `EXPORT_REPORT` 的成功判定，也不得携带案件、截图或联系人内容。
+- `QUERY_ALL_EXPORT` 的结果请求仅在 `status=succeeded` 时强制要求布尔声明 `evidenceClosed=true` 和非空、去重、最多 100 项的 `evidenceEventIds`。事件 ID 只允许安全的不透明同步标识，不得包含案件、截图、联系人或凭据内容。服务器必须逐项确认：事件对应案件属于命令绑定账号及创建者、案件不是 `UNKNOWN/needsHuman`；三种终态还存在类型匹配的截图，且存在绑定该截图与结果状态、状态为 `sent` 的企业微信通知台账。缺失声明、空列表、重复项或任一服务器证据不匹配均不得保存成功，统一改写为 `manual_required`、`result_code=EVIDENCE_NOT_CLOSED`、安全摘要“证据未完成服务器闭环”。该字段不得用于 `LOGIN`、单类型查询或独立 `EXPORT_REPORT` 的成功判定。
 - 扩展在命令执行期间写入案件、截图和报表时，必须携带命令 ID、设备 ID 与一次性 claim token；服务端以 `requested_by` 作为资源归属，而不是以执行设备的配对用户作为归属。案件与截图只接受 `QUERY_LI`、`QUERY_QZ`、`QUERY_ALL_EXPORT` 租约，报表只接受 `EXPORT_REPORT`、`QUERY_ALL_EXPORT` 租约；`LOGIN` 等错误命令类型必须返回 `403 FORBIDDEN`。
 - 旧 `login_commands` 在迁移期间保留兼容；本模块不直接删除旧表。
 
@@ -103,6 +104,8 @@
 - tab 文字必须修剪后全等，目标元素和查询按钮必须唯一、可见、可点；切换后等待列表稳定最多 10 秒，每个切换/查询动作最多重试 1 次。元素缺失/重复、列表未稳定、会话/账号/路由错误、选择器变化、API/DOM 不一致等硬失败立即停止且不得导出。
 - 单条案件 `UNKNOWN`、证据缺失或截图失败继续保留 `needsHuman` 和精确错误码，不阻断另一类型采集及最终导出；报表继续按既有红色待人工规则呈现，不得猜测补齐。只有经结构化总数与当前分类 DOM 一致确认的 0 条结果可原子清空该账号该类型旧记录并作为成功空阶段；两类最终均为 0 时仍由导出层返回 `REPORT_EMPTY` 且不下载、不上传。
 - 每个分类阶段必须返回显式 `evidenceClosed=true`：非空阶段表示每条案件同步均取得本次可验证服务器收据，且每条终态记录的对应截图已入库并确认通知台账；空阶段仅在结构化总数与 DOM 同时确认 0 条时成立。任一阶段缺少该标记、存在无完整收据的遗留 `sent` 事件，或案件/截图 ACK 不完整时，`runQueryAllExport` 必须以 `EVIDENCE_NOT_CLOSED` 停止，禁止生成、下载或上传报表。
+- 每个非空分类阶段还必须返回按本地记录 UID 去重后的最终 `evidenceEventIds`；同一案件补证产生多次同步时只保留最后一次事件。两阶段合并后，成功报表至少有一个事件 ID，并随命令结果回写。服务器核验失败时不得以报表中已有图片、历史 outbox 布尔收据或客户端统计替代当前服务器案件、截图和通知台账。
+- 当前查询每次持久化案件时都必须把对应 outbox 事件向当前服务器幂等重放；历史 `sent` 收据只能帮助定位事件，不能跳过本次服务器 ACK。服务端案件、截图和通知唯一约束负责去重，禁止因本地旧收据导致服务器换库或证据丢失后无法自愈。
 - Service Worker 回写 `QUERY_ALL_EXPORT` 结果时必须再次检查 `evidenceClosed=true`。即使 content 返回 `status=uploaded`，缺少闭环标记也只能回写 `manual_required/EVIDENCE_NOT_CLOSED`，不得以“报表已上传服务器”伪报任务成功。旧 `EXPORT_REPORT` 仅导出既有数据，不适用本次查询闭环标记。
 
 ## 4. REST 契约（`/api/v1`）
