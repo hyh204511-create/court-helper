@@ -18,6 +18,7 @@ export function ownerIdFor(access: CaseAccess): string | undefined {
 export interface CaseSyncItem {
   eventId: string;
   clientUid: string;
+  responseClientUid?: string;
   platformAccountId: string;
   kind: CaseKind;
   plaintiff: string | null;

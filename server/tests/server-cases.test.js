@@ -311,6 +311,7 @@ test('sync cases removes PostgreSQL-incompatible NUL characters from database te
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.json().accepted.length, 1);
+    assert.equal(response.json().accepted[0].clientUid, 'client\u0000uid');
     const stored = (await caseRepository.list())[0];
     assert.equal(stored.clientUid, 'client%00uid');
     assert.equal(stored.plaintiff, 'synthetic plaintiff\nline two');
@@ -358,9 +359,10 @@ test('sync cases rejects invalid batches and enforces per-item account availabil
   const disabled = await makeApp({ accountEnabled: false });
   try {
     const token = await loginExtension(disabled.app);
-    const response = await sync(disabled.app, token, [caseItem()]);
+    const response = await sync(disabled.app, token, [caseItem({ clientUid: 'disabled\u0000client' })]);
     assert.equal(response.statusCode, 200);
     assert.equal(response.json().conflicts[0].code, 'ACCOUNT_DISABLED');
+    assert.equal(response.json().conflicts[0].clientUid, 'disabled\u0000client');
   } finally {
     await disabled.app.close();
   }

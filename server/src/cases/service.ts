@@ -126,10 +126,14 @@ function sameContent(item: CaseSyncItem, current: CaseRecord): boolean {
   return JSON.stringify(contentOfItem(item)) === JSON.stringify(contentOfRecord(current));
 }
 
+function responseClientUid(item: CaseSyncItem): string {
+  return item.responseClientUid ?? item.clientUid;
+}
+
 function accepted(item: CaseSyncItem, value: CaseRecord): AcceptedCase {
   return {
     id: value.id,
-    clientUid: item.clientUid,
+    clientUid: responseClientUid(item),
     eventId: item.eventId,
     revision: value.revision,
   };
@@ -167,11 +171,11 @@ export class CaseService {
     for (const item of items) {
       const account = await this.platformAccounts.findById(item.platformAccountId);
       if (!account) {
-        conflicts.push({ clientUid: item.clientUid, eventId: item.eventId, code: 'NOT_FOUND' });
+        conflicts.push({ clientUid: responseClientUid(item), eventId: item.eventId, code: 'NOT_FOUND' });
         continue;
       }
       if (!account.enabled || account.deletedAt !== null) {
-        conflicts.push({ clientUid: item.clientUid, eventId: item.eventId, code: 'ACCOUNT_DISABLED' });
+        conflicts.push({ clientUid: responseClientUid(item), eventId: item.eventId, code: 'ACCOUNT_DISABLED' });
         continue;
       }
 
@@ -182,7 +186,7 @@ export class CaseService {
           acceptedItems.push(accepted(item, created));
         } catch (error) {
           if (ownerId !== undefined && isUniqueViolation(error)) {
-            conflicts.push({ clientUid: item.clientUid, eventId: item.eventId, code: 'CONFLICT' });
+            conflicts.push({ clientUid: responseClientUid(item), eventId: item.eventId, code: 'CONFLICT' });
             continue;
           }
           throw error;
@@ -194,7 +198,7 @@ export class CaseService {
         if (sameContent(item, current)) {
           acceptedItems.push(accepted(item, current));
         } else {
-          conflicts.push({ clientUid: item.clientUid, eventId: item.eventId, code: 'CONFLICT' });
+          conflicts.push({ clientUid: responseClientUid(item), eventId: item.eventId, code: 'CONFLICT' });
         }
         continue;
       }
@@ -202,14 +206,14 @@ export class CaseService {
       const incomingTime = new Date(item.sourceUpdatedAt).getTime();
       const currentTime = current.sourceUpdatedAt?.getTime() ?? Number.NEGATIVE_INFINITY;
       if (incomingTime < currentTime) {
-        conflicts.push({ clientUid: item.clientUid, eventId: item.eventId, code: 'CONFLICT' });
+        conflicts.push({ clientUid: responseClientUid(item), eventId: item.eventId, code: 'CONFLICT' });
         continue;
       }
       if (incomingTime === currentTime) {
         if (sameContent(item, current)) {
           acceptedItems.push(accepted(item, current));
         } else {
-          conflicts.push({ clientUid: item.clientUid, eventId: item.eventId, code: 'CONFLICT' });
+          conflicts.push({ clientUid: responseClientUid(item), eventId: item.eventId, code: 'CONFLICT' });
         }
         continue;
       }

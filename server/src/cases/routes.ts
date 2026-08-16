@@ -160,9 +160,11 @@ function parseSyncItem(value: unknown, index: number): CaseSyncItem {
     throw new ValidationError([{ field: field('needsHuman'), code: 'required_for_unknown' }]);
   }
 
+  const responseClientUid = requiredString(body.clientUid, field('clientUid'));
   return {
     eventId: requiredString(body.eventId, field('eventId')),
-    clientUid: databaseIdentifier(body.clientUid, field('clientUid')),
+    clientUid: databaseIdentifier(responseClientUid, field('clientUid')),
+    responseClientUid,
     platformAccountId: requiredString(body.platformAccountId, field('platformAccountId')),
     kind,
     plaintiff: nullableString(body.plaintiff, field('plaintiff')),
