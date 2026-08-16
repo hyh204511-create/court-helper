@@ -966,18 +966,14 @@ test('QUERY_ALL_EXPORT requires one empty batch and persists it for the single c
   }
 });
 
-test('QUERY_ALL_EXPORT rejects either non-empty table block and receives a 40-minute claim lease', async () => {
+test('QUERY_ALL_EXPORT accepts non-empty metadata rows and receives a 40-minute claim lease', async () => {
   const now = new Date('2026-08-08T10:00:00.000Z');
   const nonEmptyId = '00000000-0000-4000-8000-000000000088';
   const { service } = await makeService(now, [
-    importBatchRecord(IMPORT_BATCH_ID, new Date('2026-08-08T12:00:00.000Z')),
     { ...importBatchRecord(nonEmptyId, new Date('2026-08-08T12:00:00.000Z')), qzRows: 1 },
   ]);
-  await assert.rejects(
-    service.create(commandInput('QUERY_ALL_EXPORT', { importBatchId: nonEmptyId })),
-    (error) => error?.code === 'TEMPLATE_NOT_EMPTY',
-  );
-  const command = await service.create(commandInput('QUERY_ALL_EXPORT'));
+  const command = await service.create(commandInput('QUERY_ALL_EXPORT', { importBatchId: nonEmptyId }));
+  assert.equal(command.clientBatchId, nonEmptyId);
   const claim = await service.claim(command.id, 'device-all');
   assert.equal(claim.command.expiresAt.toISOString(), '2026-08-08T10:40:00.000Z');
 });
