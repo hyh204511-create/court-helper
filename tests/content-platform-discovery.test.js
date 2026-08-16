@@ -632,6 +632,12 @@ test("QUERY_LI 混合列表跳过未批准状态且只建档批准状态行", as
 
     assert.equal(response.ok, true, JSON.stringify(response));
     assert.equal(response.stats.total, 1);
+    assert.equal(response.evidenceEventIds.length, 1);
+    assert.equal(
+      chrome.sentMessages.filter((message) => message.type === "CASE_SYNC_ENQUEUE").length,
+      1,
+      "the initial batch must use the runtime server-sync persistence bridge",
+    );
     const records = await db.query(db.STORE_CASES, { account: "PLATFORM-ACCOUNT", platformAccountId });
     assert.equal(records.length, 1);
     assert.equal(records[0].sourceCaseName, "SYNTHETIC APPROVED TITLE");
@@ -924,9 +930,9 @@ test("强执平台发现通过 layy 与 ajlist 在网上立案页直接补全 F/
     assert.equal(record.caseNumber, "SYNTHETIC-QZ-API-001");
     assert.equal(record.filedTime, "2026-08-07");
     const syncEvents = chrome.sentMessages.filter((message) => message.type === "CASE_SYNC_ENQUEUE");
-    assert.equal(syncEvents.length, 1, "each finalized case must receive a server ACK");
-    assert.equal(syncEvents[0].event.payload.clientUid, record.uid);
-    assert.equal(syncEvents[0].event.payload.caseNumber, "SYNTHETIC-QZ-API-001");
+    assert.equal(syncEvents.length, 1, "a terminal success must sync only after F/G evidence is finalized");
+    assert.equal(syncEvents.at(-1).event.payload.clientUid, record.uid);
+    assert.equal(syncEvents.at(-1).event.payload.caseNumber, "SYNTHETIC-QZ-API-001");
     assert.equal(throttleDelays.length, 0, "single case and single evidence candidate must not add trailing delays");
     assert.equal(dom.window.location.hash, "#/pagesWsla/pc/list/index");
   } finally {

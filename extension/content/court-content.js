@@ -816,7 +816,12 @@ async function captureRow(target) {
 }
 
 /** 批量执行入口（START_BATCH 消息） */
-async function startBatch(kind, { account = null, platformAccountId = null, syncPersistence = null } = {}) {
+async function startBatch(kind, {
+  account = null,
+  platformAccountId = null,
+  syncPersistence = null,
+  deferTerminalSuccess = false,
+} = {}) {
   if (!ensureListReady()) throw new Error("NOT_READY");
   if (kind === "qz") {
     const rows = collectListRows(document);
@@ -855,7 +860,9 @@ async function startBatch(kind, { account = null, platformAccountId = null, sync
       },
     },
     timing: { delay: delayWithPause },
-    syncPersistence,
+    persistence: deferTerminalSuccess && syncPersistence
+      ? { ...syncPersistence, deferTerminalSuccess: true }
+      : syncPersistence,
     onUpdate: async (record) => {
       if (record.needsHuman && firstManualError === null) {
         const code = record.error ?? record.errorCode;
@@ -1048,7 +1055,12 @@ async function startPlatformDiscovery(kind, { platformAccountId = null, allowEmp
   }
   const records = buildPlatformDiscoveryRecords({ account, platformAccountId, kind, rows: discoveryRows });
   await db.replaceAccountRecords(store, account, records, { platformAccountId });
-  const initial = await startBatch(kind, { account, platformAccountId, syncPersistence });
+  const initial = await startBatch(kind, {
+    account,
+    platformAccountId,
+    syncPersistence,
+    deferTerminalSuccess: Boolean(structuredFetch),
+  });
   if (kind === "qz" && !structuredFetch) {
     if (!initial.ok) return initial;
     const pendingEvidence = (await db.query(store, { account, platformAccountId }))

@@ -95,6 +95,10 @@ export async function persistSyncRecord(record, persistence = {}) {
     errorCode: stableErrorCode(local.errorCode ?? local.error),
     sourceUpdatedAt: new Date(local.updatedAt ?? Date.now()).toISOString(),
   };
+  if (persistence.deferTerminalSuccess === true
+    && ["立案成功", "强执成功"].includes(local.status)) {
+    return local;
+  }
   const mutationId = `case-${fingerprint(payload)}`;
   const queued = await outbox.enqueue({
     type: "case.sync",
