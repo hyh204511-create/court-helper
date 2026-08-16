@@ -379,6 +379,7 @@ test("QUERY_ALL_EXPORT 报表已上传但证据未闭环时按待人工回写", 
     resultCode: "EVIDENCE_NOT_CLOSED",
     resultSummary: "证据未完成服务器闭环",
     progress: null,
+    evidenceClosed: false,
   });
 });
 
@@ -405,6 +406,7 @@ test("QUERY_ALL_EXPORT 仅在报表上传且证据闭环时回写成功", async 
   assert.equal(result.ok, true);
   assert.equal(harness.resultBody().status, "succeeded");
   assert.equal(harness.resultBody().resultCode, "SUCCESS");
+  assert.equal(harness.resultBody().evidenceClosed, true);
 });
 
 test("多个非活动法院列表标签时选择最近使用标签并在执行前显式激活", async () => {

@@ -85,6 +85,7 @@ export interface BrowserCommandResultRequest {
   resultCode?: unknown;
   resultSummary?: unknown;
   progress?: unknown;
+  evidenceClosed?: unknown;
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -266,10 +267,15 @@ function resultProgress(value: unknown): BrowserCommandProgress {
 function normalizeResult(input: BrowserCommandResultRequest): BrowserCommandResultInput & {
   deviceId: string;
   claimToken: string;
+  evidenceClosed: boolean;
 } {
   assertNonEmptyString(input.deviceId, 'deviceId', 200);
   assertNonEmptyString(input.claimToken, 'claimToken', 512);
   const status = resultStatus(input.status);
+  if (input.evidenceClosed !== undefined && input.evidenceClosed !== null
+    && typeof input.evidenceClosed !== 'boolean') {
+    throw new ValidationError([{ field: 'evidenceClosed', code: 'boolean_required' }]);
+  }
   return {
     deviceId: input.deviceId,
     claimToken: input.claimToken,
@@ -277,6 +283,7 @@ function normalizeResult(input: BrowserCommandResultRequest): BrowserCommandResu
     resultCode: resultCode(input.resultCode, status),
     resultSummary: resultSummary(input.resultSummary),
     progress: resultProgress(input.progress),
+    evidenceClosed: input.evidenceClosed === true,
   };
 }
 
@@ -460,10 +467,20 @@ export class BrowserCommandService {
       throw new ForbiddenError('Browser command claimed by another session');
     }
 
+    const result = current.type === 'QUERY_ALL_EXPORT'
+      && normalized.status === 'succeeded'
+      && normalized.evidenceClosed !== true
+      ? {
+        ...normalized,
+        status: 'manual_required' as const,
+        resultCode: 'EVIDENCE_NOT_CLOSED',
+        resultSummary: '证据未完成服务器闭环',
+      }
+      : normalized;
     const completed = await this.repository.writeResult(id, normalized.deviceId, claimHash, {
-      status: normalized.status,
-      resultCode: normalized.resultCode,
-      resultSummary: normalized.resultSummary,
+      status: result.status,
+      resultCode: result.resultCode,
+      resultSummary: result.resultSummary,
       progress: normalized.progress,
     }, now);
     if (completed) return completed;

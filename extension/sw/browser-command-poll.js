@@ -383,7 +383,13 @@ export function createBrowserCommandPoller({
   async function writeResult(client, commandId, claimToken, deviceId, response, signal, commandType) {
     return client.request(`/browser-commands/${path(commandId)}/result`, {
       method: "POST",
-      body: { deviceId, claimToken, ...resultFor(response, commandType), progress: response?.progress ?? null },
+      body: {
+        deviceId,
+        claimToken,
+        ...resultFor(response, commandType),
+        progress: response?.progress ?? null,
+        ...(commandType === "QUERY_ALL_EXPORT" ? { evidenceClosed: response?.evidenceClosed === true } : {}),
+      },
       signal,
     });
   }

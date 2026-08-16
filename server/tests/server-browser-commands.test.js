@@ -618,6 +618,39 @@ test('browser command results require the claimant token and are idempotent', as
   assert.equal(retried.resultSummary, 'done');
 });
 
+test('QUERY_ALL_EXPORT success requires an explicit evidence closure proof', async () => {
+  const { service } = await makeService();
+  const legacy = await service.create(commandInput('QUERY_ALL_EXPORT'));
+  const legacyClaim = await service.claim(legacy.id, 'device-legacy');
+  const rejectedSuccess = await service.writeResult(legacy.id, {
+    deviceId: 'device-legacy',
+    claimToken: legacyClaim.claimToken,
+    status: 'succeeded',
+    resultCode: 'SUCCESS',
+    resultSummary: '报表已上传服务器',
+    progress: null,
+  });
+  assert.equal(rejectedSuccess.status, 'manual_required');
+  assert.equal(rejectedSuccess.resultCode, 'EVIDENCE_NOT_CLOSED');
+  assert.equal(rejectedSuccess.resultSummary, '证据未完成服务器闭环');
+
+  const closed = await service.create(commandInput('QUERY_ALL_EXPORT', {
+    platformAccountId: randomUUID(),
+  }));
+  const closedClaim = await service.claim(closed.id, 'device-current');
+  const acceptedSuccess = await service.writeResult(closed.id, {
+    deviceId: 'device-current',
+    claimToken: closedClaim.claimToken,
+    status: 'succeeded',
+    resultCode: 'SUCCESS',
+    resultSummary: '报表已上传服务器',
+    progress: null,
+    evidenceClosed: true,
+  });
+  assert.equal(acceptedSuccess.status, 'succeeded');
+  assert.equal(acceptedSuccess.resultCode, 'SUCCESS');
+});
+
 test('browser command service expires stale pending and executing commands', async () => {
   let now = new Date('2026-08-06T10:00:00.000Z');
   const { service, setNow } = await makeService(now);
@@ -1095,6 +1128,7 @@ test('browser command extension claim and claimant result reject strangers and e
         resultCode: 'NEEDS_HUMAN',
         resultSummary: 'manual review',
         progress: 20,
+        evidenceClosed: false,
       },
     });
     assert.equal(result.statusCode, 200);
