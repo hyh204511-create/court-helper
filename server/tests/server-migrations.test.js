@@ -50,7 +50,7 @@ test('versioned migrations create the required tables and constraints', async ()
       sessions: ['id', 'user_id', 'token_hash', 'client_type', 'extension_device_id', 'expires_at', 'revoked_at', 'created_at'],
       extension_devices: ['id', 'device_id', 'label', 'paired_by', 'enabled', 'revoked_at', 'last_seen_at', 'created_at', 'updated_at'],
       extension_pairings: ['id', 'device_id', 'label', 'exchange_secret_hash', 'verification_code_hash', 'status', 'approved_by', 'approved_at', 'consumed_at', 'expires_at', 'created_at', 'updated_at'],
-      platform_accounts: ['id', 'label', 'secret_ciphertext', 'secret_iv', 'secret_tag', 'secret_version', 'enabled', 'deleted_at', 'created_by', 'created_at', 'updated_at'],
+      platform_accounts: ['id', 'label', 'secret_ciphertext', 'secret_iv', 'secret_tag', 'secret_version', 'enabled', 'deleted_at', 'created_by', 'created_at', 'updated_at', 'salesperson_wecom_userid', 'assistant_wecom_userid'],
       cases: ['id', 'client_uid', 'platform_account_id', 'created_by', 'kind', 'plaintiff', 'defendant', 'status', 'filed_time', 'case_number', 'reject_time', 'reject_reason', 'query_time', 'needs_human', 'error_code', 'source_event_id', 'source_updated_at', 'revision', 'created_at', 'updated_at'],
       screenshots: ['id', 'case_id', 'type', 'object_key', 'content_type', 'byte_size', 'sha256', 'captured_at', 'created_at'],
       login_commands: ['id', 'platform_account_id', 'status', 'result_code', 'result_message', 'claimed_by', 'created_by', 'created_at', 'updated_at', 'expires_at'],
@@ -262,9 +262,10 @@ test('running migrations twice is harmless and explicit rollback restores a clea
       VALUES ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', $1, 'extension', '00000000-0000-0000-0000-000000000002', NOW() + INTERVAL '30 days')
     `, ['a'.repeat(64)]);
     const applied = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
-    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands', '006_import_batches', '007_extension_devices', '008_query_all_export', '009_report_exports_platform_account', '010_platform_account_label_reuse', '011_wecom_automatic_notifications']);
+    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands', '006_import_batches', '007_extension_devices', '008_query_all_export', '009_report_exports_platform_account', '010_platform_account_label_reuse', '011_wecom_automatic_notifications', '012_wecom_userid_mentions']);
 
-    assert.equal(await rollbackLastMigration(pool), '011_wecom_automatic_notifications');
+    assert.equal(await rollbackLastMigration(pool), '012_wecom_userid_mentions');
+    await rollbackLastMigration(pool);
     await rollbackLastMigration(pool);
     await rollbackLastMigration(pool);
     await rollbackLastMigration(pool);

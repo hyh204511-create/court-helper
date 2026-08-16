@@ -6,8 +6,9 @@ import { ADMIN_SCRIPT } from '../server/src/admin/assets.ts';
 
 test('platform accounts bind contacts and case detail exposes automatic status with manual retry', () => {
   const platformHtml = renderAdminPage('platform-accounts', 'admin');
-  assert.match(platformHtml, /id="platform-salesperson-mobile"/);
-  assert.match(platformHtml, /id="platform-assistant-mobile"/);
+  assert.match(platformHtml, /id="platform-salesperson-wecom-userid"/);
+  assert.match(platformHtml, /id="platform-assistant-wecom-userid"/);
+  assert.doesNotMatch(platformHtml, /platform-salesperson-mobile|platform-assistant-mobile/);
   const html = renderAdminPage('case-detail', 'admin', 'synthetic-case-id');
   assert.match(html, /id="wecom-notification-list"/);
   assert.match(html, /终态截图入库后自动推送一次/);

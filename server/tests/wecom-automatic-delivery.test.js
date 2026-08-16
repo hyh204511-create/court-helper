@@ -6,6 +6,8 @@ import { newDb } from 'pg-mem';
 import { runMigrations, rollbackLastMigration } from '../src/db/migrator.ts';
 import { MemoryCaseRepository } from '../src/cases/memory-repository.ts';
 import { MemoryPlatformAccountRepository } from '../src/platform-accounts/memory-repository.ts';
+import { PgPlatformAccountRepository } from '../src/platform-accounts/repository.ts';
+import { publicPlatformAccount } from '../src/platform-accounts/service.ts';
 import { MemoryScreenshotRepository } from '../src/screenshots/memory-repository.ts';
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
 import { MemoryWecomNotificationRepository } from '../src/wecom-notifications/memory-repository.ts';
@@ -33,8 +35,8 @@ function account(overrides = {}) {
     createdBy: USER_ID,
     createdAt: now,
     updatedAt: now,
-    salespersonMobile: '13800138000',
-    assistantMobile: '13900139000',
+    salespersonWecomUserId: 'salesperson.synthetic',
+    assistantWecomUserId: 'assistant.synthetic',
     ...overrides,
   };
 }
@@ -42,8 +44,8 @@ function account(overrides = {}) {
 async function fixture({ status = '已驳回', kind = 'li', contacts = true, transport } = {}) {
   const cases = new MemoryCaseRepository();
   const accounts = new MemoryPlatformAccountRepository([account(contacts ? {} : {
-    salespersonMobile: null,
-    assistantMobile: null,
+    salespersonWecomUserId: null,
+    assistantWecomUserId: null,
   })]);
   const screenshots = new MemoryScreenshotRepository();
   const storage = new MemoryStorageBackend();
@@ -90,22 +92,42 @@ async function fixture({ status = '已驳回', kind = 'li', contacts = true, tra
   return { service, calls, notifications, caseValue, screenshot, cases, accounts };
 }
 
-test('migration adds platform contacts and a reversible unique automatic-notification ledger', async () => {
+test('migration adds reversible UserID contacts without promoting legacy mobile bindings', async () => {
   const database = newDb({ autoCreateForeignKeyIndices: true });
   const adapter = database.adapters.createPg();
   const pool = new adapter.Pool();
   const applied = await runMigrations(pool);
-  assert.equal(applied.at(-1), '011_wecom_automatic_notifications');
+  assert.equal(applied.at(-1), '012_wecom_userid_mentions');
   const columns = await pool.query(`
     SELECT table_name, column_name FROM information_schema.columns
-    WHERE (table_name = 'platform_accounts' AND column_name IN ('salesperson_mobile', 'assistant_mobile'))
+    WHERE (table_name = 'platform_accounts' AND column_name IN (
+      'salesperson_mobile', 'assistant_mobile',
+      'salesperson_wecom_userid', 'assistant_wecom_userid'
+    ))
        OR table_name = 'wecom_notifications'
   `);
   assert.ok(columns.rows.some((row) => row.table_name === 'platform_accounts' && row.column_name === 'salesperson_mobile'));
+  assert.ok(columns.rows.some((row) => row.table_name === 'platform_accounts' && row.column_name === 'salesperson_wecom_userid'));
   assert.ok(columns.rows.some((row) => row.table_name === 'wecom_notifications' && row.column_name === 'result_status'));
-  assert.equal(await rollbackLastMigration(pool), '011_wecom_automatic_notifications');
-  const rolledBack = await pool.query(`SELECT table_name FROM information_schema.tables WHERE table_name = 'wecom_notifications'`);
-  assert.equal(rolledBack.rows.length, 0);
+  await pool.query(`INSERT INTO users (id,username,password_hash) VALUES ($1,'legacy-user','synthetic-hash')`, [USER_ID]);
+  await pool.query(`
+    INSERT INTO platform_accounts (
+      id, label, secret_ciphertext, secret_iv, secret_tag, created_by,
+      salesperson_mobile, assistant_mobile
+    ) VALUES ($1, 'legacy-contact', $2, $3, $4, $5, '13800000001', '13900000002')
+  `, [ACCOUNT_ID, Buffer.from('ciphertext'), Buffer.alloc(12, 1), Buffer.alloc(16, 2), USER_ID]);
+  const legacy = await new PgPlatformAccountRepository(pool).findById(ACCOUNT_ID);
+  assert.equal(legacy.salespersonWecomUserId, null);
+  assert.equal(legacy.assistantWecomUserId, null);
+  assert.equal(publicPlatformAccount(legacy).contactsConfigured, false);
+
+  assert.equal(await rollbackLastMigration(pool), '012_wecom_userid_mentions');
+  const rolledBack = await pool.query(`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_name = 'platform_accounts'
+  `);
+  assert.equal(rolledBack.rows.some((row) => row.column_name === 'salesperson_wecom_userid'), false);
+  assert.equal(rolledBack.rows.some((row) => row.column_name === 'salesperson_mobile'), true);
   await pool.end();
 });
 
@@ -149,7 +171,8 @@ test('all three terminal results automatically send once and mention platform-bo
     await state.service.waitForIdle();
     assert.equal([first.created, duplicate.created].filter(Boolean).length, 1);
     assert.equal(state.calls.length, 2);
-    assert.deepEqual(state.calls[1].payload.text.mentioned_mobile_list, ['13800138000', '13900139000']);
+    assert.deepEqual(state.calls[1].payload.text.mentioned_list, ['salesperson.synthetic', 'assistant.synthetic']);
+    assert.equal(Object.hasOwn(state.calls[1].payload.text, 'mentioned_mobile_list'), false);
     const records = await state.notifications.listByCaseId(state.caseValue.id);
     assert.equal(records.length, 1);
     assert.equal(records[0].status, 'sent');
@@ -243,7 +266,7 @@ test('a precondition failure permits only one manual delivery attempt', async ()
     return { errcode: 93000 };
   } });
   const created = await state.service.enqueueAutomatic(state.caseValue.id, state.screenshot.id);
-  await state.accounts.update(ACCOUNT_ID, { salespersonMobile: '13800138000', assistantMobile: '13900139000' });
+  await state.accounts.update(ACCOUNT_ID, { salespersonWecomUserId: 'salesperson.synthetic', assistantWecomUserId: 'assistant.synthetic' });
   await assert.rejects(
     state.service.retry(created.notification.id, { userId: USER_ID, role: 'user' }),
     (error) => error.code === 'WECOM_DELIVERY_FAILED',

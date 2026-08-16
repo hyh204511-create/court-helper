@@ -54,13 +54,18 @@ function optionalBoolean(body: RequestBody, field: string): boolean | undefined 
   return body[field] as boolean;
 }
 
-function optionalMobile(body: RequestBody, field: string): string | null | undefined {
+function optionalWecomUserId(body: RequestBody, field: string): string | null | undefined {
   if (body[field] === undefined) return undefined;
-  if (body[field] === null || body[field] === '') return null;
-  if (typeof body[field] !== 'string' || !/^1\d{10}$/.test(body[field].trim())) {
-    throw new ValidationError([{ field, code: 'mobile_required' }]);
+  if (body[field] === null) return null;
+  if (typeof body[field] !== 'string') {
+    throw new ValidationError([{ field, code: 'wecom_userid_required' }]);
   }
-  return body[field].trim();
+  const value = body[field].trim();
+  if (value === '') return null;
+  if (Array.from(value).length > 64 || /[\u0000-\u001f\u007f-\u009f]/u.test(value) || value.toLowerCase() === '@all') {
+    throw new ValidationError([{ field, code: 'wecom_userid_required' }]);
+  }
+  return value;
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -135,16 +140,16 @@ export function registerPlatformAccountRoutes(
     const account = requiredString(body, 'account');
     const password = requiredString(body, 'password');
     const enabled = optionalBoolean(body, 'enabled') ?? true;
-    const salespersonMobile = optionalMobile(body, 'salespersonMobile') ?? null;
-    const assistantMobile = optionalMobile(body, 'assistantMobile') ?? null;
-    if ((salespersonMobile === null) !== (assistantMobile === null)) throw new ValidationError([{ field: 'contacts', code: 'pair_required' }]);
+    const salespersonWecomUserId = optionalWecomUserId(body, 'salespersonWecomUserId') ?? null;
+    const assistantWecomUserId = optionalWecomUserId(body, 'assistantWecomUserId') ?? null;
+    if ((salespersonWecomUserId === null) !== (assistantWecomUserId === null)) throw new ValidationError([{ field: 'contacts', code: 'pair_required' }]);
     try {
       const created = await service.create(
         (request.auth as NonNullable<typeof request.auth>).user.id,
         label,
         { account, password },
         enabled,
-        { salespersonMobile, assistantMobile },
+        { salespersonWecomUserId, assistantWecomUserId },
       );
       reply.code(201);
       return publicPlatformAccount(created);
@@ -187,9 +192,9 @@ export function registerPlatformAccountRoutes(
     const body = bodyOf(request);
     const label = optionalString(body, 'label');
     const enabled = optionalBoolean(body, 'enabled');
-    const salespersonMobile = optionalMobile(body, 'salespersonMobile');
-    const assistantMobile = optionalMobile(body, 'assistantMobile');
-    if ((salespersonMobile === null) !== (assistantMobile === null)) throw new ValidationError([{ field: 'contacts', code: 'pair_required' }]);
+    const salespersonWecomUserId = optionalWecomUserId(body, 'salespersonWecomUserId');
+    const assistantWecomUserId = optionalWecomUserId(body, 'assistantWecomUserId');
+    if ((salespersonWecomUserId === null) !== (assistantWecomUserId === null)) throw new ValidationError([{ field: 'contacts', code: 'pair_required' }]);
     const hasAccount = body.account !== undefined;
     const hasPassword = body.password !== undefined;
     if (hasAccount !== hasPassword) {
@@ -197,13 +202,13 @@ export function registerPlatformAccountRoutes(
     }
     const account = hasAccount ? requiredString(body, 'account') : undefined;
     const password = hasPassword ? requiredString(body, 'password') : undefined;
-    if (label === undefined && enabled === undefined && account === undefined && password === undefined && salespersonMobile === undefined && assistantMobile === undefined) {
+    if (label === undefined && enabled === undefined && account === undefined && password === undefined && salespersonWecomUserId === undefined && assistantWecomUserId === undefined) {
       throw new ValidationError([{ field: 'body', code: 'no_changes' }]);
     }
     try {
       const updated = await service.update(
         (request.params as { id: string }).id,
-        { label, enabled, salespersonMobile, assistantMobile },
+        { label, enabled, salespersonWecomUserId, assistantWecomUserId },
         account === undefined ? undefined : { account, password: password as string },
       );
       return publicPlatformAccount(updated);

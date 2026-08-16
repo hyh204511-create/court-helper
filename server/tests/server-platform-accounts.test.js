@@ -560,7 +560,7 @@ test('admins see disabled accounts, users do not, and deletion is soft', async (
   }
 });
 
-test('platform account contacts are paired, stored by account, and never returned as phone values', async () => {
+test('platform account WeCom UserIDs are paired, validated, stored, and never returned', async () => {
   const { app, platformAccountRepository } = await makeApp();
   try {
     const admin = await loginAdmin(app);
@@ -568,7 +568,7 @@ test('platform account contacts are paired, stored by account, and never returne
       method: 'POST',
       url: '/api/v1/platform-accounts',
       headers: adminHeaders(admin),
-      payload: { label: 'contact-invalid', account: 'user-a', password: 'pass-a', salespersonMobile: '13800000001' },
+      payload: { label: 'contact-invalid', account: 'user-a', password: 'pass-a', salespersonWecomUserId: 'salesperson.synthetic' },
     });
     assert.equal(invalid.statusCode, 400);
     assert.equal(invalid.json().error.details[0].code, 'pair_required');
@@ -579,27 +579,38 @@ test('platform account contacts are paired, stored by account, and never returne
       headers: adminHeaders(admin),
       payload: {
         label: 'contact-bound', account: 'user-b', password: 'pass-b',
-        salespersonMobile: '13800000001', assistantMobile: '13900000002',
+        salespersonWecomUserId: 'salesperson.synthetic', assistantWecomUserId: 'assistant.synthetic',
       },
     });
     assert.equal(created.statusCode, 201);
     assert.equal(created.json().contactsConfigured, true);
-    assert.equal(created.body.includes('13800000001'), false);
-    assert.equal(created.body.includes('13900000002'), false);
+    assert.equal(created.body.includes('salesperson.synthetic'), false);
+    assert.equal(created.body.includes('assistant.synthetic'), false);
     const stored = await platformAccountRepository.findById(created.json().id);
-    assert.equal(stored.salespersonMobile, '13800000001');
-    assert.equal(stored.assistantMobile, '13900000002');
+    assert.equal(stored.salespersonWecomUserId, 'salesperson.synthetic');
+    assert.equal(stored.assistantWecomUserId, 'assistant.synthetic');
 
     const listed = await app.inject({ method: 'GET', url: '/api/v1/platform-accounts', headers: { cookie: admin.cookie } });
     assert.equal(listed.json().platformAccounts[0].contactsConfigured, true);
-    assert.equal(listed.body.includes('13800000001'), false);
-    assert.equal(listed.body.includes('13900000002'), false);
+    assert.equal(listed.body.includes('salesperson.synthetic'), false);
+    assert.equal(listed.body.includes('assistant.synthetic'), false);
+
+    for (const invalidUserId of ['@all', `bad\u0000userid`, 'x'.repeat(65)]) {
+      const rejected = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/platform-accounts/${created.json().id}`,
+        headers: adminHeaders(admin),
+        payload: { salespersonWecomUserId: invalidUserId },
+      });
+      assert.equal(rejected.statusCode, 400);
+      assert.equal(rejected.json().error.details[0].code, 'wecom_userid_required');
+    }
 
     const cleared = await app.inject({
       method: 'PATCH',
       url: `/api/v1/platform-accounts/${created.json().id}`,
       headers: adminHeaders(admin),
-      payload: { salespersonMobile: null, assistantMobile: null },
+      payload: { salespersonWecomUserId: null, assistantWecomUserId: null },
     });
     assert.equal(cleared.statusCode, 200);
     assert.equal(cleared.json().contactsConfigured, false);

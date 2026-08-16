@@ -12,7 +12,7 @@ const TERMINAL_STATUSES = new Set<WecomTerminalStatus>(['立案成功', '强执�
 
 export type WecomPayload =
   | { msgtype: 'image'; image: { base64: string; md5: string } }
-  | { msgtype: 'text'; text: { content: string; mentioned_mobile_list: string[] } };
+  | { msgtype: 'text'; text: { content: string; mentioned_list: string[] } };
 export type WecomTransport = (url: string, payload: WecomPayload) => Promise<{ errcode?: unknown }>;
 
 function screenshotType(value: CaseRecord): ScreenshotType {
@@ -96,21 +96,21 @@ export class WecomNotificationService {
     const result = await this.notifications.createPending({ caseId, platformAccountId: caseValue.platformAccountId, resultStatus: caseValue.status as WecomTerminalStatus, screenshotId });
     if (result.created) {
       const account = await this.accounts.findById(caseValue.platformAccountId);
-      if (!account?.salespersonMobile || !account.assistantMobile) await this.notifications.markFailed(result.record.id, 'CONTACTS_NOT_CONFIGURED');
+      if (!account?.salespersonWecomUserId || !account.assistantWecomUserId) await this.notifications.markFailed(result.record.id, 'CONTACTS_NOT_CONFIGURED');
       else if (!this.webhookUrl) await this.notifications.markFailed(result.record.id, 'WECOM_NOT_CONFIGURED');
       else this.schedule(result.record.id);
     }
     return { created: result.created, notification: result.record };
   }
 
-  private async source(record: WecomNotificationRecord): Promise<{ caseValue: CaseRecord; screenshot: ScreenshotRecord; mobiles: string[] }> {
+  private async source(record: WecomNotificationRecord): Promise<{ caseValue: CaseRecord; screenshot: ScreenshotRecord; userIds: string[] }> {
     const [caseValue, screenshot, account] = await Promise.all([this.cases.findById(record.caseId), this.screenshots.findById(record.screenshotId), this.accounts.findById(record.platformAccountId)]);
     if (!caseValue || !screenshot || !account) throw new NotFoundError('WeCom notification source not found');
     if (caseValue.status !== record.resultStatus || screenshot.caseId !== record.caseId || screenshot.type !== screenshotType(caseValue)) {
       throw new ConflictError('WeCom notification source changed', 'WECOM_SOURCE_CHANGED');
     }
-    if (!account.salespersonMobile || !account.assistantMobile) throw new ConflictError('WeCom contacts are not configured', 'CONTACTS_NOT_CONFIGURED');
-    return { caseValue, screenshot, mobiles: [...new Set([account.salespersonMobile, account.assistantMobile])] };
+    if (!account.salespersonWecomUserId || !account.assistantWecomUserId) throw new ConflictError('WeCom contacts are not configured', 'CONTACTS_NOT_CONFIGURED');
+    return { caseValue, screenshot, userIds: [...new Set([account.salespersonWecomUserId, account.assistantWecomUserId])] };
   }
 
   private async deliver(recordId: string): Promise<void> {
@@ -118,13 +118,13 @@ export class WecomNotificationService {
     const claimed = await this.notifications.markSending(recordId);
     if (!claimed) return;
     try {
-      const { caseValue, screenshot, mobiles } = await this.source(claimed);
+      const { caseValue, screenshot, userIds } = await this.source(claimed);
       const stream = await this.storage.get(screenshot.objectKey);
       if (!stream) throw new Error('Missing screenshot');
       const image = await streamBuffer(stream, screenshot.byteSize);
       const payloads: WecomPayload[] = [
         { msgtype: 'image', image: { base64: image.toString('base64'), md5: createHash('md5').update(image).digest('hex') } },
-        { msgtype: 'text', text: { content: resultText(caseValue), mentioned_mobile_list: mobiles } },
+        { msgtype: 'text', text: { content: resultText(caseValue), mentioned_list: userIds } },
       ];
       for (const payload of payloads) {
         const response = await this.transport(this.webhookUrl, payload);
