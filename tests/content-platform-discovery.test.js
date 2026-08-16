@@ -935,6 +935,19 @@ test("强执平台发现通过 layy 与 ajlist 在网上立案页直接补全 F/
     assert.equal(syncEvents.at(-1).event.payload.caseNumber, "SYNTHETIC-QZ-API-001");
     assert.equal(throttleDelays.length, 0, "single case and single evidence candidate must not add trailing delays");
     assert.equal(dom.window.location.hash, "#/pagesWsla/pc/list/index");
+
+    chrome.sentMessages.length = 0;
+    const repeated = await dispatch(chrome.listeners.at(-1), {
+      type: "BROWSER_COMMAND_EXECUTE",
+      commandType: "QUERY_QZ",
+      queryMode: "platform_discovery",
+      platformAccountId,
+    });
+    const replayedSyncEvents = chrome.sentMessages.filter((message) => message.type === "CASE_SYNC_ENQUEUE");
+    assert.equal(repeated.error, "SCREENSHOT_CAPTURE_FAILED", "JSDOM cannot render the repeated screenshot");
+    assert.equal(replayedSyncEvents.length, 1, "preserved complete F/G evidence must still replay through the current outbox");
+    assert.equal(replayedSyncEvents[0].event.payload.caseNumber, "SYNTHETIC-QZ-API-001");
+
   } finally {
     globalThis.setTimeout = nativeSetTimeout;
     Math.random = nativeRandom;

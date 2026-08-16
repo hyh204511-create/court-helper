@@ -932,8 +932,7 @@ async function persistMyCaseEvidence(record, selection, syncPersistence) {
 async function completeMyCaseEvidenceFromApi({ kind = "li", account, platformAccountId, sourceApiRows, fetchImpl, syncPersistence }) {
   const store = kind === "qz" ? db.STORE_ENFORCEMENT : db.STORE_CASES;
   const candidates = (await db.query(store, { account, platformAccountId }))
-    .filter((record) => record.status === expectedSuccessStatus(kind))
-    .filter((record) => !record.caseNumber || !record.filedTime);
+    .filter((record) => record.status === expectedSuccessStatus(kind));
   let completed = 0;
   let needsHuman = 0;
   let firstError = null;
@@ -947,24 +946,30 @@ async function completeMyCaseEvidenceFromApi({ kind = "li", account, platformAcc
   );
   for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
     const record = candidates[candidateIndex];
-    const sourceSelection = selectSourceApiRow(record, sourceApiRows);
-    const sourceApiRow = sourceSelection.ok ? sourceSelection.row : null;
-    let selection = sourceSelection.ok
-      ? { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" }
-      : sourceSelection;
-    if (sourceApiRow && record.plaintiff) {
-      const result = await fetchEvidence({
-        body: {
-          ajlb: kind === "qz" ? EXECUTION_CASE_CATEGORIES : CIVIL_CASE_CATEGORIES,
-          searchtext: record.plaintiff,
-          ajzt: "",
-          sfid: "",
-          sort: "",
-        },
-      }).catch((error) => error?.ok === false ? error : { ok: false, code: "MYCASE_EVIDENCE_UNAVAILABLE" });
-      selection = result.ok
-        ? selectMyCaseApiEvidence({ kind, record, sourceApiRow, rows: result.rows })
-        : { ok: false, error: result.code ?? "MYCASE_EVIDENCE_UNAVAILABLE" };
+    const evidenceAlreadyComplete = Boolean(record.caseNumber && record.filedTime);
+    let selection = evidenceAlreadyComplete
+      ? { ok: true, value: { caseNumber: record.caseNumber, filedTime: record.filedTime } }
+      : null;
+    if (!selection) {
+      const sourceSelection = selectSourceApiRow(record, sourceApiRows);
+      const sourceApiRow = sourceSelection.ok ? sourceSelection.row : null;
+      selection = sourceSelection.ok
+        ? { ok: false, error: "MYCASE_EVIDENCE_UNAVAILABLE" }
+        : sourceSelection;
+      if (sourceApiRow && record.plaintiff) {
+        const result = await fetchEvidence({
+          body: {
+            ajlb: kind === "qz" ? EXECUTION_CASE_CATEGORIES : CIVIL_CASE_CATEGORIES,
+            searchtext: record.plaintiff,
+            ajzt: "",
+            sfid: "",
+            sort: "",
+          },
+        }).catch((error) => error?.ok === false ? error : { ok: false, code: "MYCASE_EVIDENCE_UNAVAILABLE" });
+        selection = result.ok
+          ? selectMyCaseApiEvidence({ kind, record, sourceApiRow, rows: result.rows })
+          : { ok: false, error: result.code ?? "MYCASE_EVIDENCE_UNAVAILABLE" };
+      }
     }
     const updated = await persistMyCaseEvidence(record, selection, syncPersistence);
     if (selection.ok && !updated.needsHuman) completed += 1;
