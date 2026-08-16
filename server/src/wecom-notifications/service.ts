@@ -21,6 +21,7 @@ export type WecomPayload =
   | { msgtype: 'image'; image: { base64: string; md5: string } }
   | { msgtype: 'text'; text: { content: string } };
 export type WecomTransport = (url: string, payload: WecomPayload) => Promise<{ errcode?: unknown }>;
+export type WecomWebhookResolver = (userId: string | null) => Promise<string | undefined>;
 
 function screenshotType(value: CaseRecord): ScreenshotType {
   if (value.status === '已驳回') return 'reject';
@@ -72,6 +73,7 @@ export class WecomNotificationService {
   private readonly notifications: WecomNotificationRepository;
   private readonly storage: StorageBackend;
   private readonly transport: WecomTransport;
+  private readonly resolveWebhook: WecomWebhookResolver;
   constructor(
     webhookUrl: string | undefined,
     cases: CaseRepository,
@@ -80,6 +82,7 @@ export class WecomNotificationService {
     notifications: WecomNotificationRepository,
     storage: StorageBackend,
     transport: WecomTransport = defaultWecomTransport,
+    resolveWebhook?: WecomWebhookResolver,
   ) {
     this.webhookUrl = webhookUrl;
     this.cases = cases;
@@ -88,6 +91,22 @@ export class WecomNotificationService {
     this.notifications = notifications;
     this.storage = storage;
     this.transport = transport;
+    this.resolveWebhook = resolveWebhook ?? (async () => this.webhookUrl);
+  }
+
+  private async prepareDelivery(userId: string | null): Promise<string> {
+    const webhookUrl = await this.resolveWebhook(userId);
+    if (!webhookUrl) throw new AppError('WeCom webhook is not configured', 'WECOM_NOT_CONFIGURED', 409, false);
+    return webhookUrl;
+  }
+
+  private async scheduleOrFail(recordId: string, userId: string | null): Promise<void> {
+    try {
+      await this.prepareDelivery(userId);
+      this.schedule(recordId);
+    } catch (error) {
+      await this.notifications.markFailed(recordId, error instanceof AppError ? error.code : 'WECOM_DELIVERY_FAILED');
+    }
   }
 
   private schedule(recordId: string): void {
@@ -105,8 +124,7 @@ export class WecomNotificationService {
     if (result.created) {
       const account = await this.accounts.findById(caseValue.platformAccountId);
       if (!account?.salespersonName || !account.assistantName) await this.notifications.markFailed(result.record.id, 'CONTACTS_NOT_CONFIGURED');
-      else if (!this.webhookUrl) await this.notifications.markFailed(result.record.id, 'WECOM_NOT_CONFIGURED');
-      else this.schedule(result.record.id);
+      else await this.scheduleOrFail(result.record.id, caseValue.createdBy);
     }
     return { created: result.created, notification: result.record };
   }
@@ -143,8 +161,7 @@ export class WecomNotificationService {
       if (!result.created) continue;
       created += 1;
       if (!account?.salespersonName || !account.assistantName) await this.notifications.markFailed(result.record.id, 'CONTACTS_NOT_CONFIGURED');
-      else if (!this.webhookUrl) await this.notifications.markFailed(result.record.id, 'WECOM_NOT_CONFIGURED');
-      else this.schedule(result.record.id);
+      else await this.scheduleOrFail(result.record.id, caseValue.createdBy);
     }
     return { created };
   }
@@ -160,11 +177,11 @@ export class WecomNotificationService {
   }
 
   private async deliver(recordId: string): Promise<void> {
-    if (!this.webhookUrl) { await this.notifications.markFailed(recordId, 'WECOM_NOT_CONFIGURED'); return; }
     const claimed = await this.notifications.markSending(recordId);
     if (!claimed) return;
     try {
       const { caseValue, screenshot, contactNames } = await this.source(claimed);
+      const webhookUrl = await this.prepareDelivery(caseValue.createdBy);
       const stream = await this.storage.get(screenshot.objectKey);
       if (!stream) throw new Error('Missing screenshot');
       const image = await streamBuffer(stream, screenshot.byteSize);
@@ -173,7 +190,7 @@ export class WecomNotificationService {
         { msgtype: 'text', text: { content: resultText(caseValue, contactNames) } },
       ];
       for (const payload of payloads) {
-        const response = await this.transport(this.webhookUrl, payload);
+        const response = await this.transport(webhookUrl, payload);
         if (response.errcode !== 0) throw new Error('WeCom rejected delivery');
       }
       await this.notifications.markSent(recordId);
@@ -189,7 +206,9 @@ export class WecomNotificationService {
     const caseValue = await this.cases.findById(record.caseId, ownerIdFor(access));
     if (!caseValue) throw new ForbiddenError();
     if (record.status !== 'failed') throw new ConflictError('WeCom notification is not retryable', 'WECOM_NOT_RETRYABLE');
-    const preconditionFailure = record.errorCode === 'CONTACTS_NOT_CONFIGURED' || record.errorCode === 'WECOM_NOT_CONFIGURED';
+    const preconditionFailure = record.errorCode === 'CONTACTS_NOT_CONFIGURED'
+      || record.errorCode === 'WECOM_NOT_CONFIGURED'
+      || record.errorCode === 'WECOM_WEBHOOK_DECRYPT_FAILED';
     const maximumAttempts = preconditionFailure ? 1 : 2;
     if (record.attemptCount >= maximumAttempts) throw new ConflictError('WeCom notification retry limit reached', 'WECOM_RETRY_LIMIT');
     await this.deliver(id);

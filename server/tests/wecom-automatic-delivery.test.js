@@ -41,7 +41,7 @@ function account(overrides = {}) {
   };
 }
 
-async function fixture({ status = '已驳回', kind = 'li', contacts = true, transport } = {}) {
+async function fixture({ status = '已驳回', kind = 'li', contacts = true, transport, webhookResolver, createdBy = USER_ID } = {}) {
   const cases = new MemoryCaseRepository();
   const accounts = new MemoryPlatformAccountRepository([account(contacts ? {} : {
     salespersonName: null,
@@ -51,7 +51,7 @@ async function fixture({ status = '已驳回', kind = 'li', contacts = true, tra
   const storage = new MemoryStorageBackend();
   const notifications = new MemoryWecomNotificationRepository();
   const caseValue = await cases.create({
-    createdBy: USER_ID,
+    createdBy,
     clientUid: `client-${status}`,
     platformAccountId: ACCOUNT_ID,
     kind,
@@ -88,16 +88,39 @@ async function fixture({ status = '已驳回', kind = 'li', contacts = true, tra
     notifications,
     storage,
     transport ?? (async (url, payload) => { calls.push({ url, payload }); return { errcode: 0 }; }),
+    webhookResolver,
   );
   return { service, calls, notifications, caseValue, screenshot, cases, accounts };
 }
+
+test('deliveries for two creators resolve their respective user webhooks', async () => {
+  const secondUserId = '00000000-0000-4000-8000-000000000021';
+  const urls = new Map([
+    [USER_ID, 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=synthetic-owner-a-key'],
+    [secondUserId, 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=synthetic-owner-b-key'],
+  ]);
+  const resolved = [];
+  for (const createdBy of [USER_ID, secondUserId]) {
+    const context = await fixture({
+      createdBy,
+      webhookResolver: async (userId) => { resolved.push(userId); return urls.get(userId); },
+    });
+    await context.service.enqueueAutomatic(context.caseValue.id, context.screenshot.id);
+    await context.service.waitForIdle();
+    assert.equal(context.calls.length, 2);
+    assert.equal(context.calls.every((call) => call.url === urls.get(createdBy)), true);
+  }
+  assert.equal(resolved.includes(USER_ID), true);
+  assert.equal(resolved.includes(secondUserId), true);
+});
 
 test('migration renames existing contact values to display names and rolls back without loss', async () => {
   const database = newDb({ autoCreateForeignKeyIndices: true });
   const adapter = database.adapters.createPg();
   const pool = new adapter.Pool();
   const applied = await runMigrations(pool);
-  assert.equal(applied.at(-1), '014_wecom_repeat_deliveries');
+  assert.equal(applied.at(-1), '015_user_wecom_webhooks');
+  assert.equal(await rollbackLastMigration(pool), '015_user_wecom_webhooks');
   assert.equal(await rollbackLastMigration(pool), '014_wecom_repeat_deliveries');
   assert.equal(await rollbackLastMigration(pool), '013_wecom_display_names');
   await pool.query(`INSERT INTO users (id,username,password_hash) VALUES ($1,'legacy-user','synthetic-hash')`, [USER_ID]);
@@ -107,7 +130,7 @@ test('migration renames existing contact values to display names and rolls back 
       salesperson_wecom_userid, assistant_wecom_userid
     ) VALUES ($1, 'legacy-contact', $2, $3, $4, $5, '合成业务员', '合成助理')
   `, [ACCOUNT_ID, Buffer.from('ciphertext'), Buffer.alloc(12, 1), Buffer.alloc(16, 2), USER_ID]);
-  assert.deepEqual(await runMigrations(pool), ['013_wecom_display_names', '014_wecom_repeat_deliveries']);
+  assert.deepEqual(await runMigrations(pool), ['013_wecom_display_names', '014_wecom_repeat_deliveries', '015_user_wecom_webhooks']);
   const columns = await pool.query(`
     SELECT table_name, column_name FROM information_schema.columns
     WHERE (table_name = 'platform_accounts' AND column_name IN (
@@ -124,6 +147,7 @@ test('migration renames existing contact values to display names and rolls back 
   assert.equal(legacy.assistantName, '合成助理');
   assert.equal(publicPlatformAccount(legacy).contactsConfigured, true);
 
+  assert.equal(await rollbackLastMigration(pool), '015_user_wecom_webhooks');
   assert.equal(await rollbackLastMigration(pool), '014_wecom_repeat_deliveries');
   assert.equal(await rollbackLastMigration(pool), '013_wecom_display_names');
   const rolledBack = await pool.query(`

@@ -121,8 +121,8 @@ function usersPage(): string {
       </div>
     </section>
     <section class="panel" aria-labelledby="user-list-title">
-      <div class="panel-head"><div><h3 id="user-list-title">账号列表</h3><p>支持改名、角色调整、停用、软删除与重置密码；服务端再次校验最后一个管理员保护。</p></div></div>
-      <div class="panel-body table-wrap"><table class="data-table"><thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody id="user-rows"></tbody></table></div>
+      <div class="panel-head"><div><h3 id="user-list-title">账号列表</h3><p>支持重置密码；每个用户可单独配置企业微信群机器人，地址加密保存且不会回显。</p></div></div>
+      <div class="panel-body table-wrap"><table class="data-table"><thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>企业微信群</th><th>操作</th></tr></thead><tbody id="user-rows"></tbody></table></div>
     </section>`);
 }
 

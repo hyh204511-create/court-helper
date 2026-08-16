@@ -51,6 +51,10 @@ import { WecomNotificationService, type WecomTransport } from './wecom-notificat
 import type { WecomNotificationRepository } from './wecom-notifications/types.ts';
 import { createBrowserCommandEvidenceVerifier } from './browser-commands/evidence-verifier.ts';
 import { MemoryWecomNotificationRepository } from './wecom-notifications/memory-repository.ts';
+import type { UserWecomWebhookRepository } from './user-wecom-webhooks/types.ts';
+import { MemoryUserWecomWebhookRepository } from './user-wecom-webhooks/memory-repository.ts';
+import { UserWecomWebhookService } from './user-wecom-webhooks/service.ts';
+import { registerUserWecomWebhookRoutes } from './user-wecom-webhooks/routes.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -90,6 +94,7 @@ export interface BuildAppOptions {
   localLoginHelper?: LocalLoginHelper;
   wecomTransport?: WecomTransport;
   wecomNotificationRepository?: WecomNotificationRepository;
+  userWecomWebhookRepository?: UserWecomWebhookRepository;
 }
 
 function registerCors(app: FastifyInstance, config: ServerConfig): void {
@@ -182,6 +187,12 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   if (options.authRepository) {
     const authService = new AuthService(options.authRepository, config);
+    const userWecomWebhookService = new UserWecomWebhookService(
+      options.userWecomWebhookRepository ?? new MemoryUserWecomWebhookRepository(),
+      options.authRepository,
+      config.credentialMasterKey,
+      config.wecom.webhookUrl,
+    );
     app.addHook('onReady', async () => {
       await authService.seedInitialAdmin();
     });
@@ -190,6 +201,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       prefix: '',
       repository: options.authRepository,
       service: authService,
+      userWecomWebhookService,
       onAdminUiLogin: options.localLoginHelper ? () => options.localLoginHelper!.ensureRunning() : undefined,
     });
     registerAdminRoutes(app, { authService, localWindowsDelivery: config.localWindowsDelivery });
@@ -198,8 +210,11 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       prefix: '/api/v1',
       repository: options.authRepository,
       service: authService,
+      userWecomWebhookService,
       onAdminUiLogin: options.localLoginHelper ? () => options.localLoginHelper!.ensureRunning() : undefined,
     });
+    registerUserWecomWebhookRoutes(app, { prefix: '', config, authService, service: userWecomWebhookService });
+    registerUserWecomWebhookRoutes(app, { prefix: '/api/v1', config, authService, service: userWecomWebhookService });
     if (options.platformAccountRepository) {
       const platformAccountService = new PlatformAccountService(options.platformAccountRepository, config);
       registerPlatformAccountRoutes(app, {
@@ -297,6 +312,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         notificationRepository,
         options.storageBackend,
         options.wecomTransport,
+        (userId) => userWecomWebhookService.resolve(userId),
       );
       wecomNotificationService = notificationService;
       const screenshotService = new ScreenshotService(

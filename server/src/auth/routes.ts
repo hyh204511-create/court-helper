@@ -18,6 +18,7 @@ import {
   type AuthContext,
 } from './service.ts';
 import type { AuthRepository, ClientType, Role, UserPatch } from './types.ts';
+import type { UserWecomWebhookService } from '../user-wecom-webhooks/service.ts';
 
 export const SESSION_COOKIE_NAME = 'court_helper_session';
 
@@ -37,6 +38,7 @@ interface RegisterAuthOptions {
   config: ServerConfig;
   prefix: string;
   onAdminUiLogin?: () => Promise<void>;
+  userWecomWebhookService?: UserWecomWebhookService;
 }
 
 function bodyOf(request: FastifyRequest): RequestBody {
@@ -314,12 +316,16 @@ export function registerAuthRoutes(app: FastifyInstance, options: RegisterAuthOp
 
   app.get(route(prefix, '/users'), { preHandler: adminPreHandler }, async () => {
     const users = await service.listUsers();
-    return { users: users.map(adminUser) };
+    const configured = options.userWecomWebhookService
+      ? await options.userWecomWebhookService.statuses(users.map((user) => user.id))
+      : new Map<string, boolean>();
+    return { users: users.map((user) => ({ ...adminUser(user), wecomWebhookConfigured: configured.get(user.id) ?? false })) };
   });
 
   app.get(route(prefix, '/users/:id'), { preHandler: adminPreHandler }, async (request) => {
     const user = await service.getUser((request.params as { id: string }).id);
-    return adminUser(user);
+    const status = options.userWecomWebhookService ? await options.userWecomWebhookService.status(user.id) : null;
+    return { ...adminUser(user), wecomWebhookConfigured: status?.wecomWebhookConfigured ?? false };
   });
 
   app.post(route(prefix, '/users'), { preHandler: adminPreHandler }, async (request, reply) => {

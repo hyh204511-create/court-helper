@@ -15,6 +15,7 @@ import { runMigrations } from './db/migrator.ts';
 import { createLocalLoginHelper } from './local-login-helper.ts';
 import { startBoundBackend } from './backend-startup.ts';
 import { PgWecomNotificationRepository } from './wecom-notifications/repository.ts';
+import { PgUserWecomWebhookRepository } from './user-wecom-webhooks/repository.ts';
 
 const config = loadConfig();
 const pool = new Pool({ connectionString: config.databaseUrl });
@@ -40,6 +41,7 @@ const app = buildApp({
   storageBackend,
   localLoginHelper,
   wecomNotificationRepository: new PgWecomNotificationRepository(pool),
+  userWecomWebhookRepository: new PgUserWecomWebhookRepository(pool),
   dependencies: {
     database: createPostgresHealthDependency(pool),
     objectStorage: storageBackend,

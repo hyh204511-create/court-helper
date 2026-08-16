@@ -699,14 +699,18 @@ async function loadUsers() {
       role.appendChild(select);
       row.appendChild(role);
       row.appendChild(element('td', user.enabled && !user.deletedAt ? '启用' : '停用'));
+      row.appendChild(element('td', user.wecomWebhookConfigured ? '已配置' : '未配置'));
       const actions = element('td', null, 'row-actions');
       const locked = user.role === 'admin' && user.enabled && !user.deletedAt && enabledAdmins <= 1;
       const save = actionButton('保存', 'save-user', user.id);
       const toggle = actionButton(user.enabled ? '停用' : '启用', 'toggle-user', user.id);
       const reset = actionButton('重置密码', 'reset-user', user.id);
+      const configureWebhook = actionButton('配置群机器人', 'configure-user-wecom', user.id);
+      const clearWebhook = actionButton('清除群机器人', 'clear-user-wecom', user.id);
+      clearWebhook.disabled = !user.wecomWebhookConfigured;
       const remove = actionButton('删除', 'delete-user', user.id, 'small-button danger');
       [save, select, toggle, remove].forEach((button) => { button.disabled = locked; });
-      actions.append(save, toggle, reset, remove);
+      actions.append(save, toggle, reset, configureWebhook, clearWebhook, remove);
       row.appendChild(actions);
       target.appendChild(row);
     });
@@ -762,11 +766,21 @@ function initUsers() {
         const password = window.prompt('请输入新密码');
         if (!password) return;
         await api('/users/' + encodeURIComponent(id) + '/reset-password', { method: 'POST', body: JSON.stringify({ password }) });
+      } else if (button.dataset.action === 'configure-user-wecom') {
+        const webhookUrl = window.prompt('请输入该用户的企业微信群机器人 Webhook 地址（现有地址不会回显）');
+        if (!webhookUrl) return;
+        button.disabled = true;
+        await api('/users/' + encodeURIComponent(id) + '/wecom-webhook', { method: 'PUT', body: JSON.stringify({ webhookUrl: webhookUrl.trim() }) });
+      } else if (button.dataset.action === 'clear-user-wecom') {
+        if (!window.confirm('确认清除该用户的群机器人配置？清除后将使用系统默认配置（如有）。')) return;
+        button.disabled = true;
+        await api('/users/' + encodeURIComponent(id) + '/wecom-webhook', { method: 'DELETE' });
       }
       setMessage(message, '操作已保存', 'success');
       await loadUsers();
     } catch (error) {
       setMessage(message, errorMessage(error));
+      button.disabled = false;
     }
   });
   void loadUsers();
