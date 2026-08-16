@@ -427,6 +427,7 @@ test('003 login command migration has reversible table, constraints, and indexes
       '010_platform_account_label_reuse',
       '011_wecom_automatic_notifications',
       '012_wecom_userid_mentions',
+      '013_wecom_display_names',
     ]);
 
     const columns = await pool.query(`
@@ -498,6 +499,7 @@ test('003 login command migration has reversible table, constraints, and indexes
       )
     `));
 
+    assert.equal(await rollbackLastMigration(pool), '013_wecom_display_names');
     assert.equal(await rollbackLastMigration(pool), '012_wecom_userid_mentions');
     assert.equal(await rollbackLastMigration(pool), '011_wecom_automatic_notifications');
     assert.equal(await rollbackLastMigration(pool), '010_platform_account_label_reuse');

@@ -23,8 +23,8 @@ function copyAccount(account: PlatformAccountRecord): PlatformAccountRecord {
     deletedAt: account.deletedAt ? new Date(account.deletedAt) : null,
     createdAt: new Date(account.createdAt),
     updatedAt: new Date(account.updatedAt),
-    salespersonWecomUserId: account.salespersonWecomUserId ?? null,
-    assistantWecomUserId: account.assistantWecomUserId ?? null,
+    salespersonName: account.salespersonName ?? null,
+    assistantName: account.assistantName ?? null,
   };
 }
 
@@ -65,8 +65,8 @@ export class MemoryPlatformAccountRepository implements PlatformAccountRepositor
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
-      salespersonWecomUserId: input.salespersonWecomUserId ?? null,
-      assistantWecomUserId: input.assistantWecomUserId ?? null,
+      salespersonName: input.salespersonName ?? null,
+      assistantName: input.assistantName ?? null,
     };
     this.accounts.set(account.id, account);
     return copyAccount(account);
@@ -80,8 +80,8 @@ export class MemoryPlatformAccountRepository implements PlatformAccountRepositor
     }
     if (patch.label !== undefined) account.label = patch.label;
     if (patch.enabled !== undefined) account.enabled = patch.enabled;
-    if (patch.salespersonWecomUserId !== undefined) account.salespersonWecomUserId = patch.salespersonWecomUserId;
-    if (patch.assistantWecomUserId !== undefined) account.assistantWecomUserId = patch.assistantWecomUserId;
+    if (patch.salespersonName !== undefined) account.salespersonName = patch.salespersonName;
+    if (patch.assistantName !== undefined) account.assistantName = patch.assistantName;
     if (patch.secretCiphertext !== undefined) account.secretCiphertext = Buffer.from(patch.secretCiphertext);
     if (patch.secretIv !== undefined) account.secretIv = Buffer.from(patch.secretIv);
     if (patch.secretTag !== undefined) account.secretTag = Buffer.from(patch.secretTag);

@@ -36,8 +36,8 @@ function accountFromRow(row: Record<string, unknown>): PlatformAccountRecord {
     createdBy: String(row.created_by),
     createdAt: dateValue(row.created_at),
     updatedAt: dateValue(row.updated_at),
-    salespersonWecomUserId: row.salesperson_wecom_userid ? String(row.salesperson_wecom_userid) : null,
-    assistantWecomUserId: row.assistant_wecom_userid ? String(row.assistant_wecom_userid) : null,
+    salespersonName: row.salesperson_name ? String(row.salesperson_name) : null,
+    assistantName: row.assistant_name ? String(row.assistant_name) : null,
   };
 }
 
@@ -73,7 +73,7 @@ export class PgPlatformAccountRepository implements PlatformAccountRepository {
   async create(input: NewPlatformAccount): Promise<PlatformAccountRecord> {
     const result = await this.database.query(`
       INSERT INTO platform_accounts
-        (id, label, secret_ciphertext, secret_iv, secret_tag, secret_version, enabled, created_by, salesperson_wecom_userid, assistant_wecom_userid)
+        (id, label, secret_ciphertext, secret_iv, secret_tag, secret_version, enabled, created_by, salesperson_name, assistant_name)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
     `, [
@@ -85,8 +85,8 @@ export class PgPlatformAccountRepository implements PlatformAccountRepository {
       input.secretVersion,
       input.enabled ?? true,
       input.createdBy,
-      input.salespersonWecomUserId ?? null,
-      input.assistantWecomUserId ?? null,
+      input.salespersonName ?? null,
+      input.assistantName ?? null,
     ]);
     return accountFromRow(result.rows[0]);
   }
@@ -100,8 +100,8 @@ export class PgPlatformAccountRepository implements PlatformAccountRepository {
     };
     if (patch.label !== undefined) add('label', patch.label);
     if (patch.enabled !== undefined) add('enabled', patch.enabled);
-    if (patch.salespersonWecomUserId !== undefined) add('salesperson_wecom_userid', patch.salespersonWecomUserId);
-    if (patch.assistantWecomUserId !== undefined) add('assistant_wecom_userid', patch.assistantWecomUserId);
+    if (patch.salespersonName !== undefined) add('salesperson_name', patch.salespersonName);
+    if (patch.assistantName !== undefined) add('assistant_name', patch.assistantName);
     if (patch.secretCiphertext !== undefined) add('secret_ciphertext', patch.secretCiphertext);
     if (patch.secretIv !== undefined) add('secret_iv', patch.secretIv);
     if (patch.secretTag !== undefined) add('secret_tag', patch.secretTag);

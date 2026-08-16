@@ -780,8 +780,8 @@ function resetPlatformForm() {
   $('#platform-form-title').textContent = '新增平台账号';
   $('#credential-state').textContent = '未设置';
   $('#platform-enabled').value = 'true';
-  $('#platform-salesperson-wecom-userid').value = '';
-  $('#platform-assistant-wecom-userid').value = '';
+  $('#platform-salesperson-name').value = '';
+  $('#platform-assistant-name').value = '';
 }
 
 async function loadPlatformAccounts() {
@@ -854,18 +854,18 @@ function initPlatformAccounts() {
     const label = $('#platform-label').value.trim();
     const account = $('#platform-account').value;
     const password = $('#platform-password').value;
-    const salespersonWecomUserId = $('#platform-salesperson-wecom-userid').value.trim();
-    const assistantWecomUserId = $('#platform-assistant-wecom-userid').value.trim();
-    if (!label || (!form.dataset.editId && (!account || !password)) || (account && !password) || (!account && password) || Boolean(salespersonWecomUserId) !== Boolean(assistantWecomUserId)) {
+    const salespersonName = $('#platform-salesperson-name').value.trim();
+    const assistantName = $('#platform-assistant-name').value.trim();
+    if (!label || (!form.dataset.editId && (!account || !password)) || (account && !password) || (!account && password) || Boolean(salespersonName) !== Boolean(assistantName)) {
       setMessage($('[data-platform-message]'), '请完整填写标签和凭据');
       return;
     }
     setFormBusy(form, true);
     try {
       const payload = { label, enabled: $('#platform-enabled').value === 'true' };
-      if (!form.dataset.editId || salespersonWecomUserId || assistantWecomUserId) {
-        payload.salespersonWecomUserId = salespersonWecomUserId || null;
-        payload.assistantWecomUserId = assistantWecomUserId || null;
+      if (!form.dataset.editId || salespersonName || assistantName) {
+        payload.salespersonName = salespersonName || null;
+        payload.assistantName = assistantName || null;
       }
       if (account && password) { payload.account = account; payload.password = password; }
       const path = form.dataset.editId ? '/platform-accounts/' + encodeURIComponent(form.dataset.editId) : '/platform-accounts';
@@ -890,8 +890,8 @@ function initPlatformAccounts() {
         $('#platform-enabled').value = row.dataset.enabled === 'true' ? 'true' : 'false';
         $('#platform-account').value = '';
         $('#platform-password').value = '';
-        $('#platform-salesperson-wecom-userid').value = '';
-        $('#platform-assistant-wecom-userid').value = '';
+        $('#platform-salesperson-name').value = '';
+        $('#platform-assistant-name').value = '';
         $('#platform-form').dataset.editId = id;
         $('#platform-form-title').textContent = '编辑平台账号';
         $('#credential-state').textContent = '已设置';
@@ -901,8 +901,8 @@ function initPlatformAccounts() {
       if (button.dataset.action === 'toggle-account') {
         await api('/platform-accounts/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify({ enabled: row.dataset.enabled !== 'true' }) });
       } else if (button.dataset.action === 'clear-account-contacts') {
-        if (!window.confirm('确认清除该平台账号绑定的业务员和助理企业微信 UserID？')) return;
-        await api('/platform-accounts/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify({ salespersonWecomUserId: null, assistantWecomUserId: null }) });
+        if (!window.confirm('确认清除该平台账号绑定的业务员和助理姓名？')) return;
+        await api('/platform-accounts/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify({ salespersonName: null, assistantName: null }) });
       } else if (button.dataset.action === 'delete-account') {
         if (!window.confirm('确认软删除该平台账号？')) return;
         await api('/platform-accounts/' + encodeURIComponent(id), { method: 'DELETE' });

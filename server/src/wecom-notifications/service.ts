@@ -12,7 +12,7 @@ const TERMINAL_STATUSES = new Set<WecomTerminalStatus>(['立案成功', '强执�
 
 export type WecomPayload =
   | { msgtype: 'image'; image: { base64: string; md5: string } }
-  | { msgtype: 'text'; text: { content: string; mentioned_list: string[] } };
+  | { msgtype: 'text'; text: { content: string } };
 export type WecomTransport = (url: string, payload: WecomPayload) => Promise<{ errcode?: unknown }>;
 
 function screenshotType(value: CaseRecord): ScreenshotType {
@@ -21,8 +21,9 @@ function screenshotType(value: CaseRecord): ScreenshotType {
   return 'success';
 }
 
-function resultText(value: CaseRecord): string {
+function resultText(value: CaseRecord, contactNames: string[]): string {
   const lines = [
+    contactNames.map((name) => `@${name}`).join(' '),
     `案件类型：${value.kind === 'qz' ? '强制执行' : '立案'}`,
     `原告：${value.plaintiff || '—'}`,
     `被告：${value.defendant || '—'}`,
@@ -96,21 +97,21 @@ export class WecomNotificationService {
     const result = await this.notifications.createPending({ caseId, platformAccountId: caseValue.platformAccountId, resultStatus: caseValue.status as WecomTerminalStatus, screenshotId });
     if (result.created) {
       const account = await this.accounts.findById(caseValue.platformAccountId);
-      if (!account?.salespersonWecomUserId || !account.assistantWecomUserId) await this.notifications.markFailed(result.record.id, 'CONTACTS_NOT_CONFIGURED');
+      if (!account?.salespersonName || !account.assistantName) await this.notifications.markFailed(result.record.id, 'CONTACTS_NOT_CONFIGURED');
       else if (!this.webhookUrl) await this.notifications.markFailed(result.record.id, 'WECOM_NOT_CONFIGURED');
       else this.schedule(result.record.id);
     }
     return { created: result.created, notification: result.record };
   }
 
-  private async source(record: WecomNotificationRecord): Promise<{ caseValue: CaseRecord; screenshot: ScreenshotRecord; userIds: string[] }> {
+  private async source(record: WecomNotificationRecord): Promise<{ caseValue: CaseRecord; screenshot: ScreenshotRecord; contactNames: string[] }> {
     const [caseValue, screenshot, account] = await Promise.all([this.cases.findById(record.caseId), this.screenshots.findById(record.screenshotId), this.accounts.findById(record.platformAccountId)]);
     if (!caseValue || !screenshot || !account) throw new NotFoundError('WeCom notification source not found');
     if (caseValue.status !== record.resultStatus || screenshot.caseId !== record.caseId || screenshot.type !== screenshotType(caseValue)) {
       throw new ConflictError('WeCom notification source changed', 'WECOM_SOURCE_CHANGED');
     }
-    if (!account.salespersonWecomUserId || !account.assistantWecomUserId) throw new ConflictError('WeCom contacts are not configured', 'CONTACTS_NOT_CONFIGURED');
-    return { caseValue, screenshot, userIds: [...new Set([account.salespersonWecomUserId, account.assistantWecomUserId])] };
+    if (!account.salespersonName || !account.assistantName) throw new ConflictError('WeCom contacts are not configured', 'CONTACTS_NOT_CONFIGURED');
+    return { caseValue, screenshot, contactNames: [...new Set([account.salespersonName, account.assistantName])] };
   }
 
   private async deliver(recordId: string): Promise<void> {
@@ -118,13 +119,13 @@ export class WecomNotificationService {
     const claimed = await this.notifications.markSending(recordId);
     if (!claimed) return;
     try {
-      const { caseValue, screenshot, userIds } = await this.source(claimed);
+      const { caseValue, screenshot, contactNames } = await this.source(claimed);
       const stream = await this.storage.get(screenshot.objectKey);
       if (!stream) throw new Error('Missing screenshot');
       const image = await streamBuffer(stream, screenshot.byteSize);
       const payloads: WecomPayload[] = [
         { msgtype: 'image', image: { base64: image.toString('base64'), md5: createHash('md5').update(image).digest('hex') } },
-        { msgtype: 'text', text: { content: resultText(caseValue), mentioned_list: userIds } },
+        { msgtype: 'text', text: { content: resultText(caseValue, contactNames) } },
       ];
       for (const payload of payloads) {
         const response = await this.transport(this.webhookUrl, payload);

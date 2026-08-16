@@ -54,16 +54,16 @@ function optionalBoolean(body: RequestBody, field: string): boolean | undefined 
   return body[field] as boolean;
 }
 
-function optionalWecomUserId(body: RequestBody, field: string): string | null | undefined {
+function optionalContactName(body: RequestBody, field: string): string | null | undefined {
   if (body[field] === undefined) return undefined;
   if (body[field] === null) return null;
   if (typeof body[field] !== 'string') {
-    throw new ValidationError([{ field, code: 'wecom_userid_required' }]);
+    throw new ValidationError([{ field, code: 'contact_name_required' }]);
   }
   const value = body[field].trim();
   if (value === '') return null;
-  if (Array.from(value).length > 64 || /[\u0000-\u001f\u007f-\u009f]/u.test(value) || value.toLowerCase() === '@all') {
-    throw new ValidationError([{ field, code: 'wecom_userid_required' }]);
+  if (Array.from(value).length > 64 || /[\u0000-\u001f\u007f-\u009f]/u.test(value)) {
+    throw new ValidationError([{ field, code: 'contact_name_required' }]);
   }
   return value;
 }
@@ -140,16 +140,16 @@ export function registerPlatformAccountRoutes(
     const account = requiredString(body, 'account');
     const password = requiredString(body, 'password');
     const enabled = optionalBoolean(body, 'enabled') ?? true;
-    const salespersonWecomUserId = optionalWecomUserId(body, 'salespersonWecomUserId') ?? null;
-    const assistantWecomUserId = optionalWecomUserId(body, 'assistantWecomUserId') ?? null;
-    if ((salespersonWecomUserId === null) !== (assistantWecomUserId === null)) throw new ValidationError([{ field: 'contacts', code: 'pair_required' }]);
+    const salespersonName = optionalContactName(body, 'salespersonName') ?? null;
+    const assistantName = optionalContactName(body, 'assistantName') ?? null;
+    if ((salespersonName === null) !== (assistantName === null)) throw new ValidationError([{ field: 'contacts', code: 'pair_required' }]);
     try {
       const created = await service.create(
         (request.auth as NonNullable<typeof request.auth>).user.id,
         label,
         { account, password },
         enabled,
-        { salespersonWecomUserId, assistantWecomUserId },
+        { salespersonName, assistantName },
       );
       reply.code(201);
       return publicPlatformAccount(created);
@@ -192,9 +192,9 @@ export function registerPlatformAccountRoutes(
     const body = bodyOf(request);
     const label = optionalString(body, 'label');
     const enabled = optionalBoolean(body, 'enabled');
-    const salespersonWecomUserId = optionalWecomUserId(body, 'salespersonWecomUserId');
-    const assistantWecomUserId = optionalWecomUserId(body, 'assistantWecomUserId');
-    if ((salespersonWecomUserId === null) !== (assistantWecomUserId === null)) throw new ValidationError([{ field: 'contacts', code: 'pair_required' }]);
+    const salespersonName = optionalContactName(body, 'salespersonName');
+    const assistantName = optionalContactName(body, 'assistantName');
+    if ((salespersonName === null) !== (assistantName === null)) throw new ValidationError([{ field: 'contacts', code: 'pair_required' }]);
     const hasAccount = body.account !== undefined;
     const hasPassword = body.password !== undefined;
     if (hasAccount !== hasPassword) {
@@ -202,13 +202,13 @@ export function registerPlatformAccountRoutes(
     }
     const account = hasAccount ? requiredString(body, 'account') : undefined;
     const password = hasPassword ? requiredString(body, 'password') : undefined;
-    if (label === undefined && enabled === undefined && account === undefined && password === undefined && salespersonWecomUserId === undefined && assistantWecomUserId === undefined) {
+    if (label === undefined && enabled === undefined && account === undefined && password === undefined && salespersonName === undefined && assistantName === undefined) {
       throw new ValidationError([{ field: 'body', code: 'no_changes' }]);
     }
     try {
       const updated = await service.update(
         (request.params as { id: string }).id,
-        { label, enabled, salespersonWecomUserId, assistantWecomUserId },
+        { label, enabled, salespersonName, assistantName },
         account === undefined ? undefined : { account, password: password as string },
       );
       return publicPlatformAccount(updated);

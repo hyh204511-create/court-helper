@@ -140,8 +140,8 @@ function platformAccountsPage(): string {
             <div class="field"><label for="platform-account">平台账号</label><input id="platform-account" type="text" autocomplete="new-password" maxlength="200"></div>
             <div class="field"><label for="platform-password">平台密码</label><input id="platform-password" type="password" autocomplete="new-password" maxlength="200"></div>
             <div class="field"><label for="platform-enabled">状态</label><select id="platform-enabled"><option value="true">启用</option><option value="false">停用</option></select></div>
-            <div class="field"><label for="platform-salesperson-wecom-userid">业务员企业微信 UserID</label><input id="platform-salesperson-wecom-userid" type="text" autocomplete="off" maxlength="64" spellcheck="false" placeholder="与助理 UserID 同时填写"></div>
-            <div class="field"><label for="platform-assistant-wecom-userid">助理企业微信 UserID</label><input id="platform-assistant-wecom-userid" type="text" autocomplete="off" maxlength="64" spellcheck="false" placeholder="与业务员 UserID 同时填写"></div>
+            <div class="field"><label for="platform-salesperson-name">业务员姓名</label><input id="platform-salesperson-name" type="text" autocomplete="off" maxlength="64" placeholder="与助理姓名同时填写"></div>
+            <div class="field"><label for="platform-assistant-name">助理姓名</label><input id="platform-assistant-name" type="text" autocomplete="off" maxlength="64" placeholder="与业务员姓名同时填写"></div>
           </div>
           <div class="form-actions"><button class="primary" type="submit">保存平台账号</button><button id="platform-cancel" class="secondary" type="button">清空</button></div>
         </form>

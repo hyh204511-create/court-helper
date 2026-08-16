@@ -42,16 +42,16 @@ test('account filters support manual label input and an explicit dropdown', () =
   assert.match(accounts, /id="platform-list-account-menu"[^>]*role="listbox"/);
 });
 
-test('platform account form binds WeCom UserIDs and no longer exposes mobile mention fields', () => {
+test('platform account form binds display names and no longer exposes member identifier fields', () => {
   const accounts = renderAdminPage('platform-accounts', 'admin');
-  assert.match(accounts, /业务员企业微信 UserID/);
-  assert.match(accounts, /助理企业微信 UserID/);
-  assert.match(accounts, /id="platform-salesperson-wecom-userid"[^>]*maxlength="64"/);
-  assert.match(accounts, /id="platform-assistant-wecom-userid"[^>]*maxlength="64"/);
-  assert.doesNotMatch(accounts, /业务员手机号|助理手机号|type="tel"/);
-  assert.match(ADMIN_SCRIPT, /salespersonWecomUserId/);
-  assert.match(ADMIN_SCRIPT, /assistantWecomUserId/);
-  assert.doesNotMatch(ADMIN_SCRIPT, /salespersonMobile|assistantMobile|手机号/);
+  assert.match(accounts, /业务员姓名/);
+  assert.match(accounts, /助理姓名/);
+  assert.match(accounts, /id="platform-salesperson-name"[^>]*maxlength="64"/);
+  assert.match(accounts, /id="platform-assistant-name"[^>]*maxlength="64"/);
+  assert.doesNotMatch(accounts, /手机号|UserID|type="tel"/);
+  assert.match(ADMIN_SCRIPT, /salespersonName/);
+  assert.match(ADMIN_SCRIPT, /assistantName/);
+  assert.doesNotMatch(ADMIN_SCRIPT, /salespersonMobile|assistantMobile|WecomUserId|手机号|UserID/);
 });
 
 test('cases is the only case-status view and browser control links to it', () => {

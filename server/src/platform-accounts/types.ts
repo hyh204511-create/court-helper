@@ -10,8 +10,8 @@ export interface PlatformAccountRecord {
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
-  salespersonWecomUserId: string | null;
-  assistantWecomUserId: string | null;
+  salespersonName: string | null;
+  assistantName: string | null;
 }
 
 export interface EncryptedCredential {
@@ -25,16 +25,16 @@ export interface NewPlatformAccount extends EncryptedCredential {
   id?: string;
   label: string;
   enabled?: boolean;
-  salespersonWecomUserId?: string | null;
-  assistantWecomUserId?: string | null;
+  salespersonName?: string | null;
+  assistantName?: string | null;
   createdBy: string;
 }
 
 export interface PlatformAccountPatch extends Partial<EncryptedCredential> {
   label?: string;
   enabled?: boolean;
-  salespersonWecomUserId?: string | null;
-  assistantWecomUserId?: string | null;
+  salespersonName?: string | null;
+  assistantName?: string | null;
 }
 
 export interface PlatformAccountListOptions {

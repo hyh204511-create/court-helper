@@ -21,7 +21,7 @@ export function publicPlatformAccount(account: PlatformAccountRecord) {
     label: account.label,
     enabled: account.enabled,
     updatedAt: account.updatedAt.toISOString(),
-    contactsConfigured: account.salespersonWecomUserId !== null && account.assistantWecomUserId !== null,
+    contactsConfigured: account.salespersonName !== null && account.assistantName !== null,
   };
 }
 
@@ -56,7 +56,7 @@ export class PlatformAccountService {
     return account;
   }
 
-  async create(createdBy: string, label: string, credential: PlainCredential, enabled = true, contacts: { salespersonWecomUserId: string | null; assistantWecomUserId: string | null } = { salespersonWecomUserId: null, assistantWecomUserId: null }): Promise<PlatformAccountRecord> {
+  async create(createdBy: string, label: string, credential: PlainCredential, enabled = true, contacts: { salespersonName: string | null; assistantName: string | null } = { salespersonName: null, assistantName: null }): Promise<PlatformAccountRecord> {
     if (label.trim() === '') {
       throw new ValidationError([{ field: 'label', code: 'required' }]);
     }
@@ -77,9 +77,9 @@ export class PlatformAccountService {
     if (patch.label !== undefined && patch.label.trim() === '') {
       throw new ValidationError([{ field: 'label', code: 'required' }]);
     }
-    const salespersonWecomUserId = patch.salespersonWecomUserId ?? current.salespersonWecomUserId;
-    const assistantWecomUserId = patch.assistantWecomUserId ?? current.assistantWecomUserId;
-    if ((salespersonWecomUserId === null) !== (assistantWecomUserId === null)) {
+    const salespersonName = patch.salespersonName ?? current.salespersonName;
+    const assistantName = patch.assistantName ?? current.assistantName;
+    if ((salespersonName === null) !== (assistantName === null)) {
       throw new ValidationError([{ field: 'contacts', code: 'pair_required' }]);
     }
     const encrypted = credential

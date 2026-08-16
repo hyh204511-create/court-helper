@@ -35,8 +35,8 @@ function account(overrides = {}) {
     createdBy: USER_ID,
     createdAt: now,
     updatedAt: now,
-    salespersonWecomUserId: 'salesperson.synthetic',
-    assistantWecomUserId: 'assistant.synthetic',
+    salespersonName: '合成业务员',
+    assistantName: '合成助理',
     ...overrides,
   };
 }
@@ -44,8 +44,8 @@ function account(overrides = {}) {
 async function fixture({ status = '已驳回', kind = 'li', contacts = true, transport } = {}) {
   const cases = new MemoryCaseRepository();
   const accounts = new MemoryPlatformAccountRepository([account(contacts ? {} : {
-    salespersonWecomUserId: null,
-    assistantWecomUserId: null,
+    salespersonName: null,
+    assistantName: null,
   })]);
   const screenshots = new MemoryScreenshotRepository();
   const storage = new MemoryStorageBackend();
@@ -92,42 +92,47 @@ async function fixture({ status = '已驳回', kind = 'li', contacts = true, tra
   return { service, calls, notifications, caseValue, screenshot, cases, accounts };
 }
 
-test('migration adds reversible UserID contacts without promoting legacy mobile bindings', async () => {
+test('migration renames existing contact values to display names and rolls back without loss', async () => {
   const database = newDb({ autoCreateForeignKeyIndices: true });
   const adapter = database.adapters.createPg();
   const pool = new adapter.Pool();
   const applied = await runMigrations(pool);
-  assert.equal(applied.at(-1), '012_wecom_userid_mentions');
-  const columns = await pool.query(`
-    SELECT table_name, column_name FROM information_schema.columns
-    WHERE (table_name = 'platform_accounts' AND column_name IN (
-      'salesperson_mobile', 'assistant_mobile',
-      'salesperson_wecom_userid', 'assistant_wecom_userid'
-    ))
-       OR table_name = 'wecom_notifications'
-  `);
-  assert.ok(columns.rows.some((row) => row.table_name === 'platform_accounts' && row.column_name === 'salesperson_mobile'));
-  assert.ok(columns.rows.some((row) => row.table_name === 'platform_accounts' && row.column_name === 'salesperson_wecom_userid'));
-  assert.ok(columns.rows.some((row) => row.table_name === 'wecom_notifications' && row.column_name === 'result_status'));
+  assert.equal(applied.at(-1), '013_wecom_display_names');
+  assert.equal(await rollbackLastMigration(pool), '013_wecom_display_names');
   await pool.query(`INSERT INTO users (id,username,password_hash) VALUES ($1,'legacy-user','synthetic-hash')`, [USER_ID]);
   await pool.query(`
     INSERT INTO platform_accounts (
       id, label, secret_ciphertext, secret_iv, secret_tag, created_by,
-      salesperson_mobile, assistant_mobile
-    ) VALUES ($1, 'legacy-contact', $2, $3, $4, $5, '13800000001', '13900000002')
+      salesperson_wecom_userid, assistant_wecom_userid
+    ) VALUES ($1, 'legacy-contact', $2, $3, $4, $5, '合成业务员', '合成助理')
   `, [ACCOUNT_ID, Buffer.from('ciphertext'), Buffer.alloc(12, 1), Buffer.alloc(16, 2), USER_ID]);
+  assert.deepEqual(await runMigrations(pool), ['013_wecom_display_names']);
+  const columns = await pool.query(`
+    SELECT table_name, column_name FROM information_schema.columns
+    WHERE (table_name = 'platform_accounts' AND column_name IN (
+      'salesperson_mobile', 'assistant_mobile',
+      'salesperson_name', 'assistant_name'
+    ))
+       OR table_name = 'wecom_notifications'
+  `);
+  assert.ok(columns.rows.some((row) => row.table_name === 'platform_accounts' && row.column_name === 'salesperson_mobile'));
+  assert.ok(columns.rows.some((row) => row.table_name === 'platform_accounts' && row.column_name === 'salesperson_name'));
+  assert.ok(columns.rows.some((row) => row.table_name === 'wecom_notifications' && row.column_name === 'result_status'));
   const legacy = await new PgPlatformAccountRepository(pool).findById(ACCOUNT_ID);
-  assert.equal(legacy.salespersonWecomUserId, null);
-  assert.equal(legacy.assistantWecomUserId, null);
-  assert.equal(publicPlatformAccount(legacy).contactsConfigured, false);
+  assert.equal(legacy.salespersonName, '合成业务员');
+  assert.equal(legacy.assistantName, '合成助理');
+  assert.equal(publicPlatformAccount(legacy).contactsConfigured, true);
 
-  assert.equal(await rollbackLastMigration(pool), '012_wecom_userid_mentions');
+  assert.equal(await rollbackLastMigration(pool), '013_wecom_display_names');
   const rolledBack = await pool.query(`
     SELECT column_name FROM information_schema.columns
     WHERE table_name = 'platform_accounts'
   `);
-  assert.equal(rolledBack.rows.some((row) => row.column_name === 'salesperson_wecom_userid'), false);
-  assert.equal(rolledBack.rows.some((row) => row.column_name === 'salesperson_mobile'), true);
+  assert.equal(rolledBack.rows.some((row) => row.column_name === 'salesperson_name'), false);
+  assert.equal(rolledBack.rows.some((row) => row.column_name === 'salesperson_wecom_userid'), true);
+  const restored = await pool.query('SELECT salesperson_wecom_userid, assistant_wecom_userid FROM platform_accounts WHERE id = $1', [ACCOUNT_ID]);
+  assert.equal(restored.rows[0].salesperson_wecom_userid, '合成业务员');
+  assert.equal(restored.rows[0].assistant_wecom_userid, '合成助理');
   await pool.end();
 });
 
@@ -171,7 +176,8 @@ test('all three terminal results automatically send once and mention platform-bo
     await state.service.waitForIdle();
     assert.equal([first.created, duplicate.created].filter(Boolean).length, 1);
     assert.equal(state.calls.length, 2);
-    assert.deepEqual(state.calls[1].payload.text.mentioned_list, ['salesperson.synthetic', 'assistant.synthetic']);
+    assert.match(state.calls[1].payload.text.content, /^@合成业务员 @合成助理\n案件类型：/);
+    assert.equal(Object.hasOwn(state.calls[1].payload.text, 'mentioned_list'), false);
     assert.equal(Object.hasOwn(state.calls[1].payload.text, 'mentioned_mobile_list'), false);
     const records = await state.notifications.listByCaseId(state.caseValue.id);
     assert.equal(records.length, 1);
@@ -266,7 +272,7 @@ test('a precondition failure permits only one manual delivery attempt', async ()
     return { errcode: 93000 };
   } });
   const created = await state.service.enqueueAutomatic(state.caseValue.id, state.screenshot.id);
-  await state.accounts.update(ACCOUNT_ID, { salespersonWecomUserId: 'salesperson.synthetic', assistantWecomUserId: 'assistant.synthetic' });
+  await state.accounts.update(ACCOUNT_ID, { salespersonName: '合成业务员', assistantName: '合成助理' });
   await assert.rejects(
     state.service.retry(created.notification.id, { userId: USER_ID, role: 'user' }),
     (error) => error.code === 'WECOM_DELIVERY_FAILED',
