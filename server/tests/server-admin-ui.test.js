@@ -651,10 +651,11 @@ test('browser control renders full session and creator names, separates LOGIN, a
       let deferredCredentialResponse = null;
       let commands = [{
         id: '00000000-0000-0000-0000-000000000301',
-        type: 'QUERY_LI',
+        type: 'QUERY_ALL_EXPORT',
         status: 'pending',
         platformAccountId: ACCOUNT_ID,
         clientBatchId: null,
+        payload: { salesperson: '测试业务员甲' },
         requestedBy: session.creatorId,
         resultCode: 'SUCCESS',
         resultSummary: '',
@@ -846,7 +847,12 @@ test('browser control renders full session and creator names, separates LOGIN, a
       dom.window.document.querySelector('[data-action="retry-browser-command"]').click();
       await new Promise((resolve) => setTimeout(resolve, 0));
       assert.equal(browserCommandPosts().length, retryRequestsBefore + 1);
-      assert.equal(JSON.parse(String(browserCommandPosts().at(-1).body)).importBatchId, emptyLiBatch.id);
+      assert.deepEqual(JSON.parse(String(browserCommandPosts().at(-1).body)), {
+        type: 'QUERY_ALL_EXPORT',
+        platformAccountId: ACCOUNT_ID,
+        importBatchId: emptyLiBatch.id,
+        payload: { salesperson: '测试业务员甲' },
+      });
 
       await waitFor(() => dom.window.document.querySelector('#platform-credential-show').disabled === false);
       dom.window.document.querySelector('#platform-credential-show').click();
