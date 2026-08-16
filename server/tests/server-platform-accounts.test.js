@@ -104,13 +104,19 @@ function tokenFromCookie(cookie) {
   return cookie.slice(separator + 1);
 }
 
-async function multipartWorkbook(rows) {
+async function multipartWorkbook(rows, headers = ['原告', '被告', '账号', '密码']) {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Sheet1');
-  sheet.addRow(['原告', '被告', '账号', '密码']);
+  sheet.addRow(headers);
   rows.forEach((row) => sheet.addRow(row));
   return workbook.xlsx.writeBuffer();
 }
+
+const CONTACT_IMPORT_HEADERS = [
+  '原告', '被告', '账号', '密码',
+  ...Array.from({ length: 16 }, (_, index) => `兼容列${index + 5}`),
+  '业务员', '助理',
+];
 
 function multipartBody(buffer, boundary = 'platform-import-test') {
   return Buffer.concat([
@@ -192,8 +198,8 @@ test('platform accounts hide credentials, enforce role visibility, and re-encryp
   }
 });
 
-test('管理员可导入 Excel 平台账号，原告作为标签且重复标签逐行跳过', async () => {
-  const { app } = await makeApp();
+test('管理员可导入 Excel 平台账号及固定联系人，原告作为标签且重复标签逐行跳过', async () => {
+  const { app, platformAccountRepository } = await makeApp();
   try {
     const admin = await loginAdmin(app);
     const existing = await app.inject({
@@ -202,10 +208,10 @@ test('管理员可导入 Excel 平台账号，原告作为标签且重复标签�
     });
     assert.equal(existing.statusCode, 201);
     const body = multipartBody(await multipartWorkbook([
-      ['原告甲', '被告甲', 'new-account', 'new-password'],
-      ['原告乙', '被告乙', 'account-b', 'password-b'],
-      ['原告丙', '被告丙', 'account-c', ''],
-    ]));
+      ['原告甲', '被告甲', 'new-account', 'new-password', ...Array(16).fill(null), '业务员甲', '助理甲'],
+      ['原告乙', '被告乙', 'account-b', 'password-b', ...Array(16).fill(null), '业务员乙', '助理乙'],
+      ['原告丙', '被告丙', 'account-c', '', ...Array(16).fill(null), '业务员丙', '助理丙'],
+    ], CONTACT_IMPORT_HEADERS));
     const response = await app.inject({
       method: 'POST', url: '/platform-accounts/import', headers: {
         ...adminHeaders(admin),
@@ -222,6 +228,25 @@ test('管理员可导入 Excel 平台账号，原告作为标签且重复标签�
       ],
     });
     assert.equal(response.body.includes('new-account'), false);
+    assert.equal(response.body.includes('业务员乙'), false);
+    const importedAccount = (await platformAccountRepository.list()).find((account) => account.label === '原告乙');
+    assert.ok(importedAccount);
+    assert.equal(importedAccount.salespersonName, '业务员乙');
+    assert.equal(importedAccount.assistantName, '助理乙');
+
+    const adminList = await app.inject({
+      method: 'GET', url: '/api/v1/platform-accounts', headers: { cookie: admin.cookie },
+    });
+    const listedImported = adminList.json().platformAccounts.find((account) => account.label === '原告乙');
+    assert.equal(listedImported.salespersonName, '业务员乙');
+    assert.equal(listedImported.assistantName, '助理乙');
+
+    const worker = await loginAdminUi(app, 'worker', 'Worker-pass-1');
+    const workerList = await app.inject({
+      method: 'GET', url: '/api/v1/platform-accounts', headers: { cookie: worker.cookie },
+    });
+    assert.equal(workerList.body.includes('业务员乙'), false);
+    assert.equal(workerList.body.includes('助理乙'), false);
     const credential = await app.inject({
       method: 'GET', url: `/api/v1/platform-accounts/${existing.json().id}/credential-view`,
       headers: { cookie: admin.cookie, origin: 'https://admin.example.test' },
@@ -560,7 +585,7 @@ test('admins see disabled accounts, users do not, and deletion is soft', async (
   }
 });
 
-test('platform account contact names are paired, validated, stored, and never returned', async () => {
+test('platform account contact names are paired, validated, stored, visible to admins, and hidden from other roles and write responses', async () => {
   const { app, platformAccountRepository } = await makeApp();
   try {
     const admin = await loginAdmin(app);
@@ -592,8 +617,13 @@ test('platform account contact names are paired, validated, stored, and never re
 
     const listed = await app.inject({ method: 'GET', url: '/api/v1/platform-accounts', headers: { cookie: admin.cookie } });
     assert.equal(listed.json().platformAccounts[0].contactsConfigured, true);
-    assert.equal(listed.body.includes('合成业务员'), false);
-    assert.equal(listed.body.includes('合成助理'), false);
+    assert.equal(listed.json().platformAccounts[0].salespersonName, '合成业务员');
+    assert.equal(listed.json().platformAccounts[0].assistantName, '合成助理');
+
+    const worker = await loginAdminUi(app, 'worker', 'Worker-pass-1');
+    const workerList = await app.inject({ method: 'GET', url: '/api/v1/platform-accounts', headers: { cookie: worker.cookie } });
+    assert.equal(workerList.body.includes('合成业务员'), false);
+    assert.equal(workerList.body.includes('合成助理'), false);
 
     for (const invalidName of [`bad\u0000name`, 'x'.repeat(65)]) {
       const rejected = await app.inject({

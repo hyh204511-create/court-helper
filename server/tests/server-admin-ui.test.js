@@ -48,6 +48,7 @@ test('platform account form binds display names and no longer exposes member ide
   assert.match(accounts, /助理姓名/);
   assert.match(accounts, /id="platform-salesperson-name"[^>]*maxlength="64"/);
   assert.match(accounts, /id="platform-assistant-name"[^>]*maxlength="64"/);
+  assert.match(accounts, /<th>业务员<\/th><th>助理<\/th>/);
   assert.doesNotMatch(accounts, /手机号|UserID|type="tel"/);
   assert.match(ADMIN_SCRIPT, /salespersonName/);
   assert.match(ADMIN_SCRIPT, /assistantName/);
@@ -205,7 +206,7 @@ test('platform account management filters rows locally without extra API request
     requests.push(requestUrl.pathname + requestUrl.search);
     if (requestUrl.pathname === '/api/v1/auth/me') return jsonResponse({ csrfToken: 'ui-csrf' });
     if (requestUrl.pathname === '/api/v1/platform-accounts') return jsonResponse({ platformAccounts: [
-      { id: ACCOUNT_ID, label: 'first-account', enabled: true, updatedAt: NOW.toISOString() },
+      { id: ACCOUNT_ID, label: 'first-account', enabled: true, updatedAt: NOW.toISOString(), contactsConfigured: true, salespersonName: '业务员甲', assistantName: '助理甲' },
       { id: SECOND_ACCOUNT_ID, label: 'second-account', enabled: false, updatedAt: NOW.toISOString() },
     ] });
     throw new Error(`unexpected request ${requestUrl.pathname}`);
@@ -224,6 +225,8 @@ test('platform account management filters rows locally without extra API request
     input.value = 'second';
     input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
     const rows = dom.window.document.querySelectorAll('#platform-rows tr');
+    assert.equal(rows[0].children[2].textContent, '业务员甲');
+    assert.equal(rows[0].children[3].textContent, '助理甲');
     assert.equal(rows[0].hidden, true);
     assert.equal(rows[1].hidden, false);
     assert.equal(requests.length, requestsBeforeFilter);
