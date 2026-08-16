@@ -195,6 +195,7 @@ test("样式复刻：表头加粗/填充/行高、数据行高（ExcelJS 读回�
   assert.equal(ws.getColumn("J").width, 39.63);
   assert.equal(ws.getColumn("Q").width, 12.87);
   assert.equal(ws.getColumn("U").width, 13);
+  assert.equal(ws.getColumn("V").width, 13);
   assert.equal(ws.getCell("F2").numFmt, "mm-dd-yy");
 });
 
@@ -215,7 +216,7 @@ test("模板保真：保留十行空白表格、细边框、宋体、垂直居�
     assert.equal(ws.getCell("Q11").numFmt, "mm-dd-yy");
     assert.equal(ws.getCell("T11").numFmt, "mm-dd-yy");
 
-    for (const cell of ["A1", "A11", "R10", "U11"]) {
+    for (const cell of ["A1", "A11", "R10", "U11", "V11"]) {
       assert.equal(ws.getCell(cell).font.name, "宋体");
       assert.equal(ws.getCell(cell).alignment.vertical, "middle");
       assert.equal(ws.getCell(cell).border.left.style, "thin");

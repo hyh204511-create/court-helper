@@ -29,7 +29,7 @@ beforeEach(async () => {
   await resetDb();
 });
 
-test("往返：旧模板导入 → 模拟查询写库 → 新 21 列报表导出 → openpyxl 双读对比", async () => {
+test("往返：旧模板导入 → 模拟查询写库 → 新 22 列报表导出 → openpyxl 双读对比", async () => {
   // 1) 导入脱敏 fixture（3 立案 + 3 强执，H3 为 DISPIMG）
   const parsed = await importXlsx(readFileSync(FIXTURE));
   assert.equal(parsed.liRows.length, 3);
@@ -59,7 +59,7 @@ test("往返：旧模板导入 → 模拟查询写库 → 新 21 列报表导出
     // 4a) openpyxl 读回：结构 + 值 + 图片锚点
     const res = spawnSync("python", [
       "scripts/verify-export.py", file,
-      "--cells", "A1,E1,L1,M1,T1,U1,U2,U6,E2,E3,F3,G3,E4,I4,K4,M5,M6,N6,O6,L3",
+      "--cells", "A1,E1,L1,M1,T1,U1,V1,U2,U6,E2,E3,F3,G3,E4,I4,K4,M5,M6,N6,O6,L3",
     ], { encoding: "utf8", cwd: ROOT });
     assert.equal(res.status, 0, `verify-export.py 失败: ${res.stderr}`);
     const info = JSON.parse(res.stdout);
@@ -76,6 +76,7 @@ test("往返：旧模板导入 → 模拟查询写库 → 新 21 列报表导出
     assert.equal(info.cells.M1, "强执状态");
     assert.equal(info.cells.T1, "强执查询时间");
     assert.equal(info.cells.U1, "业务员");
+    assert.equal(info.cells.V1, "助理");
     assert.equal(info.cells.U2, "测试业务员甲");
     assert.equal(info.cells.U6, "测试业务员甲");
     assert.equal(info.cells.M5, "审核中");

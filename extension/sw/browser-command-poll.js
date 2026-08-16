@@ -487,6 +487,9 @@ export function createBrowserCommandPoller({
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
       if (data?.queryMode === "platform_discovery") {
         message = { ...message, queryMode: "platform_discovery", platformAccountId: command.platformAccountId };
+        if (command.type === "QUERY_ALL_EXPORT" && Array.isArray(data.businessAssignments)) {
+          message = { ...message, businessAssignments: data.businessAssignments };
+        }
       } else if (data?.queryMode === "template_not_empty") {
         return { ok: false, error: "TEMPLATE_NOT_EMPTY" };
       } else {

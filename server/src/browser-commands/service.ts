@@ -395,7 +395,7 @@ export class BrowserCommandService {
           : normalized.type === 'QUERY_ALL_EXPORT'
             ? importBatch.liRows + importBatch.qzRows
             : 0;
-      if (rowCount > 0) {
+      if (rowCount > 0 && normalized.type !== 'QUERY_ALL_EXPORT') {
         throw new AppError('Import template must be empty', 'TEMPLATE_NOT_EMPTY', 400, false);
       }
       clientBatchId = importBatch.id;

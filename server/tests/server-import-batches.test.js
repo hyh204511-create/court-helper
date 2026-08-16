@@ -564,7 +564,7 @@ test('import batch upload rejects multipart, MIME, magic, template, and dimensio
     assert.equal(tooManyRows.statusCode, 400);
     assert.equal(errorDetailCode(tooManyRows), 'template_limit_exceeded');
 
-    const tooManyColumns = await upload(app, admin, uploadPayload(await workbookBuffer({ columnCount: 22 })));
+    const tooManyColumns = await upload(app, admin, uploadPayload(await workbookBuffer({ columnCount: 23 })));
     assert.equal(tooManyColumns.statusCode, 400);
     assert.equal(errorDetailCode(tooManyColumns), 'template_limit_exceeded');
 

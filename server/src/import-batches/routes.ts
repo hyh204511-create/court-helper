@@ -6,6 +6,7 @@ import { AuthService } from '../auth/service.ts';
 import type { ServerConfig } from '../config.ts';
 import type { BrowserCommandService } from '../browser-commands/service.ts';
 import {
+  ConflictError,
   ForbiddenError,
   NotFoundError,
   PayloadTooLargeError,
@@ -212,17 +213,45 @@ export function registerImportBatchRoutes(
         : new Set([executionAccess.command.type === 'QUERY_QZ' ? 'qz' : 'li']);
       const rows = result.rows.filter((row) => kinds.has(row.kind));
       reply.header('cache-control', 'private, no-store');
-      if (rows.length > 0) {
+      if (rows.length > 0 && executionAccess.command.type !== 'QUERY_ALL_EXPORT') {
         return {
           importBatchId: id,
           queryMode: 'template_not_empty',
           rows: [],
         };
       }
+      const assignmentMap = new Map<string, {
+        account: string;
+        plaintiff: string;
+        defendant: string;
+        salesperson: string | null;
+        assistant: string | null;
+      }>();
+      if (executionAccess.command.type === 'QUERY_ALL_EXPORT') {
+        for (const row of rows) {
+          if (!row.salesperson && !row.assistant) continue;
+          const key = [row.account, row.plaintiff, row.defendant].join('\u0000');
+          const assignment = {
+            account: row.account,
+            plaintiff: row.plaintiff,
+            defendant: row.defendant,
+            salesperson: row.salesperson,
+            assistant: row.assistant,
+          };
+          const existing = assignmentMap.get(key);
+          if (existing && (existing.salesperson !== assignment.salesperson || existing.assistant !== assignment.assistant)) {
+            throw new ConflictError('Import batch business assignments conflict', 'BUSINESS_ASSIGNMENT_CONFLICT');
+          }
+          assignmentMap.set(key, assignment);
+        }
+      }
       return {
         importBatchId: id,
         queryMode: 'platform_discovery',
         rows: [],
+        ...(executionAccess.command.type === 'QUERY_ALL_EXPORT'
+          ? { businessAssignments: [...assignmentMap.values()] }
+          : {}),
       };
     });
   }

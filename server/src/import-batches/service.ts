@@ -27,7 +27,7 @@ import {
 export const MAX_IMPORT_BATCH_BYTES = 20 * 1024 * 1024;
 export const MAX_IMPORT_BATCH_WORKSHEETS = 2;
 export const MAX_IMPORT_BATCH_ROWS = 5_000;
-export const MAX_IMPORT_BATCH_COLUMNS = 21;
+export const MAX_IMPORT_BATCH_COLUMNS = 22;
 export const IMPORT_BATCH_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const XLSX_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
@@ -41,6 +41,10 @@ const COMBINED_HEADERS = [
   '驳回时间', '驳回原因', '驳回图片', '强执查询时间',
 ] as const;
 const COMBINED_SALESPERSON_HEADER = '业务员';
+const COMBINED_ASSISTANT_HEADER = '助理';
+const COMBINED_SALESPERSON_COLUMN = COMBINED_HEADERS.length + 1;
+const COMBINED_ASSISTANT_COLUMN = COMBINED_HEADERS.length + 2;
+const BUSINESS_NAME_LIMIT = 100;
 
 export interface ImportBatchUploadInput {
   fileName: string;
@@ -65,6 +69,8 @@ export interface ImportBatchExecutionRow {
   rejectTime: string | null;
   rejectReason: string | null;
   queryTime: string | null;
+  salesperson: string | null;
+  assistant: string | null;
 }
 
 function validation(code: string): ValidationError {
@@ -188,9 +194,32 @@ function hasCombinedHeader(sheet: ExcelJS.Worksheet): boolean {
   if (!COMBINED_HEADERS.every((header, index) => cellText(sheet.getCell(1, index + 1).value) === header)) {
     return false;
   }
-  return sheet.columnCount === COMBINED_HEADERS.length
-    || (sheet.columnCount === COMBINED_HEADERS.length + 1
-      && cellText(sheet.getCell(1, COMBINED_HEADERS.length + 1).value) === COMBINED_SALESPERSON_HEADER);
+  if (sheet.columnCount === COMBINED_HEADERS.length) return true;
+  if (cellText(sheet.getCell(1, COMBINED_SALESPERSON_COLUMN).value) !== COMBINED_SALESPERSON_HEADER) return false;
+  return sheet.columnCount === COMBINED_SALESPERSON_COLUMN
+    || (sheet.columnCount === COMBINED_ASSISTANT_COLUMN
+      && cellText(sheet.getCell(1, COMBINED_ASSISTANT_COLUMN).value) === COMBINED_ASSISTANT_HEADER);
+}
+
+function validateBusinessAssignments(sheet: ExcelJS.Worksheet): void {
+  const seen = new Map<string, string>();
+  for (let row = 2; row <= sheet.rowCount; row += 1) {
+    const salesperson = cellText(sheet.getCell(row, COMBINED_SALESPERSON_COLUMN).value);
+    const assistant = cellText(sheet.getCell(row, COMBINED_ASSISTANT_COLUMN).value);
+    if (salesperson.length > BUSINESS_NAME_LIMIT || assistant.length > BUSINESS_NAME_LIMIT) {
+      throw validation('business_name_too_long');
+    }
+    if (!salesperson && !assistant) continue;
+    const account = cellText(sheet.getCell(row, 3).value);
+    const plaintiff = cellText(sheet.getCell(row, 1).value);
+    const defendant = cellText(sheet.getCell(row, 2).value);
+    if (!account || !plaintiff) throw validation('business_identity_required');
+    const key = [account, plaintiff, defendant].join('\u0000');
+    const value = [salesperson, assistant].join('\u0000');
+    const existing = seen.get(key);
+    if (existing !== undefined && existing !== value) throw validation('business_assignment_conflict');
+    seen.set(key, value);
+  }
 }
 
 function enforcementHeaderRow(sheet: ExcelJS.Worksheet): number | null {
@@ -243,6 +272,7 @@ export async function summarizeImportBatch(buffer: Buffer): Promise<ImportBatchS
   }
   if (sheet.columnCount > LI_HEADERS.length) {
     if (!hasCombinedHeader(sheet)) throw validation('template_mismatch');
+    validateBusinessAssignments(sheet);
     const combined = summarizeRows(sheet, 2, sheet.rowCount);
     return {
       liRows: combined.validRows,
@@ -376,7 +406,13 @@ export class ImportBatchService {
     const sheet = workbook.getWorksheet('Sheet1');
     if (!sheet) throw validation('sheet_required');
     const rows: ImportBatchExecutionRow[] = [];
-    const collect = (start: number, end: number, kind: 'li' | 'qz', statusColumn = 5) => {
+    const collect = (
+      start: number,
+      end: number,
+      kind: 'li' | 'qz',
+      statusColumn = 5,
+      includeBusinessAssignments = false,
+    ) => {
       for (let row = start; row <= end; row += 1) {
         const plaintiff = cellText(sheet.getCell(row, 1).value);
         const account = cellText(sheet.getCell(row, 3).value);
@@ -400,13 +436,19 @@ export class ImportBatchService {
           rejectTime: date(statusColumn + 4),
           rejectReason: cellText(sheet.getCell(row, statusColumn + 5).value) || null,
           queryTime: date(statusColumn + 7),
+          salesperson: includeBusinessAssignments
+            ? cellText(sheet.getCell(row, COMBINED_SALESPERSON_COLUMN).value) || null
+            : null,
+          assistant: includeBusinessAssignments
+            ? cellText(sheet.getCell(row, COMBINED_ASSISTANT_COLUMN).value) || null
+            : null,
         });
       }
     };
     if (sheet.columnCount > LI_HEADERS.length) {
       if (!hasCombinedHeader(sheet)) throw validation('template_mismatch');
-      collect(2, sheet.rowCount, 'li', 5);
-      collect(2, sheet.rowCount, 'qz', 13);
+      collect(2, sheet.rowCount, 'li', 5, true);
+      collect(2, sheet.rowCount, 'qz', 13, true);
     } else {
       const qzHeader = enforcementHeaderRow(sheet);
       if (qzHeader === null) throw validation('enforcement_header_required');

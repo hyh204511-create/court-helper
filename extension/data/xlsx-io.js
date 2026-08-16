@@ -1,6 +1,6 @@
 // xlsx-io.js — Excel 导出核心（ExcelJS）
 // 依据 docs/specs/excel-module.md：
-// - 新版 21 列合并表头（新导出唯一权威）；
+// - 新版 22 列合并表头（新导出唯一权威）；
 // - 样式复刻：表头加粗 11 + FF92D050 填充 + 行高 27；数据行高 28；列宽表；日期 mm-dd-yy；
 // - UNKNOWN 状态：单元格留空 + 浅红填充 + 深红字体（待人工提示）；
 // - 图片 OneCellAnchor 锚定 H/K/P/S 列单元格。
@@ -18,7 +18,7 @@ export const HEADER_QZ = [
 export const HEADER_COMBINED = [
   ...HEADER_LI.slice(0, 11), "立案查询时间",
   "强执状态", "强执成功时间", "强执案号", "成功图片",
-  "驳回时间", "驳回原因", "驳回图片", "强执查询时间", "业务员",
+  "驳回时间", "驳回原因", "驳回图片", "强执查询时间", "业务员", "助理",
 ];
 
 export const STYLE = {
@@ -45,7 +45,7 @@ export const STYLE = {
   colWidths: {
     A: 15, B: 14, C: 20.37, D: 15.5, F: 13.25,
     G: 24.13, H: 12.87, I: 12.87, J: 39.63, K: 18, L: 10.75,
-    N: 12.13, Q: 12.87, T: 12.78, U: 13,
+    N: 12.13, Q: 12.87, T: 12.78, U: 13, V: 13,
   },
   dateFormat: "mm-dd-yy",
   unknown: {
@@ -140,7 +140,39 @@ function combinedRows(cases, enforcementCases) {
   return rows;
 }
 
-function writeCombinedRow(ws, row, pair, imageJobs, exportCredential = null, salesperson = "") {
+function businessKey(account, plaintiff, defendant) {
+  return [account, plaintiff, defendant].map((value) => String(value ?? "").trim()).join("\u0000");
+}
+
+function indexBusinessAssignments(assignments) {
+  const indexed = new Map();
+  for (const value of assignments ?? []) {
+    const account = String(value?.account ?? "").trim();
+    const plaintiff = String(value?.plaintiff ?? "").trim();
+    const defendant = String(value?.defendant ?? "").trim();
+    const salesperson = String(value?.salesperson ?? "").trim();
+    const assistant = String(value?.assistant ?? "").trim();
+    if (!account || !plaintiff || (!salesperson && !assistant)) continue;
+    if (salesperson.length > 100 || assistant.length > 100) throw new Error("BUSINESS_ASSIGNMENT_INVALID");
+    const key = businessKey(account, plaintiff, defendant);
+    const existing = indexed.get(key);
+    if (existing && (existing.salesperson !== salesperson || existing.assistant !== assistant)) {
+      throw new Error("BUSINESS_ASSIGNMENT_CONFLICT");
+    }
+    indexed.set(key, { salesperson, assistant });
+  }
+  return indexed;
+}
+
+function writeCombinedRow(
+  ws,
+  row,
+  pair,
+  imageJobs,
+  exportCredential = null,
+  salesperson = "",
+  businessAssignments = new Map(),
+) {
   formatDataRow(ws, row);
   const identity = pair.li ?? pair.qz ?? {};
   ws.getCell(row, 1).value = identity.plaintiff ?? "";
@@ -153,16 +185,23 @@ function writeCombinedRow(ws, row, pair, imageJobs, exportCredential = null, sal
   writeResult(ws, row, pair.qz, 13, imageJobs, {
     success: STYLE.image.qzSuccess, reject: STYLE.image.qzReject,
   });
-  ws.getCell(row, 21).value = salesperson;
+  const assignment = businessAssignments.get(businessKey(
+    exportCredential?.account ?? identity.account,
+    identity.plaintiff,
+    identity.defendant,
+  ));
+  ws.getCell(row, 21).value = assignment ? assignment.salesperson : salesperson;
+  ws.getCell(row, 22).value = assignment?.assistant ?? "";
 }
 
 /**
- * 构建完整导出工作簿（21 列合并布局 + 样式复刻 + 图片嵌入）。
+ * 构建完整导出工作簿（22 列合并布局 + 样式复刻 + 图片嵌入）。
  * @param {{cases?: object[], enforcementCases?: object[]}} [data] db 记录（含 Blob 图片）
  * @returns {Promise<ExcelJS.Workbook>}
  */
 export async function buildExportWorkbook({
   cases = [], enforcementCases = [], exportCredential = null, salesperson = "",
+  businessAssignments = [],
 } = {}) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Sheet1");
@@ -172,9 +211,18 @@ export async function buildExportWorkbook({
 
   writeHeader(ws, 1, HEADER_COMBINED);
   const imageJobs = [];
+  const indexedBusinessAssignments = indexBusinessAssignments(businessAssignments);
   let row = 2;
   for (const pair of combinedRows(cases, enforcementCases)) {
-    writeCombinedRow(ws, row, pair, imageJobs, exportCredential, salesperson);
+    writeCombinedRow(
+      ws,
+      row,
+      pair,
+      imageJobs,
+      exportCredential,
+      salesperson,
+      indexedBusinessAssignments,
+    );
     row += 1;
   }
   const reservedEnd = Math.max(row - 1, 11);
