@@ -296,6 +296,13 @@ test("EXPORT_REPORT 仅导出当前登录链路绑定的 platformAccountId 记�
       accountLabel: "测试账号标签",
       exportCredential: { account: "demo-account", password: "真实平台密码" },
       salesperson: "测试业务员甲",
+      businessAssignments: [{
+        account: "demo-account",
+        plaintiff: "TARGET PLAINTIFF",
+        defendant: "TARGET DEFENDANT",
+        salesperson: "导入业务员甲",
+        assistant: "导入助理甲",
+      }],
     });
     assert.deepEqual(result.response, { status: "uploaded", exportId: "synthetic-export" });
     assert.equal(uploads.length, 1);
@@ -306,7 +313,9 @@ test("EXPORT_REPORT 仅导出当前登录链路绑定的 platformAccountId 记�
     assert.equal(worksheet.getCell("C2").value, "demo-account");
     assert.equal(worksheet.getCell("D2").value, "真实平台密码");
     assert.equal(worksheet.getCell("U1").value, "业务员");
-    assert.equal(worksheet.getCell("U2").value, "测试业务员甲");
+    assert.equal(worksheet.getCell("U2").value, "导入业务员甲");
+    assert.equal(worksheet.getCell("V1").value, "助理");
+    assert.equal(worksheet.getCell("V2").value, "导入助理甲");
     assert.equal(worksheet.getCell("A3").value, null);
     assert.equal(uploads[0].fileName, "测试账号标签.xlsx");
     assert.equal(uploads[0].platformAccountId, targetPlatformAccountId);

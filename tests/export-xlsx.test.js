@@ -47,22 +47,29 @@ function verify(file, cells) {
   return JSON.parse(res.stdout);
 }
 
-test("导出 21 列合并表：布局/业务员/日期格式/图片锚点", async () => {
+test("导出 22 列合并表：布局/逐案件业务员助理/日期格式/图片锚点", async () => {
   const wb = await buildExportWorkbook({
     cases: [
       rec({ status: "立案成功", filedTime: "2026-07-22", caseNumber: "（2026）京0000民初00001号", successImage: IMG(1) }),
-      rec({ status: "已驳回", rejectTime: "2026-07-28", rejectReason: "请补充材料。", rejectImage: IMG(2) }),
+      rec({ plaintiff: "测试原告乙", defendant: "测试被告B", status: "已驳回", rejectTime: "2026-07-28", rejectReason: "请补充材料。", rejectImage: IMG(2) }),
     ],
     enforcementCases: [
       rec({ status: "强执成功", filedTime: "2026-06-03", caseNumber: "（2026）京0000执00001号", successImage: IMG(3) }),
     ],
     salesperson: "测试业务员甲",
+    businessAssignments: [{
+      account: "TEST-ACCOUNT-001",
+      plaintiff: "测试原告甲",
+      defendant: "测试被告A",
+      salesperson: "导入业务员甲",
+      assistant: "导入助理甲",
+    }],
   });
   const { dir, file } = await writeToTemp(wb);
   try {
     const info = verify(file, [
       "A1", "E1", "G1", "E2", "F2", "G2", "I3", "J3",
-      "L1", "M1", "T1", "U1", "M2", "N2", "O2", "L2", "U2", "U3",
+      "L1", "M1", "T1", "U1", "V1", "M2", "N2", "O2", "L2", "U2", "V2", "U3", "V3",
     ]);
     // 单表头布局：同一账号与当事人的立案、强执结果合并到同一行。
     assert.deepEqual(info.sheets, ["Sheet1"]);
@@ -73,6 +80,7 @@ test("导出 21 列合并表：布局/业务员/日期格式/图片锚点", asyn
     assert.equal(info.cells.M1, "强执状态");
     assert.equal(info.cells.T1, "强执查询时间");
     assert.equal(info.cells.U1, "业务员");
+    assert.equal(info.cells.V1, "助理");
     // 数据值
     assert.equal(info.cells.E2, "立案成功");
     assert.equal(info.cells.F2, "2026-07-22");
@@ -83,8 +91,10 @@ test("导出 21 列合并表：布局/业务员/日期格式/图片锚点", asyn
     assert.equal(info.cells.N2, "2026-06-03");
     assert.equal(info.cells.O2, "（2026）京0000执00001号");
     assert.equal(info.cells.L2, "2026-08-03");
-    assert.equal(info.cells.U2, "测试业务员甲");
+    assert.equal(info.cells.U2, "导入业务员甲");
+    assert.equal(info.cells.V2, "导入助理甲");
     assert.equal(info.cells.U3, "测试业务员甲");
+    assert.equal(info.cells.V3, "");
     // 图片锚点：立案成功 H2、驳回 K3、强执成功 P2（0 基）
     assert.equal(info.image_count, 3);
     assert.deepEqual(info.anchors, [

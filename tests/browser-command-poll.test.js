@@ -157,6 +157,13 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
     payload: { salesperson: "测试业务员甲" },
   };
   let batchReads = 0;
+  const businessAssignments = [{
+    account: "synthetic-account",
+    plaintiff: "测试原告甲",
+    defendant: "测试被告A",
+    salesperson: "测试业务员甲",
+    assistant: "测试助理甲",
+  }];
   const messages = [];
   const chromeApi = chromeMock(async (_tabId, message) => {
     messages.push(message);
@@ -169,7 +176,7 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
     if (value.endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim-all" });
     if (value.endsWith(`/import-batches/${command.clientBatchId}/extension-data`)) {
       batchReads += 1;
-      return response({ queryMode: "platform_discovery", rows: [] });
+      return response({ queryMode: "platform_discovery", rows: [], businessAssignments });
     }
     if (value.endsWith(`/platform-accounts/${command.platformAccountId}/credential`)) {
       return response({ label: "测试账号标签", account: "synthetic-account", password: "synthetic-password" });
@@ -195,6 +202,7 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
     accountLabel: "测试账号标签",
     exportCredential: { account: "synthetic-account", password: "synthetic-password" },
     salesperson: "测试业务员甲",
+    businessAssignments,
   }]);
 });
 

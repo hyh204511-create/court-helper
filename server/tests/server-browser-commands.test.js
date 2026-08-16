@@ -523,6 +523,17 @@ test('browser query commands reject non-empty template blocks instead of falling
   }
 });
 
+test('QUERY_ALL_EXPORT accepts non-empty combined templates for export-only business ownership', async () => {
+  const nonEmpty = importBatchRecord();
+  nonEmpty.liRows = 2;
+  nonEmpty.qzRows = 2;
+  const { service } = await makeService(undefined, [nonEmpty]);
+
+  const command = await service.create(commandInput('QUERY_ALL_EXPORT'));
+  assert.equal(command.clientBatchId, IMPORT_BATCH_ID);
+  assert.equal(command.status, 'pending');
+});
+
 test('browser command API creates a query command for an empty template', async () => {
   const emptyLiBatch = importBatchRecord();
   emptyLiBatch.liRows = 0;

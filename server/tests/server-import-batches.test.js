@@ -10,7 +10,7 @@ import { MemoryAuthRepository } from '../src/auth/memory-repository.ts';
 import { runMigrations } from '../src/db/migrator.ts';
 import { MemoryImportBatchRepository } from '../src/import-batches/memory-repository.ts';
 import { PgImportBatchRepository } from '../src/import-batches/repository.ts';
-import { MAX_IMPORT_BATCH_BYTES } from '../src/import-batches/service.ts';
+import { ImportBatchService, MAX_IMPORT_BATCH_BYTES } from '../src/import-batches/service.ts';
 import { IMPORT_BATCH_CONTENT_TYPE } from '../src/import-batches/types.ts';
 import { MemoryStorageBackend } from '../src/storage/memory.ts';
 import { bindPairedExtensionRepository, pairedExtensionTokenForApp } from './paired-extension.ts';
@@ -35,6 +35,7 @@ const COMBINED_HEADERS = [
   '驳回时间', '驳回原因', '驳回图片', '强执查询时间',
 ];
 const COMBINED_HEADERS_21 = [...COMBINED_HEADERS, '业务员'];
+const COMBINED_HEADERS_22 = [...COMBINED_HEADERS_21, '助理'];
 const FIXTURE_ACCOUNT = 'fixture-account';
 const FIXTURE_PASSWORD = 'fixture-password';
 
@@ -114,6 +115,7 @@ async function combinedWorkbookBuffer(options = {}) {
   if (options.withRows) {
     sheet.getRow(2).values = [
       'fixture-combined-plaintiff', 'fixture-combined-defendant', FIXTURE_ACCOUNT, FIXTURE_PASSWORD,
+      ...Array(16).fill(null), ' 测试业务员甲 ', ' 测试助理甲 ',
     ];
     sheet.getRow(3).values = ['fixture-combined-skipped'];
   } else {
@@ -319,17 +321,17 @@ test('admin_ui Cookie upload creates a safe global import batch and any signed-i
   }
 });
 
-test('combined 21-column templates accept salesperson header and retain 20-column upload compatibility', async () => {
+test('combined 22-column templates accept salesperson and assistant headers with 20/21-column compatibility', async () => {
   const { app } = await makeApp();
   try {
     const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
-    const blank = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer({ headers: COMBINED_HEADERS_21 })));
+    const blank = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer({ headers: COMBINED_HEADERS_22 })));
     assert.equal(blank.statusCode, 201);
     assert.equal(blank.json().liRows, 0);
     assert.equal(blank.json().qzRows, 0);
     assert.equal(blank.json().skippedRows, 0);
 
-    const populated = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer({ headers: COMBINED_HEADERS_21, withRows: true })));
+    const populated = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer({ headers: COMBINED_HEADERS_22, withRows: true })));
     assert.equal(populated.statusCode, 201);
     assert.equal(populated.json().liRows, 1);
     assert.equal(populated.json().qzRows, 1);
@@ -337,14 +339,53 @@ test('combined 21-column templates accept salesperson header and retain 20-colum
     assert.equal(populated.body.includes(FIXTURE_ACCOUNT), false);
     assert.equal(populated.body.includes(FIXTURE_PASSWORD), false);
 
-    const legacy = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer()));
-    assert.equal(legacy.statusCode, 201);
+    const legacy21 = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer({ headers: COMBINED_HEADERS_21 })));
+    assert.equal(legacy21.statusCode, 201);
+    const legacy20 = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer()));
+    assert.equal(legacy20.statusCode, 201);
 
-    const invalidHeader = [...COMBINED_HEADERS_21];
-    invalidHeader[20] = '自定义扩展列';
+    const invalidHeader = [...COMBINED_HEADERS_22];
+    invalidHeader[21] = '自定义扩展列';
     const invalid = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer({ headers: invalidHeader })));
     assert.equal(invalid.statusCode, 400);
     assert.equal(errorDetailCode(invalid), 'template_mismatch');
+  } finally {
+    await app.close();
+  }
+});
+
+test('execution data reads trimmed per-case salesperson and assistant without changing platform fields', async () => {
+  const { app, importBatchRepository, storageBackend } = await makeApp();
+  try {
+    const admin = await loginUi(app, 'admin', ADMIN_PASSWORD);
+    const uploaded = await upload(app, admin, uploadPayload(await combinedWorkbookBuffer({
+      headers: COMBINED_HEADERS_22,
+      withRows: true,
+    })));
+    assert.equal(uploaded.statusCode, 201);
+
+    const service = new ImportBatchService(importBatchRepository, storageBackend, () => new Date(NOW));
+    const execution = await service.readExecutionData(uploaded.json().id);
+    assert.deepEqual(execution.rows.map(({ kind, account, plaintiff, defendant, salesperson, assistant }) => ({
+      kind, account, plaintiff, defendant, salesperson, assistant,
+    })), [
+      {
+        kind: 'li',
+        account: FIXTURE_ACCOUNT,
+        plaintiff: 'fixture-combined-plaintiff',
+        defendant: 'fixture-combined-defendant',
+        salesperson: '测试业务员甲',
+        assistant: '测试助理甲',
+      },
+      {
+        kind: 'qz',
+        account: FIXTURE_ACCOUNT,
+        plaintiff: 'fixture-combined-plaintiff',
+        defendant: 'fixture-combined-defendant',
+        salesperson: '测试业务员甲',
+        assistant: '测试助理甲',
+      },
+    ]);
   } finally {
     await app.close();
   }
