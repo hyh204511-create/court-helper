@@ -54,6 +54,7 @@
 
 - 同一平台账号同时最多一个 `pending`/`executing` 活动任务；重复创建返回 `409 DUPLICATE_PENDING`。
 - 领取与回写必须幂等；错误 claimant 回写返回 `403 FORBIDDEN`，已完成任务重复回写返回原终态。
+- 控制台重试终态 `QUERY_ALL_EXPORT` 时必须复用原命令经校验的安全 payload（包括兼容业务员值）、账号和导入批次，创建新的命令；不得因漏传必填 payload 让重试在创建阶段失败。
 - `QUERY_ALL_EXPORT` 的结果请求仅在 `status=succeeded` 时强制要求布尔声明 `evidenceClosed=true` 和非空、去重、最多 100 项的 `evidenceEventIds`。事件 ID 只允许安全的不透明同步标识，不得包含案件、截图、联系人或凭据内容。服务器必须逐项确认：事件对应案件属于命令绑定账号及创建者、案件不是 `UNKNOWN/needsHuman`；三种终态还存在类型匹配且已入库的截图。企业微信通知台账不属于该闭环条件，通知配置或发送失败必须保留为独立待人工记录。缺失声明、空列表、重复项或任一服务器证据不匹配均不得保存成功，统一改写为 `manual_required`、`result_code=EVIDENCE_NOT_CLOSED`、安全摘要“证据未完成服务器闭环”。该字段不得用于 `LOGIN`、单类型查询或独立 `EXPORT_REPORT` 的成功判定。
 - 扩展在命令执行期间写入案件、截图和报表时，必须携带命令 ID、设备 ID 与一次性 claim token；服务端以 `requested_by` 作为资源归属，而不是以执行设备的配对用户作为归属。案件与截图只接受 `QUERY_LI`、`QUERY_QZ`、`QUERY_ALL_EXPORT` 租约，报表只接受 `EXPORT_REPORT`、`QUERY_ALL_EXPORT` 租约；`LOGIN` 等错误命令类型必须返回 `403 FORBIDDEN`。
 - 旧 `login_commands` 在迁移期间保留兼容；本模块不直接删除旧表。
