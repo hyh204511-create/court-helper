@@ -10,6 +10,13 @@ import type { WecomNotificationRecord, WecomNotificationRepository, WecomTermina
 export const MAX_WECOM_IMAGE_BYTES = 2 * 1024 * 1024;
 const TERMINAL_STATUSES = new Set<WecomTerminalStatus>(['立案成功', '强执成功', '已驳回']);
 
+export interface WecomRepeatEvidenceInput {
+  platformAccountId: string | null;
+  requestedBy: string;
+  evidenceEventIds: string[];
+  startedAt: Date;
+}
+
 export type WecomPayload =
   | { msgtype: 'image'; image: { base64: string; md5: string } }
   | { msgtype: 'text'; text: { content: string } };
@@ -94,7 +101,7 @@ export class WecomNotificationService {
     const [caseValue, screenshot] = await Promise.all([this.cases.findById(caseId), this.screenshots.findById(screenshotId)]);
     if (!caseValue || !screenshot || screenshot.caseId !== caseId) return { created: false, notification: null };
     if (!TERMINAL_STATUSES.has(caseValue.status as WecomTerminalStatus) || screenshot.type !== screenshotType(caseValue)) return { created: false, notification: null };
-    const result = await this.notifications.createPending({ caseId, platformAccountId: caseValue.platformAccountId, resultStatus: caseValue.status as WecomTerminalStatus, screenshotId });
+    const result = await this.notifications.createPending({ caseId, platformAccountId: caseValue.platformAccountId, resultStatus: caseValue.status as WecomTerminalStatus, screenshotId, triggerId: screenshotId });
     if (result.created) {
       const account = await this.accounts.findById(caseValue.platformAccountId);
       if (!account?.salespersonName || !account.assistantName) await this.notifications.markFailed(result.record.id, 'CONTACTS_NOT_CONFIGURED');
@@ -102,6 +109,44 @@ export class WecomNotificationService {
       else this.schedule(result.record.id);
     }
     return { created: result.created, notification: result.record };
+  }
+
+  async enqueueRepeatForEvidence(triggerId: string, input: WecomRepeatEvidenceInput): Promise<{ created: number }> {
+    if (!input.platformAccountId || input.evidenceEventIds.length === 0) return { created: 0 };
+    const expected = new Set(input.evidenceEventIds);
+    const accountCases = await this.cases.list({
+      platformAccountId: input.platformAccountId,
+      createdBy: input.requestedBy,
+      limit: 101,
+    });
+    const account = await this.accounts.findById(input.platformAccountId);
+    let created = 0;
+    for (const caseValue of accountCases) {
+      if (!expected.has(caseValue.sourceEventId) || !TERMINAL_STATUSES.has(caseValue.status as WecomTerminalStatus)) continue;
+      const screenshot = await this.screenshots.findByCaseIdAndType(caseValue.id, screenshotType(caseValue));
+      if (!screenshot) continue;
+      const sourceSent = (await this.notifications.listByCaseId(caseValue.id)).some((record) => (
+        record.platformAccountId === input.platformAccountId
+        && record.resultStatus === caseValue.status
+        && record.screenshotId === screenshot.id
+        && record.status === 'sent'
+        && record.createdAt.getTime() < input.startedAt.getTime()
+      ));
+      if (!sourceSent) continue;
+      const result = await this.notifications.createPending({
+        caseId: caseValue.id,
+        platformAccountId: input.platformAccountId,
+        resultStatus: caseValue.status as WecomTerminalStatus,
+        screenshotId: screenshot.id,
+        triggerId,
+      });
+      if (!result.created) continue;
+      created += 1;
+      if (!account?.salespersonName || !account.assistantName) await this.notifications.markFailed(result.record.id, 'CONTACTS_NOT_CONFIGURED');
+      else if (!this.webhookUrl) await this.notifications.markFailed(result.record.id, 'WECOM_NOT_CONFIGURED');
+      else this.schedule(result.record.id);
+    }
+    return { created };
   }
 
   private async source(record: WecomNotificationRecord): Promise<{ caseValue: CaseRecord; screenshot: ScreenshotRecord; contactNames: string[] }> {

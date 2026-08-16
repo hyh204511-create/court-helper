@@ -56,6 +56,7 @@ test('versioned migrations create the required tables and constraints', async ()
       login_commands: ['id', 'platform_account_id', 'status', 'result_code', 'result_message', 'claimed_by', 'created_by', 'created_at', 'updated_at', 'expires_at'],
       report_exports: ['id', 'file_name', 'object_key', 'content_type', 'byte_size', 'sha256', 'platform_account_id', 'created_by', 'created_at', 'updated_at'],
       import_batches: ['id', 'file_name', 'object_key', 'content_type', 'byte_size', 'sha256', 'li_rows', 'qz_rows', 'skipped_rows', 'created_by', 'created_at', 'updated_at', 'expires_at'],
+      wecom_notifications: ['id', 'case_id', 'platform_account_id', 'result_status', 'screenshot_id', 'trigger_id', 'status', 'error_code', 'attempt_count', 'created_at', 'updated_at', 'sent_at'],
     };
 
     for (const [table, columns] of Object.entries(expectedColumns)) {
@@ -262,9 +263,10 @@ test('running migrations twice is harmless and explicit rollback restores a clea
       VALUES ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', $1, 'extension', '00000000-0000-0000-0000-000000000002', NOW() + INTERVAL '30 days')
     `, ['a'.repeat(64)]);
     const applied = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
-    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands', '006_import_batches', '007_extension_devices', '008_query_all_export', '009_report_exports_platform_account', '010_platform_account_label_reuse', '011_wecom_automatic_notifications', '012_wecom_userid_mentions', '013_wecom_display_names']);
+    assert.deepEqual(applied.rows.map((row) => row.version), ['001_initial', '002_add_cases_created_by', '003_login_commands', '004_report_exports', '005_browser_commands', '006_import_batches', '007_extension_devices', '008_query_all_export', '009_report_exports_platform_account', '010_platform_account_label_reuse', '011_wecom_automatic_notifications', '012_wecom_userid_mentions', '013_wecom_display_names', '014_wecom_repeat_deliveries']);
 
-    assert.equal(await rollbackLastMigration(pool), '013_wecom_display_names');
+    assert.equal(await rollbackLastMigration(pool), '014_wecom_repeat_deliveries');
+    await rollbackLastMigration(pool);
     await rollbackLastMigration(pool);
     await rollbackLastMigration(pool);
     await rollbackLastMigration(pool);

@@ -8,6 +8,7 @@ export interface WecomNotificationRecord {
   platformAccountId: string;
   resultStatus: WecomTerminalStatus;
   screenshotId: string;
+  triggerId: string;
   status: WecomNotificationStatus;
   errorCode: string | null;
   attemptCount: number;

@@ -97,7 +97,8 @@ test('migration renames existing contact values to display names and rolls back 
   const adapter = database.adapters.createPg();
   const pool = new adapter.Pool();
   const applied = await runMigrations(pool);
-  assert.equal(applied.at(-1), '013_wecom_display_names');
+  assert.equal(applied.at(-1), '014_wecom_repeat_deliveries');
+  assert.equal(await rollbackLastMigration(pool), '014_wecom_repeat_deliveries');
   assert.equal(await rollbackLastMigration(pool), '013_wecom_display_names');
   await pool.query(`INSERT INTO users (id,username,password_hash) VALUES ($1,'legacy-user','synthetic-hash')`, [USER_ID]);
   await pool.query(`
@@ -106,7 +107,7 @@ test('migration renames existing contact values to display names and rolls back 
       salesperson_wecom_userid, assistant_wecom_userid
     ) VALUES ($1, 'legacy-contact', $2, $3, $4, $5, '合成业务员', '合成助理')
   `, [ACCOUNT_ID, Buffer.from('ciphertext'), Buffer.alloc(12, 1), Buffer.alloc(16, 2), USER_ID]);
-  assert.deepEqual(await runMigrations(pool), ['013_wecom_display_names']);
+  assert.deepEqual(await runMigrations(pool), ['013_wecom_display_names', '014_wecom_repeat_deliveries']);
   const columns = await pool.query(`
     SELECT table_name, column_name FROM information_schema.columns
     WHERE (table_name = 'platform_accounts' AND column_name IN (
@@ -123,6 +124,7 @@ test('migration renames existing contact values to display names and rolls back 
   assert.equal(legacy.assistantName, '合成助理');
   assert.equal(publicPlatformAccount(legacy).contactsConfigured, true);
 
+  assert.equal(await rollbackLastMigration(pool), '014_wecom_repeat_deliveries');
   assert.equal(await rollbackLastMigration(pool), '013_wecom_display_names');
   const rolledBack = await pool.query(`
     SELECT column_name FROM information_schema.columns
@@ -154,11 +156,30 @@ test('postgres notification repository explicitly creates a pending ledger recor
     platformAccountId: ACCOUNT_ID,
     resultStatus: '立案成功',
     screenshotId,
+    triggerId: screenshotId,
   });
 
   assert.equal(created.created, true);
   assert.equal(created.record.status, 'pending');
   assert.equal(created.record.attemptCount, 0);
+  assert.equal(created.record.triggerId, screenshotId);
+  const duplicate = await repository.createPending({
+    caseId,
+    platformAccountId: ACCOUNT_ID,
+    resultStatus: '立案成功',
+    screenshotId,
+    triggerId: screenshotId,
+  });
+  assert.equal(duplicate.created, false);
+  const repeated = await repository.createPending({
+    caseId,
+    platformAccountId: ACCOUNT_ID,
+    resultStatus: '立案成功',
+    screenshotId,
+    triggerId: '00000000-0000-0000-0000-000000000041',
+  });
+  assert.equal(repeated.created, true);
+  assert.equal((await repository.listByCaseId(caseId)).length, 2);
   await pool.end();
 });
 
@@ -184,6 +205,48 @@ test('all three terminal results automatically send once and mention platform-bo
     assert.equal(records[0].status, 'sent');
     assert.equal(records[0].attemptCount, 1);
   }
+});
+
+test('different completed query commands repeat terminal notifications once per command', async () => {
+  const state = await fixture({ status: '已驳回', kind: 'li' });
+  await state.service.enqueueAutomatic(state.caseValue.id, state.screenshot.id);
+  await state.service.waitForIdle();
+
+  const sameCommand = await state.service.enqueueRepeatForEvidence(
+    '00000000-0000-0000-0000-000000000060',
+    {
+      platformAccountId: ACCOUNT_ID,
+      requestedBy: USER_ID,
+      evidenceEventIds: [state.caseValue.sourceEventId],
+      startedAt: new Date(0),
+    },
+  );
+  assert.equal(sameCommand.created, 0);
+  assert.equal(state.calls.length, 2);
+
+  const evidence = {
+    platformAccountId: ACCOUNT_ID,
+    requestedBy: USER_ID,
+    evidenceEventIds: [state.caseValue.sourceEventId],
+    startedAt: new Date(Date.now() + 1_000),
+  };
+  const firstCommand = '00000000-0000-0000-0000-000000000061';
+  const secondCommand = '00000000-0000-0000-0000-000000000062';
+  const first = await state.service.enqueueRepeatForEvidence(firstCommand, evidence);
+  const duplicate = await state.service.enqueueRepeatForEvidence(firstCommand, evidence);
+  await state.service.waitForIdle();
+  assert.equal(first.created, 1);
+  assert.equal(duplicate.created, 0);
+  assert.equal(state.calls.length, 4);
+
+  const second = await state.service.enqueueRepeatForEvidence(secondCommand, evidence);
+  await state.service.waitForIdle();
+  assert.equal(second.created, 1);
+  assert.equal(state.calls.length, 6);
+  const records = await state.notifications.listByCaseId(state.caseValue.id);
+  assert.equal(records.length, 3);
+  assert.deepEqual(records.map((record) => record.triggerId), [state.screenshot.id, firstCommand, secondCommand]);
+  assert.ok(records.every((record) => record.status === 'sent'));
 });
 
 test('non-terminal results do not create notifications and missing contacts fail without network access', async () => {
@@ -256,6 +319,7 @@ test('notification delivery rejects a changed case status instead of mixing old 
     platformAccountId: ACCOUNT_ID,
     resultStatus: '立案成功',
     screenshotId: state.screenshot.id,
+    triggerId: state.screenshot.id,
   });
   await state.notifications.markFailed(pending.record.id, 'WECOM_DELIVERY_FAILED');
   await state.cases.update(state.caseValue.id, { ...state.caseValue, status: '已驳回' });

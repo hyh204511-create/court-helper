@@ -4,7 +4,7 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 
 import { loadConfig, type ServerConfig } from './config.ts';
-import { errorEnvelope, errorFromFastify, NotFoundError } from './errors.ts';
+import { AppError, errorEnvelope, errorFromFastify, NotFoundError } from './errors.ts';
 import {
   registerHealthRoutes,
   unavailableDependency,
@@ -231,6 +231,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       });
     }
     let browserCommandService: BrowserCommandService | undefined;
+    let wecomNotificationService: WecomNotificationService | undefined;
     const browserCommandNotificationRepository = options.caseRepository
       && options.screenshotRepository
       ? options.wecomNotificationRepository ?? new MemoryWecomNotificationRepository()
@@ -247,6 +248,12 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
               options.screenshotRepository,
               browserCommandNotificationRepository,
             )
+            : undefined,
+          repeatEvidence: options.caseRepository && options.platformAccountRepository && options.screenshotRepository && options.storageBackend
+            ? async (input) => {
+              if (!wecomNotificationService) throw new AppError('WeCom notification service unavailable', 'WECOM_SERVICE_UNAVAILABLE', 503, false);
+              await wecomNotificationService.enqueueRepeatForEvidence(input.triggerId, input);
+            }
             : undefined,
         },
       );
@@ -282,7 +289,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       const notificationRepository = browserCommandNotificationRepository
         ?? options.wecomNotificationRepository
         ?? new MemoryWecomNotificationRepository();
-      const wecomNotificationService = new WecomNotificationService(
+      const notificationService = new WecomNotificationService(
         config.wecom.webhookUrl,
         options.caseRepository,
         options.platformAccountRepository,
@@ -291,6 +298,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         options.storageBackend,
         options.wecomTransport,
       );
+      wecomNotificationService = notificationService;
       const screenshotService = new ScreenshotService(
         options.screenshotRepository,
         options.caseRepository,
@@ -302,7 +310,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         config,
         prefix: '',
         service: screenshotService,
-        onStored: (caseId, screenshotId) => wecomNotificationService.enqueueAutomatic(caseId, screenshotId).then(() => undefined),
+        onStored: (caseId, screenshotId) => notificationService.enqueueAutomatic(caseId, screenshotId).then(() => undefined),
         browserCommandService,
       });
       registerScreenshotRoutes(app, {
@@ -310,20 +318,20 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         config,
         prefix: '/api/v1',
         service: screenshotService,
-        onStored: (caseId, screenshotId) => wecomNotificationService.enqueueAutomatic(caseId, screenshotId).then(() => undefined),
+        onStored: (caseId, screenshotId) => notificationService.enqueueAutomatic(caseId, screenshotId).then(() => undefined),
         browserCommandService,
       });
       registerWecomNotificationRoutes(app, {
         authService,
         config,
         prefix: '',
-        service: wecomNotificationService,
+        service: notificationService,
       });
       registerWecomNotificationRoutes(app, {
         authService,
         config,
         prefix: '/api/v1',
-        service: wecomNotificationService,
+        service: notificationService,
       });
     }
     if (options.reportExportRepository && options.storageBackend && options.platformAccountRepository) {

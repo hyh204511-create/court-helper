@@ -103,6 +103,7 @@ async function makeService(
   now = new Date('2026-08-06T10:00:00.000Z'),
   importBatchRecords = [importBatchRecord()],
   verifyEvidence = async () => true,
+  repeatEvidence = async () => undefined,
 ) {
   const {
     BrowserCommandService,
@@ -114,6 +115,7 @@ async function makeService(
   const service = new BrowserCommandService(repository, importBatchRepository, {
     now: () => new Date(currentNow),
     verifyEvidence,
+    repeatEvidence,
   });
   return {
     repository,
@@ -346,6 +348,7 @@ test('005 browser command migration creates a reversible secure queue and keeps 
       '011_wecom_automatic_notifications',
       '012_wecom_userid_mentions',
       '013_wecom_display_names',
+      '014_wecom_repeat_deliveries',
     ]);
 
     const columns = await pool.query(`
@@ -389,6 +392,7 @@ test('005 browser command migration creates a reversible secure queue and keeps 
       VALUES ($1, 'QUERY_QZ', $2, $3, $4, now() + interval '5 minutes')
     `, [randomUUID(), ACCOUNT_ID, ADMIN_ID, JSON.stringify({ batchId: 'batch-safe-2' })]));
 
+    assert.equal(await rollbackLastMigration(pool), '014_wecom_repeat_deliveries');
     assert.equal(await rollbackLastMigration(pool), '013_wecom_display_names');
     assert.equal(await rollbackLastMigration(pool), '012_wecom_userid_mentions');
     assert.equal(await rollbackLastMigration(pool), '011_wecom_automatic_notifications');
@@ -626,10 +630,12 @@ test('browser command results require the claimant token and are idempotent', as
 
 test('QUERY_ALL_EXPORT success requires an explicit evidence closure proof', async () => {
   const verificationCalls = [];
+  const repeatCalls = [];
   const { service } = await makeService(
     undefined,
     undefined,
     async (input) => { verificationCalls.push(input); return input.evidenceEventIds[0] === 'case-proof-current'; },
+    async (input) => { repeatCalls.push(input); },
   );
   const legacy = await service.create(commandInput('QUERY_ALL_EXPORT'));
   const legacyClaim = await service.claim(legacy.id, 'device-legacy');
@@ -666,6 +672,25 @@ test('QUERY_ALL_EXPORT success requires an explicit evidence closure proof', asy
     requestedBy: closed.requestedBy,
     evidenceEventIds: ['case-proof-current'],
   }]);
+  assert.deepEqual(repeatCalls, [{
+    triggerId: closed.id,
+    startedAt: closed.createdAt,
+    platformAccountId: closed.platformAccountId,
+    requestedBy: closed.requestedBy,
+    evidenceEventIds: ['case-proof-current'],
+  }]);
+
+  await service.writeResult(closed.id, {
+    deviceId: 'device-current',
+    claimToken: closedClaim.claimToken,
+    status: 'succeeded',
+    resultCode: 'SUCCESS',
+    resultSummary: '报表已上传服务器',
+    progress: null,
+    evidenceClosed: true,
+    evidenceEventIds: ['case-proof-current'],
+  });
+  assert.equal(repeatCalls.length, 1);
 
   const stale = await service.create(commandInput('QUERY_ALL_EXPORT', { platformAccountId: randomUUID() }));
   const staleClaim = await service.claim(stale.id, 'device-stale');
@@ -681,6 +706,7 @@ test('QUERY_ALL_EXPORT success requires an explicit evidence closure proof', asy
   });
   assert.equal(staleResult.status, 'manual_required');
   assert.equal(staleResult.resultCode, 'EVIDENCE_NOT_CLOSED');
+  assert.equal(repeatCalls.length, 1);
 });
 
 test('browser command service expires stale pending and executing commands', async () => {

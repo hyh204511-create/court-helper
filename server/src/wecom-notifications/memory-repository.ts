@@ -8,7 +8,7 @@ function copy(value: WecomNotificationRecord): WecomNotificationRecord {
 export class MemoryWecomNotificationRepository implements WecomNotificationRepository {
   private readonly values = new Map<string, WecomNotificationRecord>();
   async createPending(input: Omit<WecomNotificationRecord, 'id' | 'status' | 'errorCode' | 'attemptCount' | 'createdAt' | 'updatedAt' | 'sentAt'>) {
-    const existing = [...this.values.values()].find((value) => value.caseId === input.caseId && value.resultStatus === input.resultStatus);
+    const existing = [...this.values.values()].find((value) => value.caseId === input.caseId && value.resultStatus === input.resultStatus && value.triggerId === input.triggerId);
     if (existing) return { record: copy(existing), created: false };
     const now = new Date();
     const record: WecomNotificationRecord = { ...input, id: randomUUID(), status: 'pending', errorCode: null, attemptCount: 0, createdAt: now, updatedAt: now, sentAt: null };

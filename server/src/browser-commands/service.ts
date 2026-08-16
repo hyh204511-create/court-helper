@@ -7,7 +7,7 @@ import {
   ValidationError,
 } from '../errors.ts';
 import type { ImportBatchRepository } from '../import-batches/types.ts';
-import type { BrowserCommandEvidenceVerifier } from './evidence-verifier.ts';
+import type { BrowserCommandEvidenceInput, BrowserCommandEvidenceVerifier } from './evidence-verifier.ts';
 import {
   BROWSER_COMMAND_RESULT_STATUSES,
   BROWSER_COMMAND_STATUSES,
@@ -48,6 +48,7 @@ const TERMINAL_STATUSES = new Set<BrowserCommandStatus>([
 export interface BrowserCommandServiceOptions {
   now?: () => Date;
   verifyEvidence?: BrowserCommandEvidenceVerifier;
+  repeatEvidence?: (input: BrowserCommandEvidenceInput & { triggerId: string; startedAt: Date }) => Promise<unknown>;
 }
 
 export interface BrowserCommandCreateInput {
@@ -358,6 +359,7 @@ export class BrowserCommandService {
   private readonly importBatchRepository: ImportBatchRepository;
   private readonly now: () => Date;
   private readonly verifyEvidence?: BrowserCommandEvidenceVerifier;
+  private readonly repeatEvidence?: BrowserCommandServiceOptions['repeatEvidence'];
 
   constructor(
     repository: BrowserCommandRepository,
@@ -368,6 +370,7 @@ export class BrowserCommandService {
     this.importBatchRepository = importBatchRepository;
     this.now = options.now ?? (() => new Date());
     this.verifyEvidence = options.verifyEvidence;
+    this.repeatEvidence = options.repeatEvidence;
   }
 
   async create(input: BrowserCommandCreateInput): Promise<BrowserCommandRecord> {
@@ -506,6 +509,15 @@ export class BrowserCommandService {
         resultSummary: '证据未完成服务器闭环',
       }
       : normalized;
+    if (current.type === 'QUERY_ALL_EXPORT' && result.status === 'succeeded' && evidenceVerified) {
+      await this.repeatEvidence?.({
+        triggerId: current.id,
+        startedAt: current.createdAt,
+        platformAccountId: current.platformAccountId,
+        requestedBy: current.requestedBy,
+        evidenceEventIds: normalized.evidenceEventIds,
+      });
+    }
     const completed = await this.repository.writeResult(id, normalized.deviceId, claimHash, {
       status: result.status,
       resultCode: result.resultCode,
