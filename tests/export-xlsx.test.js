@@ -56,14 +56,8 @@ test("导出 22 列合并表：布局/逐案件业务员助理/日期格式/图�
     enforcementCases: [
       rec({ status: "强执成功", filedTime: "2026-06-03", caseNumber: "（2026）京0000执00001号", successImage: IMG(3) }),
     ],
-    salesperson: "测试业务员甲",
-    businessAssignments: [{
-      account: "TEST-ACCOUNT-001",
-      plaintiff: "测试原告甲",
-      defendant: "测试被告A",
-      salesperson: "导入业务员甲",
-      assistant: "导入助理甲",
-    }],
+    salesperson: "账号业务员",
+    assistant: "账号助理",
   });
   const { dir, file } = await writeToTemp(wb);
   try {
@@ -91,10 +85,10 @@ test("导出 22 列合并表：布局/逐案件业务员助理/日期格式/图�
     assert.equal(info.cells.N2, "2026-06-03");
     assert.equal(info.cells.O2, "（2026）京0000执00001号");
     assert.equal(info.cells.L2, "2026-08-03");
-    assert.equal(info.cells.U2, "导入业务员甲");
-    assert.equal(info.cells.V2, "导入助理甲");
-    assert.equal(info.cells.U3, "测试业务员甲");
-    assert.equal(info.cells.V3, "");
+    assert.equal(info.cells.U2, "账号业务员");
+    assert.equal(info.cells.V2, "账号助理");
+    assert.equal(info.cells.U3, "账号业务员");
+    assert.equal(info.cells.V3, "账号助理");
     // 图片锚点：立案成功 H2、驳回 K3、强执成功 P2（0 基）
     assert.equal(info.image_count, 3);
     assert.deepEqual(info.anchors, [

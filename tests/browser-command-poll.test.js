@@ -154,7 +154,6 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
     type: "QUERY_ALL_EXPORT",
     platformAccountId: "00000000-0000-4000-8000-000000000311",
     clientBatchId: "00000000-0000-4000-8000-000000000211",
-    payload: { salesperson: "测试业务员甲" },
   };
   let batchReads = 0;
   const businessAssignments = [{
@@ -179,7 +178,13 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
       return response({ queryMode: "platform_discovery", rows: [], businessAssignments });
     }
     if (value.endsWith(`/platform-accounts/${command.platformAccountId}/credential`)) {
-      return response({ label: "测试账号标签", account: "synthetic-account", password: "synthetic-password" });
+      return response({
+        label: "测试账号标签",
+        account: "synthetic-account",
+        password: "synthetic-password",
+        salespersonName: "账号业务员",
+        assistantName: "账号助理",
+      });
     }
     if (value.endsWith(`/browser-commands/${command.id}/result`)) return response({ command: { status: JSON.parse(init.body).status } });
     throw new Error(`unexpected ${value}`);
@@ -201,9 +206,48 @@ test("QUERY_ALL_EXPORT 只读取一次批次并向网上立案页下发单一命
     accountBindingVerified: true,
     accountLabel: "测试账号标签",
     exportCredential: { account: "synthetic-account", password: "synthetic-password" },
-    salesperson: "测试业务员甲",
-    businessAssignments,
+    salesperson: "账号业务员",
+    assistant: "账号助理",
   }]);
+});
+
+test("QUERY_ALL_EXPORT 缺少平台账号联系人时不下发导出命令", async () => {
+  const command = {
+    id: "00000000-0000-4000-8000-0000000001c1",
+    type: "QUERY_ALL_EXPORT",
+    platformAccountId: "00000000-0000-4000-8000-0000000003c1",
+    clientBatchId: "00000000-0000-4000-8000-0000000002c1",
+  };
+  let resultBody;
+  const chromeApi = chromeMock(async (_tabId, message) => {
+    if (message.type === "PING") return { ok: true, route: "#/pagesWsla/pc/list/index", ready: true };
+    assert.fail("缺少联系人时不得向 content 下发导出命令");
+  });
+  chromeApi.tabs.query = async () => [{ id: 7, active: true, url: "https://zxfw.court.gov.cn/#/pagesWsla/pc/list/index" }];
+  const fetchImpl = async (url, init = {}) => {
+    const value = String(url);
+    if (value.endsWith("/browser-commands/next")) return response({ command });
+    if (value.endsWith(`/browser-commands/${command.id}/claim`)) return response({ command, claimToken: "claim-contacts" });
+    if (value.endsWith(`/import-batches/${command.clientBatchId}/extension-data`)) return response({ queryMode: "platform_discovery", rows: [] });
+    if (value.endsWith(`/platform-accounts/${command.platformAccountId}/credential`)) {
+      return response({ label: "测试账号标签", account: "synthetic-account", password: "synthetic-password" });
+    }
+    if (value.endsWith(`/browser-commands/${command.id}/result`)) {
+      resultBody = JSON.parse(init.body);
+      return response({ command: { status: resultBody.status } });
+    }
+    throw new Error(`unexpected ${value}`);
+  };
+
+  const result = await createBrowserCommandPoller({
+    chromeApi,
+    fetchImpl,
+    initialActivePlatformAccountId: command.platformAccountId,
+  }).pollOnce();
+
+  assert.equal(result.error, "ACCOUNT_CONTACTS_UNAVAILABLE");
+  assert.equal(resultBody.status, "manual_required");
+  assert.equal(resultBody.resultCode, "ACCOUNT_CONTACTS_UNAVAILABLE");
 });
 
 test("QUERY_ALL_EXPORT 未建立同运行期登录绑定时不读取批次、凭据或执行页面", async () => {
