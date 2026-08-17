@@ -15,3 +15,7 @@ test('platform accounts bind contacts and case detail exposes automatic status w
   assert.match(ADMIN_SCRIPT, /wecom-notifications/);
   assert.match(ADMIN_SCRIPT, /retry-wecom/);
 });
+
+test('后台 API 为 PUT 写请求携带 CSRF 令牌', () => {
+  assert.match(ADMIN_SCRIPT, /\['POST', 'PUT', 'PATCH', 'DELETE'\]/);
+});

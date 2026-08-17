@@ -382,7 +382,7 @@ async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   const method = String(options.method || 'GET').toUpperCase();
   if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-  if (csrfToken && ['POST', 'PATCH', 'DELETE'].includes(method)) headers.set('X-CSRF-Token', csrfToken);
+  if (csrfToken && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) headers.set('X-CSRF-Token', csrfToken);
   const response = await fetch(API_BASE + path, {
     ...options,
     headers,
