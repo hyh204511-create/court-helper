@@ -531,6 +531,17 @@ test('QUERY_ALL_EXPORT rejects non-empty templates', async () => {
   );
 });
 
+test('QUERY_ALL_EXPORT rejects templates with skipped business rows', async () => {
+  const incomplete = importBatchRecord();
+  incomplete.skippedRows = 1;
+  const { service } = await makeService(undefined, [incomplete]);
+
+  await assert.rejects(
+    service.create(commandInput('QUERY_ALL_EXPORT')),
+    (error) => error?.code === 'TEMPLATE_NOT_EMPTY' && error?.statusCode === 400,
+  );
+});
+
 test('browser command API creates a query command for an empty template', async () => {
   const emptyLiBatch = importBatchRecord();
   emptyLiBatch.liRows = 0;

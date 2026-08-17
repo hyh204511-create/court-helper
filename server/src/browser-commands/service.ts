@@ -389,7 +389,11 @@ export class BrowserCommandService {
           : normalized.type === 'QUERY_ALL_EXPORT'
             ? importBatch.liRows + importBatch.qzRows
             : 0;
-      if (rowCount > 0) {
+      // A skipped row is still user-supplied template data (for example, a
+      // partially filled business row). Do not treat it as a blank baseline;
+      // otherwise the execution path silently discards it and proceeds with
+      // platform discovery.
+      if (rowCount > 0 || importBatch.skippedRows > 0) {
         throw new AppError('Import template must be empty', 'TEMPLATE_NOT_EMPTY', 400, false);
       }
       clientBatchId = importBatch.id;
