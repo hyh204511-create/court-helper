@@ -13,6 +13,7 @@
 > v1.2 变更：`evidenceClosed` 不再作为可独立采信的客户端声明。成功回写还必须携带本次查询每条记录最终同步所取得的非敏感 `evidenceEventIds`；服务器按账号、任务创建者、案件 `source_event_id`、终态截图和通知台账逐项核验，任一缺失均强制转人工。
 > v1.3 变更：`QUERY_ALL_EXPORT` 可从新版导入表取得逐案件业务员/助理映射，并仅在生成工作簿时按账号、原告、被告关联写入 U/V；平台发现、采集记录与案件存储不增加这两个字段。
 > v1.4 变更：企业微信通知是截图入库后的独立异步能力；`QUERY_ALL_EXPORT` 的服务器闭环只校验案件同步与终态截图入库，不以联系人或通知发送状态阻断报表导出。通知失败仍保留待人工重试记录。
+> v1.5 变更：控制台移除任务级业务员输入；`QUERY_ALL_EXPORT` 只选择平台账号和 22 列空白模板。U/V 固定使用所选平台账号导入并保存的业务员/助理联系人，扩展通过受控凭据出口按需读取，不再从命令 payload 或报表模板业务行取得联系人。
 
 ## 1. 目标与最终职责
 
@@ -54,7 +55,7 @@
 
 - 同一平台账号同时最多一个 `pending`/`executing` 活动任务；重复创建返回 `409 DUPLICATE_PENDING`。
 - 领取与回写必须幂等；错误 claimant 回写返回 `403 FORBIDDEN`，已完成任务重复回写返回原终态。
-- 控制台重试终态 `QUERY_ALL_EXPORT` 时必须复用原命令经校验的安全 payload（包括兼容业务员值）、账号和导入批次，创建新的命令；不得因漏传必填 payload 让重试在创建阶段失败。
+- 控制台重试终态 `QUERY_ALL_EXPORT` 时必须复用原命令经校验的安全 payload、账号和导入批次，创建新的命令；联系人始终按重试执行时所选平台账号的当前固定联系人读取，不复制进 payload。
 - `QUERY_ALL_EXPORT` 的结果请求仅在 `status=succeeded` 时强制要求布尔声明 `evidenceClosed=true` 和非空、去重、最多 100 项的 `evidenceEventIds`。事件 ID 只允许安全的不透明同步标识，不得包含案件、截图、联系人或凭据内容。服务器必须逐项确认：事件对应案件属于命令绑定账号及创建者、案件不是 `UNKNOWN/needsHuman`；三种终态还存在类型匹配且已入库的截图。企业微信通知台账不属于该闭环条件，通知配置或发送失败必须保留为独立待人工记录。缺失声明、空列表、重复项或任一服务器证据不匹配均不得保存成功，统一改写为 `manual_required`、`result_code=EVIDENCE_NOT_CLOSED`、安全摘要“证据未完成服务器闭环”。该字段不得用于 `LOGIN`、单类型查询或独立 `EXPORT_REPORT` 的成功判定。
 - 扩展在命令执行期间写入案件、截图和报表时，必须携带命令 ID、设备 ID 与一次性 claim token；服务端以 `requested_by` 作为资源归属，而不是以执行设备的配对用户作为归属。案件与截图只接受 `QUERY_LI`、`QUERY_QZ`、`QUERY_ALL_EXPORT` 租约，报表只接受 `EXPORT_REPORT`、`QUERY_ALL_EXPORT` 租约；`LOGIN` 等错误命令类型必须返回 `403 FORBIDDEN`。
 - 旧 `login_commands` 在迁移期间保留兼容；本模块不直接删除旧表。
@@ -87,7 +88,7 @@
 
 ### `EXPORT_REPORT`
 
-- `EXPORT_REPORT` 与 `QUERY_ALL_EXPORT` 进入导出阶段前，SW 必须按 `platformAccountId` 从扩展专用出口临时读取 `{label,account,password}`；只向本次受信 content 消息传递，执行结束即释放。任何命令 payload、持久 storage、任务结果、进度、错误摘要和日志均不得包含这些明文。
+- `EXPORT_REPORT` 与 `QUERY_ALL_EXPORT` 进入导出阶段前，SW 必须按 `platformAccountId` 从扩展专用出口临时读取 `{label,account,password,salespersonName,assistantName}`；只向本次受信 content 消息传递，执行结束即释放。任何命令 payload、持久 storage、任务结果、进度、错误摘要和日志均不得包含这些明文。兼容 `EXPORT_REPORT` 可忽略联系人；`QUERY_ALL_EXPORT` 要求两名联系人均存在，否则返回 `ACCOUNT_CONTACTS_UNAVAILABLE`，不得生成残缺 U/V。
 - 兼容 `EXPORT_REPORT` 未携带绑定证明时仍须精确校验页面顶栏账号等于凭据账号；`QUERY_ALL_EXPORT` 已通过同运行期 `LOGIN` UUID 绑定证明时不得重复比较这两段语义不同的文本。两条路径都只用临时凭据覆盖工作簿 C/D 列并以净化后的标签命名文件；校验或取凭据失败不得下载、上传或回写伪成功。
 
 - 控制台创建导出任务时必须显式选择平台账号；服务端将其不透明 UUID 写入既有 `browser_commands.platform_account_id`。该 UUID 不是账号明文或凭据，禁止写入 payload、扩展 storage、日志或任务摘要。
@@ -100,9 +101,9 @@
 
 ### `QUERY_ALL_EXPORT`
 
-- 控制台必须同时提交 `platformAccountId` 与未过期的 `importBatchId`。`QUERY_ALL_EXPORT` 允许合并模板含业务行，但只读取其 A/B/C/U/V 形成本次导出的临时业务归属映射；查询继续使用平台发现模式，不用导入行驱动查询或覆盖平台事实。`QUERY_LI` / `QUERY_QZ` 的非空模板仍以 `TEMPLATE_NOT_EMPTY` 拒绝。
-- 控制台同时提交 `payload.salesperson`：字符串首尾空白清理后长度为 1–100 个字符，仅作为旧模板没有逐案件映射时的 U 列兼容回退。导入映射命中时必须优先使用该案件 U/V，且二者都不得从平台 DOM 或案件字段推断，也不得写入 IndexedDB、任务结果、进度或报表元数据。
-- Service Worker 只领取和下发一次命令，并只读取一次受 claim 约束的批次执行数据；响应中的业务归属映射只随本次受信 content 调用进入工作簿生成函数，不写入 IndexedDB、平台采集记录、命令结果或进度。命令执行租约为 40 分钟。页面刷新、Worker 中断或浏览器关闭不做中途断点续跑，命令按既有规则过期后由用户显式重试并从立案阶段重新执行。
+- 控制台必须同时提交 `platformAccountId` 与未过期的 `importBatchId`，且所选批次必须是 A–V 表头完整、没有业务数据行的 22 列空白报表。任何业务数据行均返回 `TEMPLATE_NOT_EMPTY`；查询只使用平台发现模式，不用导入行驱动查询或覆盖平台事实。
+- 控制台不提交业务员或助理字段，`QUERY_ALL_EXPORT` payload 保持空对象。Service Worker 在账号绑定通过后，按 `platformAccountId` 从扩展专用凭据出口取得该账号固定的 `salespersonName/assistantName`，并把同一对姓名写入本次报表所有业务数据行的 U/V。联系人不得从平台 DOM、案件字段或报表模板推断，也不得写入 IndexedDB、命令 payload/result、进度或报表元数据。
+- Service Worker 只领取和下发一次命令，并只读取一次受 claim 约束的空白批次执行数据。命令执行租约为 40 分钟。页面刷新、Worker 中断或浏览器关闭不做中途断点续跑，命令按既有规则过期后由用户显式重试并从立案阶段重新执行。
 - content 在精确网上立案列表路由中依次执行：精确切换“审判”分类并点击查询 → 立案平台发现/采集 → 精确切换“执行”分类并点击查询 → 强执平台发现/采集 → 按同一页面账号和 `platformAccountId` 生成、下载、上传报表。
 - tab 文字必须修剪后全等，目标元素和查询按钮必须唯一、可见、可点；切换后等待列表稳定最多 10 秒，每个切换/查询动作最多重试 1 次。元素缺失/重复、列表未稳定、会话/账号/路由错误、选择器变化、API/DOM 不一致等硬失败立即停止且不得导出。
 - 单条案件 `UNKNOWN`、证据缺失或截图失败继续保留 `needsHuman` 和精确错误码，不阻断另一类型采集及最终导出；报表继续按既有红色待人工规则呈现，不得猜测补齐。只有经结构化总数与当前分类 DOM 一致确认的 0 条结果可原子清空该账号该类型旧记录并作为成功空阶段；两类最终均为 0 时仍由导出层返回 `REPORT_EMPTY` 且不下载、不上传。
@@ -149,7 +150,7 @@
 
 - 控制台只展示统一命令的真实状态、进度和稳定结果码。当前没有独立扩展心跳/法院标签心跳，因此不得渲染永远停在“未确认”的浏览器连接、法院标签或登录态占位卡；后续若新增可验证心跳，必须另立规格和测试。
 - **平台账号与自动登录**：只列出启用平台账号；选择账号后，“一键登录”只创建统一 `LOGIN` 命令。平台账号管理页不得再提供“远程登录”按钮或登录指令列表。
-- **一键查询导出区**：只保留账号、空白批次、业务员自由文本输入与“一键查询并导出”按钮，固定创建 `QUERY_ALL_EXPORT`；业务员必填且最大 100 个字符，不得混入 `LOGIN` 或独立任务类型选择器。
+- **一键查询导出区**：只保留平台账号、22 列空白报表批次与“一键查询并导出”按钮，固定创建 `QUERY_ALL_EXPORT`；不显示或提交业务员/助理输入。所选账号未配置成对联系人时禁止创建并提示先到平台账号页导入或维护联系人。
 - 当前任务与历史任务：状态、进度、失败码、待人工原因、取消/重试，并显示完整任务创建者用户名；页面同时显示当前后台会话的完整用户名，不做掩码。
 - 任务列表显示平台账号标签；控制台提供进入 `/admin/cases` 案件台账的明确链接，但不得在控制页重复调用案件列表 API、实现案件分页或渲染案件状态。任务 `succeeded` 只表示命令执行完成，不得替代案件状态或推断“立案成功”。
 - 提供“清空已结束任务”操作：浏览器原生二次确认后发送 `DELETE /browser-commands`；提交期间禁用按钮，成功后显示实际删除条数并重新读取列表。服务端按角色限制删除范围且始终保留 `pending/executing`；案件、截图、导入批次、报表和账号均不受影响。
@@ -262,3 +263,9 @@ extension 生成稳定 deviceId + 随机 32-byte exchangeSecret
 - 标签无法精确取得时回写稳定码 `ACCOUNT_LABEL_UNAVAILABLE`，不得使用真实登录账号、UUID 或猜测值作为文件名，也不得继续下载或上传。
 - 凭据接口返回 `401/AUTH_REQUIRED` 时沿用轮询层授权失效处理；`404`、`409 ACCOUNT_DISABLED`、`503 CREDENTIAL_UNAVAILABLE` 映射为不含响应正文的稳定码。任何错误回执、日志、命令结果与存储均不得包含账号密码。
 - 发布顺序采用服务器先于扩展；自动测试必须覆盖“旧服务 `{account,password}` + 新扩展”和“新服务 `{label,account,password}` + 新扩展”两种组合。
+
+### 平台账号联系人导出（v1.5）
+
+- 自动化凭据出口对 `QUERY_ALL_EXPORT` 增加 `salespersonName/assistantName`，来源仅为绑定平台账号记录；两者必须成对存在、各自沿用平台账号联系人 64 字符与控制字符校验。
+- 新扩展连接未返回联系人字段的旧服务，或所选账号尚未配置联系人时，回写 `manual_required/ACCOUNT_CONTACTS_UNAVAILABLE`；不得回退到手填值、模板行、账号标签或页面文本。
+- 联系人只在本次凭据响应、SW 内存、受信 content 消息和最终 xlsx 中流转；不得进入命令 payload/result、扩展存储、案件、报表元数据或日志。发布顺序仍为服务器先于扩展。

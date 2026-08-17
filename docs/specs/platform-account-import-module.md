@@ -22,6 +22,7 @@
 - 返回 `{ imported, skipped, reasons[] }`，`reasons` 仅含行号和稳定错误码，不含账号、密码或原告明文。
 - 稳定逐行原因至少包括：基础字段缺失 `REQUIRED_FIELD`、联系人只填一侧 `CONTACT_PAIR_REQUIRED`、联系人格式不合法 `INVALID_CONTACT_NAME`、标签重复 `DUPLICATE_LABEL`。
 - 管理员读取平台账号列表时返回并展示业务员和助理姓名；普通用户列表仍只返回 `contactsConfigured`，不得取得联系人姓名。创建、编辑、删除的单条响应不回显姓名。
+- 扩展专用凭据出口可在已领取并绑定同一平台账号的 `QUERY_ALL_EXPORT` 执行期返回该账号的 `salespersonName/assistantName`，供最终 xlsx 的 U/V 使用；联系人不得进入命令 payload/result、扩展存储、案件、报表元数据或日志。未配置成对联系人时一键导出返回 `ACCOUNT_CONTACTS_UNAVAILABLE`。
 - 原有单条新增、编辑、启停、软删除流程保持不变。
 
 ## 范围外

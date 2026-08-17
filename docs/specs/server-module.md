@@ -47,7 +47,7 @@
 | `GET /platform-accounts` | admin,user | 返回 `id,label,enabled,updatedAt`；不含明文凭据 |
 | `GET /platform-accounts/:id/credential-view` | admin,user（仅 `admin_ui` Cookie 会话） | 专用后台明文查看接口，返回解密后的 `{account,password}`，`Cache-Control: private, no-store`；extension Bearer 会话拒绝 |
 | `POST /platform-accounts`；`PATCH/DELETE /platform-accounts/:id` | admin | 创建、改标签/启停/替换凭据、软删除 |
-| `POST /platform-accounts/:id/credential` | admin,user | **自动化专用凭据出口**：仅启用账号、有效 extension 会话可调用；返回解密后的 `{account,password}`，并设置 `Cache-Control: no-store`；后台页面不得调用 |
+| `POST /platform-accounts/:id/credential` | admin,user | **自动化专用凭据出口**：仅启用账号、有效 extension 会话可调用；返回解密后的 `{label,account,password,salespersonName,assistantName}`，其中联系人仅供绑定账号的 `QUERY_ALL_EXPORT` 写入最终 xlsx；设置 `Cache-Control: no-store`，后台页面不得调用 |
 | `POST /import-batches` | admin,user（仅 `admin_ui` Cookie 会话） | multipart 上传 xlsx（`file`，≤ 20 MiB）；私有保存、按 excel-module 规则解析为受控批次；返回不含业务明文的批次元数据与 `{liRows,qzRows,skipped}` 校验摘要 |
 | `GET /import-batches` | admin,user（仅 `admin_ui` Cookie 会话） | 所有登录后台用户可分页列出批次元数据；不返回对象键、解析行、账号或密码 |
 | `GET /import-batches/:id/content` | admin,user（仅 `admin_ui` Cookie 会话） | 所有登录后台用户可下载完整上传文件；`Cache-Control: private, no-store`，不返回 object_key |
