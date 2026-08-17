@@ -188,7 +188,7 @@ test('platform accounts hide credentials, enforce role visibility, and re-encryp
       headers: { authorization: `Bearer ${adminToken}` },
     });
     assert.equal(replacementCredential.statusCode, 200);
-    assert.deepEqual(replacementCredential.json(), { label: 'primary', account: 'court-user-2', password: 'court-pass-2' });
+    assert.deepEqual(replacementCredential.json(), { label: 'primary', account: 'court-user-2', password: 'court-pass-2', salespersonName: null, assistantName: null });
     assert.equal(replacementCredential.headers['cache-control'], 'no-store');
 
     const replaced = await platformAccountRepository.findById(created.json().id);
@@ -410,7 +410,7 @@ test('credential automation endpoint accepts only extension bearer sessions for 
           headers: { authorization: `Bearer ${token}` },
         });
         assert.equal(response.statusCode, 200);
-        assert.deepEqual(response.json(), { label: 'automation-credential', account: 'automation-account', password: 'automation-password' });
+        assert.deepEqual(response.json(), { label: 'automation-credential', account: 'automation-account', password: 'automation-password', salespersonName: null, assistantName: null });
         assert.equal(response.headers['cache-control'], 'no-store');
       }
     }

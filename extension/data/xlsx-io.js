@@ -171,7 +171,7 @@ function writeCombinedRow(
   imageJobs,
   exportCredential = null,
   salesperson = "",
-  businessAssignments = new Map(),
+  assistant = "",
 ) {
   formatDataRow(ws, row);
   const identity = pair.li ?? pair.qz ?? {};
@@ -185,13 +185,8 @@ function writeCombinedRow(
   writeResult(ws, row, pair.qz, 13, imageJobs, {
     success: STYLE.image.qzSuccess, reject: STYLE.image.qzReject,
   });
-  const assignment = businessAssignments.get(businessKey(
-    exportCredential?.account ?? identity.account,
-    identity.plaintiff,
-    identity.defendant,
-  ));
-  ws.getCell(row, 21).value = assignment ? assignment.salesperson : salesperson;
-  ws.getCell(row, 22).value = assignment?.assistant ?? "";
+  ws.getCell(row, 21).value = salesperson;
+  ws.getCell(row, 22).value = assistant;
 }
 
 /**
@@ -200,8 +195,7 @@ function writeCombinedRow(
  * @returns {Promise<ExcelJS.Workbook>}
  */
 export async function buildExportWorkbook({
-  cases = [], enforcementCases = [], exportCredential = null, salesperson = "",
-  businessAssignments = [],
+  cases = [], enforcementCases = [], exportCredential = null, salesperson = "", assistant = "",
 } = {}) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Sheet1");
@@ -211,7 +205,6 @@ export async function buildExportWorkbook({
 
   writeHeader(ws, 1, HEADER_COMBINED);
   const imageJobs = [];
-  const indexedBusinessAssignments = indexBusinessAssignments(businessAssignments);
   let row = 2;
   for (const pair of combinedRows(cases, enforcementCases)) {
     writeCombinedRow(
@@ -221,7 +214,7 @@ export async function buildExportWorkbook({
       imageJobs,
       exportCredential,
       salesperson,
-      indexedBusinessAssignments,
+      assistant,
     );
     row += 1;
   }

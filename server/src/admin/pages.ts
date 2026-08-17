@@ -264,7 +264,6 @@ function browserControlPage(role: AdminRole): string {
           <div class="field-grid browser-command-fields">
             <div class="field"><label for="browser-command-account">平台账号（必选）</label><div class="account-picker" id="browser-command-account-picker"><input id="browser-command-account" type="search" autocomplete="off" placeholder="输入账号标签或关键词" role="combobox" aria-autocomplete="list" aria-controls="browser-command-account-menu" aria-expanded="false" required><button id="browser-command-account-toggle" class="account-picker-toggle" type="button" aria-label="展开平台账号列表" aria-controls="browser-command-account-menu" aria-expanded="false">▼</button><div id="browser-command-account-menu" class="account-picker-menu" role="listbox" hidden></div></div></div>
             <div class="field"><label for="browser-command-batch">空白导入批次（必选）</label><select id="browser-command-batch"><option value="">不选择</option></select></div>
-            <div class="field"><label for="browser-command-salesperson">业务员（必填）</label><input id="browser-command-salesperson" type="text" maxlength="100" autocomplete="off" placeholder="输入业务员姓名" required></div>
           </div>
           <div class="form-actions"><button class="primary" type="submit">一键查询并导出</button><button class="secondary" id="browser-command-refresh" type="button">立即刷新</button></div>
         </form><p class="message" data-browser-command-message aria-live="polite"></p>
@@ -272,7 +271,7 @@ function browserControlPage(role: AdminRole): string {
     </section>
     <section class="panel" aria-labelledby="import-batch-title">
       <div class="panel-head"><div><h3 id="import-batch-title">导入查询批次</h3><p>上传 xlsx 后选择批次绑定查询任务。服务端仅返回批次摘要。</p></div></div>
-      <div class="panel-body"><form id="import-batch-form" enctype="multipart/form-data"><div class="field"><label for="import-batch-file">Excel 模板（新版 21 列）</label><input id="import-batch-file" name="file" type="file" accept=".xlsx" required></div><div class="form-actions"><button class="primary" type="submit">上传批次</button></div></form><p class="message" data-import-batch-message aria-live="polite"></p><div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>立案行</th><th>强执行</th><th>跳过</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="import-batch-rows"></tbody></table></div></div>
+      <div class="panel-body"><form id="import-batch-form" enctype="multipart/form-data"><div class="field"><label for="import-batch-file">空白报表模板（22 列）</label><input id="import-batch-file" name="file" type="file" accept=".xlsx" required></div><div class="form-actions"><button class="primary" type="submit">上传批次</button></div></form><p class="message" data-import-batch-message aria-live="polite"></p><div class="table-wrap"><table class="data-table"><thead><tr><th>文件</th><th>立案行</th><th>强执行</th><th>跳过</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="import-batch-rows"></tbody></table></div></div>
     </section>
     <section class="panel" aria-labelledby="browser-command-list-title">
       <div class="panel-head"><div><h3 id="browser-command-list-title">任务列表</h3><p>这里只显示任务状态、进度与错误码；案件结果统一前往案件台账查看。</p></div><div class="row-actions"><button id="browser-command-delete-all" class="small-button danger" type="button">一键删除所有一键任务</button><button id="browser-command-clear" class="small-button danger" type="button">清空已结束任务</button></div></div>

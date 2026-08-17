@@ -432,7 +432,7 @@ test('browser command service accepts all five command types with safe payloads'
     assert.deepEqual(command.payload, type === 'LOGIN'
       ? {}
       : type === 'QUERY_ALL_EXPORT'
-        ? { salesperson: '测试业务员甲' }
+        ? {}
         : { batchId: 'batch-safe-1', kind: 'li' });
     assert.equal(command.clientBatchId, type === 'QUERY_LI' || type === 'QUERY_QZ' || type === 'QUERY_ALL_EXPORT'
       ? IMPORT_BATCH_ID
@@ -448,18 +448,14 @@ test('browser command service requires a platform account for report exports', a
   );
 });
 
-test('QUERY_ALL_EXPORT requires a trimmed salesperson of at most 100 characters', async () => {
+test('QUERY_ALL_EXPORT uses an empty payload and discards the retired salesperson payload on retry', async () => {
   const { service } = await makeService();
-  for (const salesperson of ['', '   ', '业'.repeat(101)]) {
-    await assert.rejects(
-      service.create(commandInput('QUERY_ALL_EXPORT', { payload: { salesperson } })),
-      (error) => error?.code === 'VALIDATION_ERROR' && error?.statusCode === 400,
-    );
-  }
-  const command = await service.create(commandInput('QUERY_ALL_EXPORT', {
-    payload: { salesperson: '  测试业务员甲  ' },
+  const command = await service.create(commandInput('QUERY_ALL_EXPORT', { payload: {} }));
+  assert.deepEqual(command.payload, {});
+  const legacy = await service.create(commandInput('QUERY_ALL_EXPORT', {
+    platformAccountId: randomUUID(), payload: { salesperson: '测试业务员甲' },
   }));
-  assert.deepEqual(command.payload, { salesperson: '测试业务员甲' });
+  assert.deepEqual(legacy.payload, {});
 });
 
 test('browser query commands bind only an existing, unexpired import batch', async () => {
@@ -523,15 +519,16 @@ test('browser query commands reject non-empty template blocks instead of falling
   }
 });
 
-test('QUERY_ALL_EXPORT accepts non-empty combined templates for export-only business ownership', async () => {
+test('QUERY_ALL_EXPORT rejects non-empty templates', async () => {
   const nonEmpty = importBatchRecord();
   nonEmpty.liRows = 2;
   nonEmpty.qzRows = 2;
   const { service } = await makeService(undefined, [nonEmpty]);
 
-  const command = await service.create(commandInput('QUERY_ALL_EXPORT'));
-  assert.equal(command.clientBatchId, IMPORT_BATCH_ID);
-  assert.equal(command.status, 'pending');
+  await assert.rejects(
+    service.create(commandInput('QUERY_ALL_EXPORT')),
+    (error) => error?.code === 'TEMPLATE_NOT_EMPTY' && error?.statusCode === 400,
+  );
 });
 
 test('browser command API creates a query command for an empty template', async () => {
@@ -955,22 +952,22 @@ test('QUERY_ALL_EXPORT requires one empty batch and persists it for the single c
       type: 'QUERY_ALL_EXPORT',
       platformAccountId: ACCOUNT_ID,
       importBatchId: IMPORT_BATCH_ID,
-      payload: { salesperson: '  测试业务员甲  ' },
+      payload: {},
     });
     assert.equal(created.statusCode, 201);
     assert.equal(created.json().command.type, 'QUERY_ALL_EXPORT');
     assert.equal(created.json().command.clientBatchId, IMPORT_BATCH_ID);
-    assert.deepEqual(created.json().command.payload, { salesperson: '测试业务员甲' });
+    assert.deepEqual(created.json().command.payload, {});
   } finally {
     await app.close();
   }
 });
 
-test('QUERY_ALL_EXPORT accepts non-empty metadata rows and receives a 40-minute claim lease', async () => {
+test('QUERY_ALL_EXPORT receives a 40-minute claim lease for an empty template', async () => {
   const now = new Date('2026-08-08T10:00:00.000Z');
   const nonEmptyId = '00000000-0000-4000-8000-000000000088';
   const { service } = await makeService(now, [
-    { ...importBatchRecord(nonEmptyId, new Date('2026-08-08T12:00:00.000Z')), qzRows: 1 },
+    { ...importBatchRecord(nonEmptyId, new Date('2026-08-08T12:00:00.000Z')), qzRows: 0 },
   ]);
   const command = await service.create(commandInput('QUERY_ALL_EXPORT', { importBatchId: nonEmptyId }));
   assert.equal(command.clientBatchId, nonEmptyId);

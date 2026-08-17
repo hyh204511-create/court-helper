@@ -30,6 +30,7 @@ const MANUAL_CODES = new Set([
   "ACCOUNT_MISMATCH",
   "ACCOUNT_DISABLED",
   "ACCOUNT_LABEL_UNAVAILABLE",
+  "ACCOUNT_CONTACTS_UNAVAILABLE",
   "CREDENTIAL_UNAVAILABLE",
   "TEMPLATE_NOT_EMPTY",
   "PLATFORM_ACCOUNT_UNAVAILABLE",
@@ -105,7 +106,7 @@ function exportCredentialErrorCode(error) {
   return "CREDENTIAL_FETCH_FAILED";
 }
 
-async function resolveExportIdentity(client, platformAccountId, signal) {
+async function resolveExportIdentity(client, platformAccountId, signal, requireContacts = false) {
   let credential;
   try {
     credential = await client.request(`/platform-accounts/${path(platformAccountId)}/credential`, { method: "POST", signal });
@@ -115,6 +116,11 @@ async function resolveExportIdentity(client, platformAccountId, signal) {
   if (typeof credential?.account !== "string" || credential.account.length === 0
     || typeof credential?.password !== "string" || credential.password.length === 0) {
     return { ok: false, error: "CREDENTIAL_FETCH_FAILED" };
+  }
+  const salesperson = trim(credential.salespersonName);
+  const assistant = trim(credential.assistantName);
+  if (requireContacts && (!salesperson || !assistant)) {
+    return { ok: false, error: "ACCOUNT_CONTACTS_UNAVAILABLE" };
   }
 
   let accountLabel = trim(credential.label);
@@ -136,6 +142,7 @@ async function resolveExportIdentity(client, platformAccountId, signal) {
     ok: true,
     accountLabel,
     exportCredential: { account: credential.account, password: credential.password },
+    ...(requireContacts ? { salesperson, assistant } : {}),
   };
 }
 
@@ -487,9 +494,6 @@ export function createBrowserCommandPoller({
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
       if (data?.queryMode === "platform_discovery") {
         message = { ...message, queryMode: "platform_discovery", platformAccountId: command.platformAccountId };
-        if (command.type === "QUERY_ALL_EXPORT" && Array.isArray(data.businessAssignments)) {
-          message = { ...message, businessAssignments: data.businessAssignments };
-        }
       } else if (data?.queryMode === "template_not_empty") {
         return { ok: false, error: "TEMPLATE_NOT_EMPTY" };
       } else {
@@ -506,8 +510,6 @@ export function createBrowserCommandPoller({
         ...message,
         accountBindingVerified: true,
       };
-      const salesperson = trim(command.payload?.salesperson);
-      if (salesperson) message = { ...message, salesperson };
       const attempts = retryAttempts(contentRouteRetryAttempts);
       const contentReady = await waitForQueryAllExportContent(
         chromeApi,
@@ -521,13 +523,17 @@ export function createBrowserCommandPoller({
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
     }
     if (command.type === "QUERY_ALL_EXPORT" || command.type === "EXPORT_REPORT") {
-      const exportIdentity = await resolveExportIdentity(client, command.platformAccountId, signal);
+      const exportIdentity = await resolveExportIdentity(client, command.platformAccountId, signal, command.type === "QUERY_ALL_EXPORT");
       if (!isCurrentGeneration(generation)) return { ok: false, error: "CONFIG_CHANGED" };
       if (!exportIdentity.ok) return exportIdentity;
       message = {
         ...message,
         accountLabel: exportIdentity.accountLabel,
         exportCredential: exportIdentity.exportCredential,
+        ...(command.type === "QUERY_ALL_EXPORT" ? {
+          salesperson: exportIdentity.salesperson,
+          assistant: exportIdentity.assistant,
+        } : {}),
       };
     }
     try {

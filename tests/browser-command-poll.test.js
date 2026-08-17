@@ -54,7 +54,7 @@ function platformDiscoveryHarness(command) {
         return response({ queryMode: "platform_discovery", rows: [] });
       }
       if (value.endsWith(`/platform-accounts/${command.platformAccountId}/credential`)) {
-        return response({ label: "测试账号标签", account: "synthetic-account", password: "synthetic-password" });
+        return response({ label: "测试账号标签", account: "synthetic-account", password: "synthetic-password", salespersonName: "测试业务员", assistantName: "测试助理" });
       }
       if (value.endsWith(`/browser-commands/${command.id}/result`)) {
         resultBody = JSON.parse(init.body);
@@ -325,7 +325,7 @@ test("同运行期 LOGIN 绑定与一键任务账号一致时下发已验证绑�
     const command = [loginCommand, queryCommand].find((item) => value.endsWith(`/browser-commands/${item.id}/claim`));
     if (command) return response({ command, claimToken: `claim-${command.id}` });
     if (value.endsWith(`/platform-accounts/${platformAccountId}/credential`)) {
-      return response({ label: "SYNTHETIC LABEL", account: "synthetic-account", password: "synthetic-password" });
+      return response({ label: "SYNTHETIC LABEL", account: "synthetic-account", password: "synthetic-password", salespersonName: "测试业务员", assistantName: "测试助理" });
     }
     if (value.endsWith(`/import-batches/${queryCommand.clientBatchId}/extension-data`)) {
       return response({ queryMode: "platform_discovery", rows: [] });
@@ -1005,7 +1005,7 @@ test("报表命令在 Worker 冷启动后仍使用命令绑定的账号执行导
   });
 });
 
-test("报表命令兼容旧服务凭据响应并按 UUID 精确补取非敏感账号标签", async () => {
+test("报表命令使用凭据响应中的账号标签和固定联系人", async () => {
   const platformAccountId = "00000000-0000-4000-8000-000000000417";
   const command = {
     id: "00000000-0000-4000-8000-000000000416",
@@ -1013,7 +1013,6 @@ test("报表命令兼容旧服务凭据响应并按 UUID 精确补取非敏感�
     platformAccountId,
     clientBatchId: "00000000-0000-4000-8000-000000000422",
   };
-  let accountListReads = 0;
   let dispatched;
   const chromeApi = chromeMock(async (_tabId, message) => {
     if (message.type === "PING") {
@@ -1030,16 +1029,7 @@ test("报表命令兼容旧服务凭据响应并按 UUID 精确补取非敏感�
       return response({ queryMode: "platform_discovery", rows: [] });
     }
     if (value.endsWith(`/platform-accounts/${platformAccountId}/credential`)) {
-      return response({ account: "synthetic-account", password: "synthetic-password" });
-    }
-    if (value.endsWith("/platform-accounts")) {
-      accountListReads += 1;
-      return response({
-        platformAccounts: [
-          { id: "00000000-0000-4000-8000-000000000999", label: "其他账号" },
-          { id: platformAccountId, label: "旧服务兼容标签" },
-        ],
-      });
+      return response({ label: "测试账号标签", account: "synthetic-account", password: "synthetic-password", salespersonName: "测试业务员", assistantName: "测试助理" });
     }
     if (value.endsWith(`/browser-commands/${command.id}/result`)) {
       return response({ command: { status: JSON.parse(init.body).status } });
@@ -1054,15 +1044,16 @@ test("报表命令兼容旧服务凭据响应并按 UUID 精确补取非敏感�
   }).pollOnce();
 
   assert.equal(result.status, "uploaded");
-  assert.equal(accountListReads, 1);
   assert.deepEqual(dispatched, {
     type: "BROWSER_COMMAND_EXECUTE",
     commandType: "QUERY_ALL_EXPORT",
     queryMode: "platform_discovery",
     platformAccountId,
     accountBindingVerified: true,
-    accountLabel: "旧服务兼容标签",
+    accountLabel: "测试账号标签",
     exportCredential: { account: "synthetic-account", password: "synthetic-password" },
+    salesperson: "测试业务员",
+    assistant: "测试助理",
   });
 });
 

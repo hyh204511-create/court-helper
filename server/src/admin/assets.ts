@@ -1359,7 +1359,6 @@ function initBrowserControl() {
   const accountToggle = $('#browser-command-account-toggle');
   const accountMenu = $('#browser-command-account-menu');
   const batch = $('#browser-command-batch');
-  const salesperson = $('#browser-command-salesperson');
   let credentialRequestGeneration = 0;
   const invalidatePlatformCredential = () => {
     credentialRequestGeneration += 1;
@@ -1411,17 +1410,14 @@ function initBrowserControl() {
   });
   account.required = true;
   batch.required = true;
-  salesperson.required = true;
   commandForm?.addEventListener('submit', async (event) => {
-    event.preventDefault(); const selected = selectedEnabledBrowserAccount(account.value); const platformAccountId = selected?.id || null; const importBatchId = batch.value || null; const salespersonName = salesperson.value.trim();
+    event.preventDefault(); const selected = selectedEnabledBrowserAccount(account.value); const platformAccountId = selected?.id || null; const importBatchId = batch.value || null;
     if (!selected) { setMessage($('[data-browser-command-message]'), '请从启用平台账号标签提示中选择'); return; }
     if (!importBatchId) { setMessage($('[data-browser-command-message]'), '一键任务必须选择空白导入批次'); return; }
-    if (!salespersonName) { setMessage($('[data-browser-command-message]'), '请输入业务员'); return; }
-    if (salespersonName.length > 100) { setMessage($('[data-browser-command-message]'), '业务员最多 100 个字符'); return; }
+    if (selected.contactsConfigured !== true) { setMessage($('[data-browser-command-message]'), '所选平台账号未配置业务员和助理，请先在平台账号页维护'); return; }
     account.value = selected.label || '';
-    salesperson.value = salespersonName;
     setFormBusy(commandForm, true);
-    try { await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: 'QUERY_ALL_EXPORT', platformAccountId, importBatchId, payload: { salesperson: salespersonName } }) }); setMessage($('[data-browser-command-message]'), '一键查询导出任务已创建', 'success'); await loadBrowserCommands(); }
+    try { await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: 'QUERY_ALL_EXPORT', platformAccountId, importBatchId, payload: {} }) }); setMessage($('[data-browser-command-message]'), '一键查询导出任务已创建', 'success'); await loadBrowserCommands(); }
     catch (error) { setMessage($('[data-browser-command-message]'), errorMessage(error)); } finally { setFormBusy(commandForm, false); }
   });
   importForm?.addEventListener('submit', async (event) => {
@@ -1526,7 +1522,7 @@ function initBrowserControl() {
       } else if (button.dataset.action === 'retry-browser-command') {
         const row = button.closest('tr');
         const payload = JSON.parse(row.dataset.payload || '{}');
-        await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: row.dataset.type, platformAccountId: row.dataset.account || null, importBatchId: row.dataset.batch || null, ...(Object.keys(payload).length ? { payload } : {}) }) });
+        await api('/browser-commands', { method: 'POST', body: JSON.stringify({ type: row.dataset.type, platformAccountId: row.dataset.account || null, importBatchId: row.dataset.batch || null, ...(row.dataset.type === 'QUERY_ALL_EXPORT' ? { payload: {} } : Object.keys(payload).length ? { payload } : {}) }) });
       } else if (button.dataset.action === 'delete-browser-command') {
         if (!window.confirm('确认物理删除此一键查询并导出任务记录？')) return;
         await api('/browser-commands/' + encodeURIComponent(id), { method: 'DELETE' });

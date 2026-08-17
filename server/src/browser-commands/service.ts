@@ -171,17 +171,11 @@ function safePayload(value: unknown, type: BrowserCommandType): BrowserCommandJs
   }
   const payload = cloneJsonObject(value);
   if (type !== 'QUERY_ALL_EXPORT') return payload;
-  if (Object.keys(payload).length !== 1 || typeof payload.salesperson !== 'string') {
-    throw new ValidationError([{ field: 'payload.salesperson', code: 'required' }]);
-  }
-  const salesperson = payload.salesperson.trim();
-  if (salesperson === '') {
-    throw new ValidationError([{ field: 'payload.salesperson', code: 'required' }]);
-  }
-  if (salesperson.length > 100) {
-    throw new ValidationError([{ field: 'payload.salesperson', code: 'maximum_exceeded' }]);
-  }
-  return { salesperson };
+  if (Object.keys(payload).length === 0) return {};
+  // Historical commands may carry the retired task-level salesperson.  Drop it
+  // when they are retried rather than preserving contact data in a new command.
+  if (Object.keys(payload).length === 1 && typeof payload.salesperson === 'string') return {};
+  throw new ValidationError([{ field: 'payload', code: 'not_allowed_for_type' }]);
 }
 
 function normalizeCreate(input: BrowserCommandCreateInput): NormalizedBrowserCommandCreate {
@@ -395,7 +389,7 @@ export class BrowserCommandService {
           : normalized.type === 'QUERY_ALL_EXPORT'
             ? importBatch.liRows + importBatch.qzRows
             : 0;
-      if (rowCount > 0 && normalized.type !== 'QUERY_ALL_EXPORT') {
+      if (rowCount > 0) {
         throw new AppError('Import template must be empty', 'TEMPLATE_NOT_EMPTY', 400, false);
       }
       clientBatchId = importBatch.id;

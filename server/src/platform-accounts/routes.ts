@@ -244,6 +244,11 @@ export function registerPlatformAccountRoutes(
     reply.header('Cache-Control', 'no-store');
     const id = (request.params as { id: string }).id;
     const [record, credential] = await Promise.all([service.get(id), service.credential(id)]);
-    return { label: record.label, ...credential };
+    return {
+      label: record.label,
+      ...credential,
+      salespersonName: record.salespersonName,
+      assistantName: record.assistantName,
+    };
   });
 }

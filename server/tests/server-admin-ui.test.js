@@ -686,7 +686,7 @@ test('browser control renders full session and creator names, separates LOGIN, a
         }
         if (requestUrl.pathname === '/api/v1/platform-accounts') {
           return jsonResponse({ platformAccounts: [
-            { id: ACCOUNT_ID, label: 'synthetic-account', enabled: true },
+            { id: ACCOUNT_ID, label: 'synthetic-account', enabled: true, contactsConfigured: true },
             { id: SECOND_ACCOUNT_ID, label: 'second-account', enabled: true },
             { id: ARCHIVED_ACCOUNT_ID, label: 'archived-account', enabled: false },
           ] });
@@ -769,13 +769,11 @@ test('browser control renders full session and creator names, separates LOGIN, a
       const taskAccountToggle = dom.window.document.querySelector('#browser-command-account-toggle');
       const taskAccountMenu = dom.window.document.querySelector('#browser-command-account-menu');
       const taskBatch = dom.window.document.querySelector('#browser-command-batch');
-      const taskSalesperson = dom.window.document.querySelector('#browser-command-salesperson');
       assert.equal(taskAccount.tagName, 'INPUT');
       assert.equal(taskAccount.type, 'search');
       assert.equal(taskAccount.getAttribute('role'), 'combobox');
       assert.equal(taskAccount.getAttribute('list'), null);
-      assert.equal(taskSalesperson.type, 'text');
-      assert.equal(taskSalesperson.maxLength, 100);
+      assert.equal(dom.window.document.querySelector('#browser-command-salesperson'), null);
       assert.deepEqual(
         [...taskAccountMenu.querySelectorAll('[role="option"]')].map((option) => option.textContent),
         ['synthetic-account', 'second-account'],
@@ -796,7 +794,6 @@ test('browser control renders full session and creator names, separates LOGIN, a
       assert.equal(dom.window.document.querySelectorAll('[data-action="delete-import-batch"]').length, 1);
       const browserCommandPosts = () => requests.filter((request) => request.method === 'POST' && request.path === '/api/v1/browser-commands');
       taskBatch.value = emptyLiBatch.id;
-      taskSalesperson.value = '  测试业务员甲  ';
       taskAccount.value = 'account';
       const ambiguousRequestsBefore = browserCommandPosts().length;
       dom.window.document.querySelector('#browser-command-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
@@ -812,7 +809,7 @@ test('browser control renders full session and creator names, separates LOGIN, a
         type: 'QUERY_ALL_EXPORT',
         platformAccountId: ACCOUNT_ID,
         importBatchId: emptyLiBatch.id,
-        payload: { salesperson: '测试业务员甲' },
+        payload: {},
       });
 
       dom.window.confirm = () => true;
@@ -828,7 +825,6 @@ test('browser control renders full session and creator names, separates LOGIN, a
 
       assert.equal(taskAccount.required, true);
       assert.equal(taskBatch.required, true);
-      assert.equal(taskSalesperson.required, true);
 
       await waitFor(() => dom.window.document.querySelectorAll('#platform-login-account-menu [role="option"]').length === 2);
       loginAccount.value = 'synthetic';
@@ -854,7 +850,7 @@ test('browser control renders full session and creator names, separates LOGIN, a
         type: 'QUERY_ALL_EXPORT',
         platformAccountId: ACCOUNT_ID,
         importBatchId: emptyLiBatch.id,
-        payload: { salesperson: '测试业务员甲' },
+        payload: {},
       });
 
       await waitFor(() => dom.window.document.querySelector('#platform-credential-show').disabled === false);
